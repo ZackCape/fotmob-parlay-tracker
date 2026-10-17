@@ -402,7 +402,7 @@ export class DiscordBotService {
 
       const embedPayload = {
         title: `🏆 Cape Predictor Briefing • ${data.today}`,
-        description: `Live statistical projections across **Premier League, Championship, La Liga, Ligue 1 & UEFA Competitions**.\n*Pure mathematical models • Real-time stats from API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
+        description: `*Football Intelligence. Smarter Predictions.* Live statistical projections across **Premier League, Championship, La Liga, Serie A, Ligue 1, Bundesliga & UEFA Competitions**.\n*Pure mathematical models • Real-time stats from ESPN & API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
         color: 0x2563EB, // Restrained blue primary
         fields: [
           {
@@ -432,7 +432,7 @@ export class DiscordBotService {
           },
         ],
         footer: {
-          text: `EPL, Championship, La Liga, Ligue 1, UCL • Powered by Dixon-Coles Poisson Engine`,
+          text: `Cape Predictor Engine • Powered by Dixon-Coles Probability Engine`,
         },
         timestamp: new Date().toISOString(),
       };
@@ -443,8 +443,8 @@ export class DiscordBotService {
       // Send via Webhook if configured
       if (this.config.webhookUrl) {
         await axios.post(this.config.webhookUrl, {
-          username: 'World Cup & League Analytics Bot',
-          avatar_url: 'https://images.fotmob.com/image_resources/logo/teamlogo/42.png',
+          username: 'Cape Predictor',
+        avatar_url: 'https://cdn.discordapp.com/embed/avatars/0.png',
           embeds: [embedPayload],
         });
         sentViaWebhook = true;
@@ -507,7 +507,7 @@ export class DiscordBotService {
   public buildInfoEmbed(): EmbedBuilder {
     return new EmbedBuilder()
       .setColor(0x2563EB) // Restrained blue primary
-      .setTitle('🏆 Football Analytics Engine — Bot Command Directory')
+      .setTitle('🏆 Cape Predictor — Bot Command Directory')
       .setDescription(
         'Predictive sports modeling system across 7 European competitions. ' +
         'Engineered with **Dixon-Coles bivariate Poisson**, Bayesian shrinkage, and zero betting odds inputs.'
@@ -572,7 +572,7 @@ export class DiscordBotService {
         }
       )
       .setFooter({
-        text: 'Betpredict Bot • Transparent, Explainable Sports Analytics',
+        text: 'Cape Predictor • Transparent, Explainable Sports Analytics',
       })
       .setTimestamp();
   }
