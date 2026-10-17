@@ -26,4 +26,16 @@ export default defineConfig({
     outDir: 'dist/client',
     emptyOutDir: true,
   },
+  test: {
+    // Compiled build output under dist/ mirrors the TypeScript sources,
+    // including the test files. Running those copies as suites is redundant
+    // and fails on Node-only globals (e.g. __dirname) in the ESM runner, so
+    // only the authored sources are collected.
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.{idea,git,cache,output,temp}/**',
+    ],
+  },
 });

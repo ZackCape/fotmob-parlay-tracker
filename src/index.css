@@ -63,3 +63,31 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* ------------------------------------------------------------------ *
+ * Discord Embedded App (Activities) mode
+ *
+ * Applied by src/utils/discordEmbed.ts when the dashboard is opened from
+ * Discord's in-app frame (`?iframe=true&theme=dark`).
+ * ------------------------------------------------------------------ */
+.discord-embedded,
+.discord-embedded body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.discord-embedded #root {
+  height: 100dvh;
+  /* Discord frames have no browser chrome, so reclaim the padding. */
+  margin: 0;
+}
+
+.discord-embedded-dark {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+.discord-embedded-light {
+  background-color: #f8fafc;
+  color: #0f172a;
+}

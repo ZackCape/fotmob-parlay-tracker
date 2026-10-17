@@ -30,7 +30,8 @@ export class DiscordBotService {
   private lastBroadcastTime: string | null = null;
   private cronJob: any = null;
   private currentInterval: UpdateInterval = '1h';
-  private lastLiveSnapshot: Map<string, string> = new Map();
+  /** Interval handle for the live-tracker auto-refresh loop. */
+  private liveRefreshTimer?: NodeJS.Timeout;
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
     this.config = config;
@@ -74,7 +75,8 @@ export class DiscordBotService {
           return;
         }
         await this.sendHourlyUpdate();
-        await this.pushLiveUpdates(fixtures as any[]);
+        // Live tracker embeds self-refresh via their own 30s loop, so there is
+        // no separate score push here.
       } catch (e: any) {
         console.warn(`[DiscordBot] scheduled tick failed: ${e.message}`);
       }
@@ -135,6 +137,17 @@ export class DiscordBotService {
       // Register Slash Commands globally
       try {
         const commands = [
+          new SlashCommandBuilder()
+            .setName('dashboard')
+            .setDescription('Launch the Cape Predictor web app (optionally embedded inside Discord)'),
+          new SlashCommandBuilder()
+            .setName('analysis')
+            .setDescription('Full model analysis for a match: stats, probabilities, score matrix, lineups')
+            .addStringOption(opt =>
+              opt
+                .setName('fixture')
+                .setDescription('Match ID (press 📊 Analyze on a fixture to copy one)')
+                .setRequired(true)),
           new SlashCommandBuilder()
             .setName('customparlay')
             .setDescription('Build your own custom parlay: pick matches and markets, then save it'),
@@ -300,227 +313,518 @@ export class DiscordBotService {
     // ---- Cape Predictor interactive commands -------------------------------
     const todayStr = () => new Date().toISOString().slice(0, 10);
 
-    const sendFixturesPicker = async (channel: any) => {
-      await channel.send({
-        embeds: [CP.leaguePickerEmbed()],
-        components: [CP.buildLeagueSelectRow()],
-      });
+    /**
+     * Resolve a fixture by id from a small window of recent dates using only
+     * verified provider data. Never guesses or substitutes another match.
+     */
+    const resolveFixture = async (fixtureId: string) => {
+      for (const d of [0, -1, 1, -2, 2]) {
+        const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+        try {
+          const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+          const hit = list.find((f: any) => f.id === fixtureId);
+          if (hit) return hit;
+        } catch { /* provider unavailable - try the next day */ }
+      }
+      return null;
     };
 
-    const renderLeague = async (channel: any, league: string) => {
+    const analysisFor = async (fixtureId: string) => {
+      const fx = await resolveFixture(fixtureId);
+      if (!fx) return null;
+      try {
+        const details = await this.factory.getMatchDetails(fixtureId);
+        return details ? { fixture: fx, details } : null;
+      } catch { return null; }
+    };
+
+    /* ---------------- /fixtures ---------------- */
+    const renderLeague = async (interaction: any, league: string) => {
       const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
-      const predictionsByFixture = new Map<string, any[]>();
-      for (const fx of fixtures.slice(0, 8)) {
+      const preds = new Map<string, any[]>();
+      for (const fx of fixtures.slice(0, 10)) {
         try {
           const d = await this.factory.getMatchDetails(fx.id);
-          if (d?.marketPredictions) predictionsByFixture.set(fx.id, d.marketPredictions);
-        } catch { /* analysis unavailable - still show fixture */ }
+          if (d?.marketPredictions) preds.set(fx.id, d.marketPredictions);
+        } catch { /* analysis unavailable - fixture is still listed */ }
       }
-      const label = CP.LEAGUE_OPTIONS.find((l) => l.id === league)?.label ?? league;
-      await channel.send({
-        embeds: [CP.buildFixturesEmbed(fixtures, predictionsByFixture, label)],
-        components: CP.buildFixtureActionRows(fixtures),
+      await interaction.followUp({
+        embeds: [CP.buildFixturesEmbed(fixtures, preds, league)],
+        components: CP.buildFixtureActionRows(fixtures) as any,
+        ephemeral: true,
       });
     };
 
-    const sendHelp = async (channel: any) => {
-      await channel.send({ embeds: [CP.buildHelpEmbed()], components: [CP.buildHelpRow()] });
+    /* ---------------- match analysis ---------------- */
+    const showAnalysis = async (interaction: any, fixtureId: string, tab: CP.AnalysisTab = 'stats') => {
+      const payload = await this.buildAnalysisPayloadSafe(fixtureId, tab);
+      await interaction.followUp({ ...payload, ephemeral: true });
     };
 
-    const sendCustomParlay = async (channel: any) => {
-      const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
-      if (!fixtures.length) {
-        await channel.send({ embeds: [CP.baseEmbed('Custom Parlay', 'No verified fixtures available today. Try again later.')] });
+    /* ---------------- live tracking ---------------- */
+    const startLiveTracker = async (channel: any, fixtureId: string, userId: string) => {
+      const found = await analysisFor(fixtureId);
+      if (!found) {
+        await channel.send({ embeds: [CP.baseEmbed('Live Tracking', 'That match could not be verified against a live provider.')], ephemeral: true }).catch(() => {});
         return;
       }
-      const parlay = CP.getParlay(channel.id);
-      await channel.send({
-        embeds: [CP.buildParlayEmbed(parlay, 'Pick a match and a market, then press Add Leg.')],
-        components: [
-          CP.buildMatchSelectRow(fixtures),
-          CP.buildMarketSelectRow(),
-          ...CP.buildParlayActionRows(parlay.legs.length === 0),
-        ],
+
+      // Send first so we learn the message id, then rebuild the buttons with
+      // that id embedded in their custom ids for the auto-refresh loop.
+      const sent: any = await channel.send({
+        embeds: [CP.buildLiveMatchEmbed(found.details, true)],
+        components: [CP.buildLiveActionRow('pending', true) as any],
+      });
+
+      CP.registerTracker({
+        channelId: channel.id,
+        messageId: sent.id,
+        fixtureId,
+        userId,
+        alertsEnabled: true,
+        fingerprint: CP.liveFingerprint(found.details),
+        updatedAt: Date.now(),
+      });
+
+      await sent.edit({ components: [CP.buildLiveActionRow(sent.id, true) as any] }).catch(() => {});
+    };
+
+    /* ---------------- parlay ---------------- */
+    const parlayFixtures = async (ownerId: string) => {
+      const league = CP.getParlayLeague(ownerId);
+      return CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
+    };
+
+    const renderParlay = async (interaction: any, notice?: string) => {
+      const ownerId = interaction.user.id;
+      const parlay = CP.getParlay(ownerId);
+      const fixtures = await parlayFixtures(ownerId);
+      await interaction.followUp({
+        ...CP.buildParlayPayload(parlay, fixtures, {
+          league: CP.getParlayLeague(ownerId),
+          notice,
+        }),
+        ephemeral: true,
       });
     };
 
-    const sendLiveTracker = async (channel: any) => {
-      const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
-      const trackable = fixtures.filter((f: any) => f.status === 'LIVE' || f.status === 'TIMED');
-      if (!trackable.length) {
-        await channel.send({ embeds: [CP.baseEmbed('Live Tracking', 'No live or upcoming matches to track right now.')] });
-        return;
-      }
-      await channel.send({
-        embeds: [CP.buildLiveTrackingEmbed(trackable)],
-        components: [CP.buildLiveSelectRow(trackable)],
+    /** Rebuild the ephemeral parlay message in place (keeps one scrolling panel). */
+    const rerenderParlayMessage = async (interaction: any, notice?: string) => {
+      const ownerId = interaction.user.id;
+      const parlay = CP.getParlay(ownerId);
+      const fixtures = await parlayFixtures(ownerId);
+      const payload = CP.buildParlayPayload(parlay, fixtures, {
+        league: CP.getParlayLeague(ownerId),
+        notice,
+      });
+      await interaction.update({ ...payload }).catch(async (e: any) => {
+        // Fall back to a fresh ephemeral message if the original expired.
+        await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
       });
     };
 
-    // Slash command routing for the new commands
+    /* ================================================================ *
+     * Slash commands
+     * ================================================================ */
     this.client.on('interactionCreate', async (interaction: any) => {
-      if (interaction.isChatInputCommand?.()) {
-        const name = interaction.commandName;
+      if (!interaction.isChatInputCommand?.()) return;
+      const name = interaction.commandName;
+
+      try {
         if (name === 'help') {
           await interaction.reply({ embeds: [CP.buildHelpEmbed()], components: [CP.buildHelpRow()], ephemeral: true });
           return;
         }
+
+        if (name === 'dashboard' || name === 'app') {
+          await interaction.reply({ ...CP.buildDashboardPayload(), ephemeral: true });
+          return;
+        }
+
+        if (name === 'analysis') {
+          const fixtureId = interaction.options.getString('fixture', true);
+          await interaction.deferReply();
+          await showAnalysis(interaction, fixtureId, 'stats');
+          return;
+        }
+
         if (name === 'customparlay') {
-          await interaction.reply({ content: 'Opening the custom parlay builder…', ephemeral: true });
-          await sendCustomParlay(interaction.channel);
+          await interaction.reply({ content: 'Opening your custom parlay builder…', ephemeral: true });
+          await renderParlay(interaction, 'Pick a league, a match and a market, then press **➕ Add Leg**.');
           return;
         }
+
         if (name === 'livetracking') {
-          await interaction.reply({ content: 'Opening live tracking…', ephemeral: true });
-          await sendLiveTracker(interaction.channel);
-          return;
-        }
-      }
-    });
-
-    // Component interactions (select menus + buttons)
-    this.client.on('interactionCreate', async (interaction: any) => {
-      if (!interaction.isStringSelectMenu?.() && !interaction.isButton?.()) return;
-      const id: string = (interaction.customId || '') as string;
-
-      try {
-        // ---- league select ----
-        if (id === 'cp:fixtures:league') {
-          const league = interaction.values?.[0] ?? 'ALL';
-          await interaction.deferReply();
-          await renderLeague(interaction.channel, league);
-          return;
-        }
-
-        // ---- nav buttons ----
-        if (id.startsWith('cp:nav:')) {
-          const target = id.split(':')[2];
-          await interaction.deferReply();
-          if (target === 'fixtures') await sendFixturesPicker(interaction.channel);
-          else if (target === 'parlay') await sendCustomParlay(interaction.channel);
-          else if (target === 'live') await sendLiveTracker(interaction.channel);
-          else await interaction.followUp({
-            embeds: [CP.baseEmbed('Settings', `Broadcast cadence is set with \`/interval\`.\nLinked channel is managed with \`/channel\`.`)],
-          });
-          return;
-        }
-
-        // ---- analyze ----
-        if (id.startsWith('cp:analyze:')) {
-          const fixtureId = id.split(':')[2];
-          await interaction.deferReply();
-          const fx = (await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL')).find((f: any) => f.id === fixtureId);
-          if (!fx) { await interaction.followUp({ content: 'Match could not be verified.' }); return; }
-          const d = await this.factory.getMatchDetails(fixtureId);
-          if (!d) { await interaction.followUp({ content: 'Analysis unavailable for this match.' }); return; }
-          const preds = (d.marketPredictions || [])
-            .filter((p: any) => ['HOME_WIN', 'DRAW', 'AWAY_WIN'].includes(p.market))
-            .map((p: any) => `**${p.selection}** — ${(p.estimatedProbability * 100).toFixed(1)}%`).join('\n');
-          await interaction.followUp({
-            embeds: [CP.baseEmbed(`${d.fixture.homeTeam.name} vs ${d.fixture.awayTeam.name}`,
-              `${preds || 'No 1X2 prediction available.'}\nSource: ${d.fixture.dataSource}`)],
-          });
-          return;
-        }
-
-        // ---- track live ----
-        if (id.startsWith('cp:track:')) {
-          const fixtureId = id.split(':')[2];
-          await interaction.deferReply();
-          const fx = (await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL')).find((f: any) => f.id === fixtureId);
-          if (!fx) { await interaction.followUp({ content: 'Match could not be verified.' }); return; }
-          CP.subscribeLive(interaction.channel.id, fixtureId, `${fx.homeTeam.name} v ${fx.awayTeam.name}`);
-          await interaction.followUp({
-            embeds: [CP.baseEmbed('Live Tracking enabled',
-              `Watching **${fx.homeTeam.name} v ${fx.awayTeam.name}** (${fx.league}).\nScore and status updates will post in this channel.`)],
-          });
-          return;
-        }
-
-        // ---- custom parlay components ----
-        if (id === 'cp:parlay:match') {
-          interaction.deferUpdate().catch(() => {});
-          CP.pendingMatch.set(interaction.channel.id, interaction.values?.[0]);
-          return;
-        }
-        if (id === 'cp:parlay:market') {
-          const parlay = CP.getParlay(interaction.channel.id);
-          const fxId: string | undefined = CP.pendingMatch.get(interaction.channel.id);
-          const market: any = interaction.values?.[0];
           await interaction.deferReply();
           const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
-          const fx: any = fxId ? fixtures.find((f: any) => f.id === fxId) : undefined;
-          if (!fxId || !fx) { await interaction.followUp({ content: 'Please pick a match first.' }); return; }
-          let prob = 1 / 3;
-          try {
-            const d = await this.factory.getMatchDetails(fxId);
-            const mp = d?.marketPredictions?.find((p: any) => p.market === market);
-            if (mp) prob = mp.estimatedProbability;
-          } catch { /* use neutral prior */ }
-          const res = CP.addLeg(parlay, {
-            fixtureId: fxId,
-            description: `${fx.homeTeam.name} v ${fx.awayTeam.name}`,
-            market,
-            selection: market,
-            probability: prob,
-          });
+          const trackable = fixtures.filter((f: any) => f.status === 'LIVE' || f.status === 'TIMED');
           await interaction.followUp({
-            embeds: [CP.buildParlayEmbed(parlay, res.ok ? 'Leg added.' : res.reason)],
-            components: [
-              CP.buildMatchSelectRow(fixtures),
-              CP.buildMarketSelectRow(),
-              ...CP.buildParlayActionRows(parlay.legs.length === 0),
-            ],
-          });
-          return;
-        }
-        if (id === 'cp:parlay:add') {
-          await interaction.deferReply();
-          const parlay = CP.getParlay(interaction.channel.id);
-          await interaction.followUp({
-            embeds: [CP.buildParlayEmbed(parlay, 'Choose a market for your selected match to add a leg.')],
-          });
-          return;
-        }
-        if (id === 'cp:parlay:save') {
-          await interaction.deferReply();
-          const parlay = CP.getParlay(interaction.channel.id);
-          parlay.saved = true;
-          await interaction.followUp({ embeds: [CP.buildParlayEmbed(parlay, 'Parlay saved for live tracking.')] });
-          return;
-        }
-        if (id === 'cp:parlay:clear') {
-          await interaction.deferReply();
-          const parlay = CP.getParlay(interaction.channel.id);
-          parlay.legs = [];
-          parlay.saved = false;
-          await interaction.followUp({ embeds: [CP.buildParlayEmbed(parlay, 'Slip cleared.')] });
-          return;
-        }
-
-        // ---- live tracking select ----
-        if (id === 'cp:live:match') {
-          const fixtureId = interaction.values?.[0];
-          await interaction.deferReply();
-          const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
-          const fx = fixtures.find((f: any) => f.id === fixtureId);
-          if (!fx) { await interaction.followUp({ content: 'Match could not be verified.' }); return; }
-          CP.subscribeLive(interaction.channel.id, fixtureId, `${fx.homeTeam.name} v ${fx.awayTeam.name}`);
-          await interaction.followUp({
-            embeds: [CP.baseEmbed('Live Tracking enabled',
-              `Watching **${fx.homeTeam.name} v ${fx.awayTeam.name}** (${fx.league}, ${fx.status}).`)],
+            embeds: [CP.buildLivePickerEmbed(trackable.length)],
+            components: [CP.buildLiveSelectRow(trackable) as any],
+            ephemeral: true,
           });
           return;
         }
       } catch (err: any) {
-        console.warn(`[DiscordBot] interaction error (${id}): ${err.message}`);
+        console.warn(`[DiscordBot] command ${name} failed: ${err.message}`);
+        const body = 'Something went wrong handling that command.';
         if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: 'Something went wrong handling that selection.' }).catch(() => {});
+          await interaction.followUp({ content: body, ephemeral: true }).catch(() => {});
         } else {
-          await interaction.reply({ content: 'Something went wrong handling that selection.', ephemeral: true }).catch(() => {});
+          await interaction.reply({ content: body, ephemeral: true }).catch(() => {});
         }
       }
     });
+
+    /* ================================================================ *
+     * Modal submissions (stake input)
+     * ================================================================ */
+    this.client.on('interactionCreate', async (interaction: any) => {
+      if (!interaction.isModalSubmitCommand?.()) return;
+      if (interaction.customId !== 'cp:parlay:stake-modal') return;
+
+      const ownerId = interaction.user.id;
+      const parlay = CP.getParlay(ownerId);
+      const raw = interaction.fields.getTextInputValue('stake');
+      const stake = Number(raw);
+
+      if (!Number.isFinite(stake) || stake <= 0) {
+        await interaction.update({
+          ...CP.buildParlayPayload(parlay, await parlayFixtures(ownerId), {
+            league: CP.getParlayLeague(ownerId),
+            notice: 'Stake must be a positive number.',
+          }),
+        }).catch(() => {});
+        return;
+      }
+
+      parlay.stake = Number(stake.toFixed(2));
+      await interaction.update({
+        ...CP.buildParlayPayload(parlay, await parlayFixtures(ownerId), {
+          league: CP.getParlayLeague(ownerId),
+          notice: `Stake set to **${parlay.stake}** unit${parlay.stake === 1 ? '' : 's'}.`,
+        }),
+      }).catch(() => {});
+    });
+
+    /* ================================================================ *
+     * Components: select menus, buttons, tabs
+     * ================================================================ */
+    this.client.on('interactionCreate', async (interaction: any) => {
+      const isSelect = interaction.isStringSelectMenu?.();
+      const isButton = interaction.isButton?.();
+      if (!isSelect && !isButton) return;
+
+      const id: string = (interaction.customId || '') as string;
+      const ownerId = interaction.user.id;
+
+      try {
+        /* ---------- fixtures ---------- */
+        if (id === 'cp:fixtures:league') {
+          await interaction.deferReply();
+          await renderLeague(interaction, interaction.values?.[0] ?? 'ALL');
+          return;
+        }
+
+        /* ---------- navigation ---------- */
+        if (id.startsWith('cp:nav:')) {
+          const target = id.split(':')[2];
+          if (target === 'dashboard') {
+            await interaction.reply({ ...CP.buildDashboardPayload(), ephemeral: true });
+            return;
+          }
+          await interaction.deferReply();
+          if (target === 'fixtures') {
+            await interaction.followUp({
+              embeds: [CP.leaguePickerEmbed()],
+              components: [CP.buildLeagueSelectRow()],
+              ephemeral: true,
+            });
+          } else if (target === 'parlay') {
+            await renderParlay(interaction);
+          } else if (target === 'live') {
+            const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
+            const trackable = fixtures.filter((f: any) => f.status === 'LIVE' || f.status === 'TIMED');
+            await interaction.followUp({
+              embeds: [CP.buildLivePickerEmbed(trackable.length)],
+              components: [CP.buildLiveSelectRow(trackable) as any],
+              ephemeral: true,
+            });
+          } else {
+            await interaction.followUp({
+              embeds: [CP.baseEmbed('Settings', 'Broadcast cadence is set with `/interval`.\nLinked channel is managed with `/channel`.')],
+              ephemeral: true,
+            });
+          }
+          return;
+        }
+
+        if (id === 'cp:dashboard') {
+          await interaction.reply({ ...CP.buildDashboardPayload(), ephemeral: true });
+          return;
+        }
+
+        /* ---------- analysis tabs ---------- */
+        if (id.startsWith('cp:tab:')) {
+          const parts = id.split(':');
+          const fixtureId = parts[2];
+          const tab = (parts[3] || 'stats') as CP.AnalysisTab;
+          await interaction.deferUpdate();
+          const payload = await this.buildAnalysisPayloadSafe(fixtureId, tab);
+          await interaction.editReply(payload);
+          return;
+        }
+
+        /* ---------- analyze ---------- */
+        if (id.startsWith('cp:analyze:')) {
+          const fixtureId = id.split(':').slice(2).join(':');
+          await interaction.deferReply();
+          await showAnalysis(interaction, fixtureId, 'stats');
+          return;
+        }
+
+        /* ---------- track live ---------- */
+        if (id.startsWith('cp:track:')) {
+          const fixtureId = id.split(':').slice(2).join(':');
+          await interaction.deferReply();
+          await interaction.followUp({ content: 'Starting live tracker…', ephemeral: true });
+          const channel: any = interaction.channel;
+          if (channel?.send) await startLiveTracker(channel, fixtureId, ownerId);
+          return;
+        }
+
+        /* ---------- live tracker buttons ---------- */
+        const live = CP.findTrackerByCustomId(id);
+        if (live) {
+          const { tracker, action } = live;
+          const found = await analysisFor(tracker.fixtureId);
+
+          if (action === 'alerts') {
+            tracker.alertsEnabled = !tracker.alertsEnabled;
+            if (!found) {
+              await interaction.reply({ content: 'Match data is currently unavailable.', ephemeral: true });
+              return;
+            }
+            tracker.fingerprint = CP.liveFingerprint(found.details);
+            await interaction.update({ components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any] });
+            return;
+          }
+
+          if (!found) {
+            await interaction.reply({ content: 'Match data is currently unavailable for that fixture.', ephemeral: true });
+            return;
+          }
+
+          const fingerprint = CP.liveFingerprint(found.details);
+          tracker.fingerprint = fingerprint;
+          tracker.updatedAt = Date.now();
+
+          if (action === 'refresh') {
+            await interaction.update({
+              embeds: [CP.buildLiveMatchEmbed(found.details, tracker.alertsEnabled)],
+              components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any],
+            });
+            return;
+          }
+
+          if (action === 'stats') {
+            await interaction.update({
+              embeds: [CP.buildStatsTab(found.details)],
+              components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any],
+            });
+            return;
+          }
+        }
+
+        /* ---------- live match picker ---------- */
+        if (id === 'cp:live:match') {
+          const fixtureId = interaction.values?.[0];
+          if (!fixtureId || fixtureId === 'none') {
+            await interaction.reply({ content: 'No matches are available to track right now.', ephemeral: true });
+            return;
+          }
+          await interaction.reply({ content: 'Starting live tracker…', ephemeral: true });
+          const channel: any = interaction.channel;
+          if (channel?.send) await startLiveTracker(channel, fixtureId, ownerId);
+          return;
+        }
+
+        /* ---------- parlay: league ---------- */
+        if (id === 'cp:parlay:league') {
+          CP.setParlayLeague(ownerId, interaction.values?.[0] ?? 'ALL');
+          CP.clearParlayPending(ownerId);
+          await interaction.deferUpdate();
+          const parlay = CP.getParlay(ownerId);
+          const fixtures = await parlayFixtures(ownerId);
+          await interaction.editReply(CP.buildParlayPayload(parlay, fixtures, {
+            league: CP.getParlayLeague(ownerId),
+            notice: `Filtering by **${CP.leagueLabel(CP.getParlayLeague(ownerId))}**.`,
+          }));
+          return;
+        }
+
+        /* ---------- parlay: match (stage) ---------- */
+        if (id === 'cp:parlay:match') {
+          const fixtureId = interaction.values?.[0];
+          if (!fixtureId || fixtureId === 'none') {
+            await interaction.reply({ content: 'No verified matches available.', ephemeral: true });
+            return;
+          }
+          CP.setParlayPendingMatch(ownerId, fixtureId);
+          await interaction.deferUpdate();
+          const parlay = CP.getParlay(ownerId);
+          const fixtures = await parlayFixtures(ownerId);
+          await interaction.editReply(CP.buildParlayPayload(parlay, fixtures, {
+            league: CP.getParlayLeague(ownerId),
+            notice: 'Match staged. Now pick a **market**, then press **➕ Add Leg**.',
+          }));
+          return;
+        }
+
+        /* ---------- parlay: market (stage) ---------- */
+        if (id === 'cp:parlay:market') {
+          CP.setParlayPendingMarket(ownerId, interaction.values?.[0] as any);
+          await interaction.deferUpdate();
+          const parlay = CP.getParlay(ownerId);
+          const fixtures = await parlayFixtures(ownerId);
+          const staged = CP.getParlayPendingMatch(ownerId);
+          await interaction.editReply(CP.buildParlayPayload(parlay, fixtures, {
+            league: CP.getParlayLeague(ownerId),
+            notice: staged
+              ? `Market staged. Press **➕ Add Leg** to add it to your slip.`
+              : 'Pick a **match** first, then a market.',
+          }));
+          return;
+        }
+
+        /* ---------- parlay: add leg ---------- */
+        if (id === 'cp:parlay:add') {
+          const parlay = CP.getParlay(ownerId);
+          const fixtureId = CP.getParlayPendingMatch(ownerId);
+          const market = CP.getParlayPendingMarket(ownerId);
+
+          if (!fixtureId) { await rerenderParlayMessage(interaction, 'Choose a **match** first.'); return; }
+          if (!market) { await rerenderParlayMessage(interaction, 'Choose a **market** first.'); return; }
+
+          const found = await analysisFor(fixtureId);
+          if (!found) { await rerenderParlayMessage(interaction, 'That match is no longer available.'); return; }
+
+          const mp = found.details.marketPredictions?.find((p: any) => p.market === market);
+          if (!mp || !Number.isFinite(mp.estimatedProbability) || mp.estimatedProbability <= 0) {
+            await rerenderParlayMessage(interaction, `No model probability available for ${CP.marketLabel(market as any)} on that match.`);
+            return;
+          }
+
+          const res = CP.addLeg(parlay, {
+            fixtureId,
+            description: `${found.fixture.homeTeam.name} v ${found.fixture.awayTeam.name}`,
+            league: found.fixture.league,
+            market,
+            selection: CP.marketLabel(market as any),
+            probability: mp.estimatedProbability,
+            confidenceLower: mp.confidenceLower,
+            confidenceUpper: mp.confidenceUpper,
+          });
+
+          if (res.ok) CP.clearParlayPending(ownerId);
+          await rerenderParlayMessage(interaction, res.ok ? `Leg added — ${CP.marketLabel(market as any)}.` : res.reason);
+          return;
+        }
+
+        /* ---------- parlay: remove specific leg ---------- */
+        if (id.startsWith('cp:parlay:drop:')) {
+          const index = parseInt(id.split(':')[3], 10);
+          const parlay = CP.getParlay(ownerId);
+          const res = CP.removeLeg(parlay, index);
+          await rerenderParlayMessage(interaction, res.ok ? `Leg ${index} removed.` : res.reason);
+          return;
+        }
+
+        /* ---------- parlay: stake modal ---------- */
+        if (id === 'cp:parlay:stake') {
+          const parlay = CP.getParlay(ownerId);
+          await interaction.showModal(CP.buildStakeModal(parlay.stake));
+          return;
+        }
+
+        /* ---------- parlay: save ---------- */
+        if (id === 'cp:parlay:save') {
+          const parlay = CP.getParlay(ownerId);
+          const res = CP.saveParlay(parlay);
+          if (res.ok) {
+            await interaction.reply({ embeds: [CP.buildSavedParlayEmbed(parlay)], ephemeral: true });
+          } else {
+            await rerenderParlayMessage(interaction, res.reason);
+          }
+          return;
+        }
+
+        /* ---------- parlay: clear ---------- */
+        if (id === 'cp:parlay:clear') {
+          CP.clearParlay(ownerId);
+          const parlay = CP.getParlay(ownerId);
+          await rerenderParlayMessage(interaction, 'Slip cleared.');
+          return;
+        }
+      } catch (err: any) {
+        console.warn(`[DiscordBot] interaction error (${id}): ${err.message}`);
+        const body = 'Something went wrong handling that selection.';
+        try {
+          if (interaction.deferred || interaction.replied) {
+            await interaction.followUp({ content: body, ephemeral: true });
+          } else {
+            await interaction.reply({ content: body, ephemeral: true });
+          }
+        } catch { /* interaction token expired */ }
+      }
+    });
+
+    /* ================================================================ *
+     * Live tracker auto-refresh loop
+     *
+     * Polls tracked matches and edits their embed only when the state
+     * fingerprint actually changes, which keeps us well inside rate limits.
+     * ================================================================ */
+    this.liveRefreshTimer = setInterval(async () => {
+      const trackers = CP.allTrackers();
+      if (!trackers.length || !this.client?.isReady()) return;
+
+      const byFixture = new Map<string, typeof trackers>();
+      for (const t of trackers) {
+        if (!byFixture.has(t.fixtureId)) byFixture.set(t.fixtureId, []);
+        byFixture.get(t.fixtureId)!.push(t);
+      }
+
+      for (const [fixtureId, group] of byFixture) {
+        let details: any = null;
+        try {
+          details = await this.factory.getMatchDetails(fixtureId);
+        } catch { continue; }
+        if (!details) continue;
+
+        const fingerprint = CP.liveFingerprint(details);
+        for (const tracker of group) {
+          if (tracker.fingerprint === fingerprint) continue;
+          tracker.fingerprint = fingerprint;
+          tracker.updatedAt = Date.now();
+          try {
+            const message: any = await this.client.channels.fetch(tracker.channelId)
+              .then((ch: any) => ch?.messages?.fetch(tracker.messageId))
+              .catch(() => null);
+            if (!message?.edit) continue;
+            await message.edit({
+              embeds: [CP.buildLiveMatchEmbed(details, tracker.alertsEnabled)],
+              components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled)],
+            });
+          } catch (e: any) {
+            console.warn(`[DiscordBot] live refresh failed for ${tracker.messageId}: ${e.message}`);
+          }
+        }
+      }
+    }, 30_000);
+
+    // Never keep the process alive just for the refresh loop.
+    (this.liveRefreshTimer as any)?.unref?.();
 
     // Handle Standard Chat Message Commands (e.g. /info or !info or !parlay)
     this.client.on('messageCreate', async message => {
@@ -824,30 +1128,40 @@ export class DiscordBotService {
       .setTimestamp();
   }
 
-  /** Push score/status changes for channels with live subscriptions. */
-  private async pushLiveUpdates(fixtures: any[]): Promise<void> {
-    const subs = CP.allLiveSubscriptions();
-    if (!subs.length || !this.client?.isReady()) return;
-    for (const sub of subs) {
-      const fx = fixtures.find((f) => f.id === sub.fixtureId);
-      if (!fx) continue;
-      const key = `liveScore:${sub.channelId}`;
-      const current = `${fx.homeScore ?? '-'}-${fx.awayScore ?? '-'}@${fx.status}`;
-      if (this.lastLiveSnapshot.get(key) === current) continue;
-      this.lastLiveSnapshot.set(key, current);
+  /**
+   * Resolve a fixture to a renderable analysis payload.
+   *
+   * Never substitutes a different match and never fabricates a bundle: if the
+   * provider cannot confirm the fixture identity, the user is told so.
+   */
+  public async buildAnalysisPayloadSafe(
+    fixtureId: string,
+    tab: CP.AnalysisTab = 'stats',
+  ): Promise<{ embeds: any[]; components: any[] }> {
+    let details: any = null;
+
+    for (const d of [0, -1, 1, -2, 2]) {
+      const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
       try {
-        const channel: any = await this.client.channels.fetch(sub.channelId);
-        if (!channel?.send) continue;
-        await channel.send({
-          embeds: [CP.baseEmbed(
-            `${fx.homeTeam.name} ${fx.homeScore ?? '-'} - ${fx.awayScore ?? '-'} ${fx.awayTeam.name}`,
-            `**${fx.status}** • ${fx.league} • Updated ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC`,
-          )],
-        });
-      } catch (e: any) {
-        console.warn(`[DiscordBot] live update push failed: ${e.message}`);
-      }
+        const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+        if (list.some((f: any) => f.id === fixtureId)) {
+          details = await this.factory.getMatchDetails(fixtureId);
+          break;
+        }
+      } catch { /* try the next day */ }
     }
+
+    if (!details) {
+      return {
+        embeds: [CP.baseEmbed(
+          'Analysis unavailable',
+          'This match could not be verified against a live provider, so no statistics are shown rather than estimated. Try again shortly.',
+        )],
+        components: [CP.buildHelpRow()],
+      };
+    }
+
+    return CP.buildAnalysisPayload(details, tab);
   }
 
   public async generateFixturesReply(): Promise<string> {
