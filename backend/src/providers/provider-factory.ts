@@ -5,6 +5,8 @@ import { FotmobAdapter } from './fotmob-adapter.js';
 import { FootballDatabaseAdapter, FootballNewsArticle } from './footballdatabase-adapter.js';
 import { OpenFootballAdapter } from './openfootball-adapter.js';
 import { TheOddsAdapter } from './theodds-adapter.js';
+import { TheSportsDBAdapter } from './thesportsdb-adapter.js';
+import { OpenLigaDBAdapter } from './openligadb-adapter.js';
 import { VerifiedArchiveAdapter } from './verified-archive-adapter.js';
 import { AppConfig } from '../config/env.js';
 import { Fixture, MatchAnalysis } from '../types/football.js';
@@ -23,6 +25,8 @@ export class DataProviderFactory {
   private fotmobProvider: IFootballDataProvider;
   private footballdatabaseProvider: FootballDatabaseAdapter;
   private openfootballProvider: OpenFootballAdapter;
+  private thesportsdbProvider: TheSportsDBAdapter;
+  private openligadbProvider: OpenLigaDBAdapter;
   private oddsAdapter: TheOddsAdapter | null;
   private config: AppConfig;
   private fallbackProvider: IFootballDataProvider;
@@ -38,6 +42,8 @@ export class DataProviderFactory {
     this.fotmobProvider = new FotmobAdapter(this.adaptiveLearning);
     this.footballdatabaseProvider = new FootballDatabaseAdapter(this.adaptiveLearning);
     this.openfootballProvider = new OpenFootballAdapter(config.openfootballDataDir);
+    this.thesportsdbProvider = new TheSportsDBAdapter();
+    this.openligadbProvider = new OpenLigaDBAdapter();
     this.oddsAdapter = config.theOddsApiKey ? new TheOddsAdapter(config.theOddsApiKey, config.theOddsApiRegions, config.theOddsApiMonthlyLimit, config.theOddsApiSafetyReserve) : null;
     this.backupProvider = config.footballDataOrgKey ? new FootballDataOrgAdapter(config.footballDataOrgKey) : null;
     this.defaultTtlMs = config.cacheTtlMinutes * 60 * 1000;
@@ -113,6 +119,28 @@ export class DataProviderFactory {
     });
   }
 
+  private readonly FILE_CACHE = require('path').resolve(process.cwd(), 'data', 'fixtures_cache.json');
+  private readJsonCache(): { data: any; cachedAt: number } | null {
+    if (process.env.NODE_ENV !== 'production') return null;
+    try {
+      const fs = require('fs');
+      if (!fs.existsSync(this.FILE_CACHE)) return null;
+      const raw = JSON.parse(fs.readFileSync(this.FILE_CACHE, 'utf8'));
+      if (!raw || !raw.cachedAt || !raw.data) return null;
+      if (Date.now() - raw.cachedAt > 30 * 60 * 1000) return null;
+      return raw;
+    } catch { return null; }
+  }
+  private writeJsonCache(data: any) {
+    if (process.env.NODE_ENV !== 'production') return;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      fs.mkdirSync(path.dirname(this.FILE_CACHE), { recursive: true });
+      fs.writeFileSync(this.FILE_CACHE, JSON.stringify({ cachedAt: Date.now(), data }));
+    } catch {}
+  }
+
   async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
     const cacheKey = `fixtures:${date}:${league}`;
     const inflightKey = `inflight:${cacheKey}`;
@@ -121,64 +149,73 @@ export class DataProviderFactory {
     }
 
     const promise = (async () => {
+      if (this.config.dataProvider === 'verified-archive') {
+        const fx = await this.fallbackProvider.getFixturesByDate(date, league);
+        if (fx.length > 0) this.setCache(cacheKey, fx);
+        return fx;
+      }
+      if (this.config.dataProvider === 'openfootball') {
+        const fx = await this.openfootballProvider.getFixturesByDate(date, league);
+        if (fx.length > 0) this.setCache(cacheKey, fx);
+        return fx;
+      }
+      // a) File cache (30-min TTL)
+      const fc = this.readJsonCache();
+      if (fc && Array.isArray(fc.data)) {
+        const filtered = fc.data.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
+        if (filtered.length > 0) {
+          console.info(`[Factory] file cache HIT ${date} ${league}`);
+          return filtered;
+        }
+      }
+      // memory cache
       const cached = this.getCached<Fixture[]>(cacheKey);
-      if (cached) { console.info(`[Factory] cache HIT fixtures ${date} ${league} count=${cached.length} source=${cached[0]?.dataSource}`); return cached; }
+      if (cached) { console.info(`[Factory] mem cache HIT fixtures ${date} ${league}`); return cached; }
       console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
+
       let fixtures: Fixture[] = [];
-      let source = 'none';
-      let fallbackReason: string | null = null;
+      const wantGerman = league === 'ALL' || league === 'BUNDESLIGA' || league === 'BUNDESLIGA2';
 
-      const primaryAvailable = !(this.primaryProvider.isQuotaExhausted?.() ?? false) && !(this.primaryProvider.isInCooldown?.() ?? false);
-      if (primaryAvailable) {
+      // b) OpenLigaDB for German fixtures
+      if (wantGerman) {
         try {
-          fixtures = await this.primaryProvider.getFixturesByDate(date, league);
-          if (fixtures.length > 0) source = this.primaryProvider.name;
-        } catch (e: any) {
-          console.warn(`[DataProviderFactory] Primary provider failed: ${e.message}`);
-          fallbackReason = 'primary_error';
-        }
-      } else {
-        fallbackReason = 'primary_quota_or_cooldown';
+          const g = await this.openligadbProvider.getFixturesByDate(date, league);
+          if (g.length > 0) fixtures.push(...g);
+        } catch (e: any) { console.warn('[Factory] OpenLigaDB failed:', e.message); }
       }
 
-      if (fixtures.length === 0 && this.backupProvider && !(this.backupProvider.isQuotaExhausted?.() ?? false) && !(this.backupProvider.isInCooldown?.() ?? false)) {
+      // c) Football-Data.org for main leagues
+      if (this.backupProvider && !(this.backupProvider.isQuotaExhausted?.() ?? false) && !(this.backupProvider.isInCooldown?.() ?? false)) {
         try {
-          const backupFixtures = await this.backupProvider.getFixturesByDate(date, league);
-          if (backupFixtures.length > 0) {
-            fixtures = backupFixtures;
-            source = this.backupProvider.name;
-            fallbackReason = fallbackReason || 'primary_empty';
-          }
-        } catch (e: any) {
-          console.warn(`[DataProviderFactory] Backup provider failed: ${e.message}`);
-        }
+          const fd = await this.backupProvider.getFixturesByDate(date, league);
+          if (fd.length > 0) fixtures.push(...fd);
+        } catch (e: any) { console.warn('[Factory] Football-Data failed:', e.message); }
       }
 
-      if (fixtures.length === 0 && this.config.openfootballEnabled) {
-        const today = new Date().toISOString().slice(0, 10);
-        if (date < today) {
-          const ofFixtures = await this.openfootballProvider.getFixturesByDate(date, league);
-          if (ofFixtures.length > 0) {
-            fixtures = ofFixtures;
-            source = this.openfootballProvider.name;
-            fallbackReason = fallbackReason || 'historical_fallback';
+      // d) TheSportsDB fallback if too few
+      if (fixtures.length < 3) {
+        try {
+          const ts = await this.thesportsdbProvider.getFixturesByDate(date, league);
+          const seen = new Set(fixtures.map(f => `${f.homeTeam.name}|${f.awayTeam.name}`));
+          for (const t of ts) {
+            if (!seen.has(`${t.homeTeam.name}|${t.awayTeam.name}`)) {
+              fixtures.push(t);
+              seen.add(`${t.homeTeam.name}|${t.awayTeam.name}`);
+            }
           }
-        }
+        } catch (e: any) { console.warn('[Factory] TheSportsDB failed:', e.message); }
       }
 
-      // Verified archive is NOT used as a substitute for live/scheduled fixtures.
-      // Only OpenFootball historical data may be used for past dates (labelled).
-      // If no real provider data is available, return empty (unavailable).
+      // Guardrail: never serve synthetic archive
+      fixtures = fixtures.filter(f => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
 
       const retrievedAt = new Date().toISOString();
-      fixtures = fixtures.map((f) => ({
-        ...f,
-        dataSource: f.dataSource || source,
-        retrievedAt,
-        fallbackReason: fallbackReason || undefined,
-      })) as any;
+      fixtures = fixtures.map((f) => ({ ...f, retrievedAt })) as any;
 
-      if (fixtures.length > 0) this.setCache(cacheKey, fixtures);
+      if (fixtures.length > 0) {
+        this.setCache(cacheKey, fixtures);
+        this.writeJsonCache(fixtures);
+      }
       return fixtures;
     })();
 
