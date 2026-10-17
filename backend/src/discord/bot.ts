@@ -329,7 +329,8 @@ export class DiscordBotService {
    */
   public async buildBroadcastPayload() {
     const today = new Date().toISOString().substring(0, 10);
-    const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const fixtures = allFixtures.filter(fx => /api-football|football-data/i.test(fx.dataSource || ''));
 
     // Collect predictions and injury bulletins
     const candidatePredictions: MarketPrediction[] = [];
@@ -590,7 +591,8 @@ export class DiscordBotService {
     const valid = [5, 10, 15, 20, 25];
     const target = valid.includes(legsCount) ? (legsCount as any) : 5;
     const today = new Date().toISOString().substring(0, 10);
-    const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const fixtures = allFixtures.filter(fx => /api-football|football-data/i.test(fx.dataSource || ''));
     const preds: MarketPrediction[] = [];
 
     for (const fx of fixtures) {
@@ -598,6 +600,9 @@ export class DiscordBotService {
       if (details?.marketPredictions) preds.push(...details.marketPredictions);
     }
 
+    if (preds.length === 0) {
+      return 'No verified live fixtures are available from the configured providers. Please try again later or check the web dashboard.';
+    }
     const parlay = buildStatisticalParlay(preds, { targetLegsCount: target, minProbability: 0.58, mode });
     if (this.trackerService) {
       await this.trackerService.trackParlay(parlay);
@@ -616,7 +621,8 @@ export class DiscordBotService {
 
   public async generateSgpReply(): Promise<string> {
     const today = new Date().toISOString().substring(0, 10);
-    const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const fixtures = allFixtures.filter(fx => /api-football|football-data/i.test(fx.dataSource || ''));
     const preds: MarketPrediction[] = [];
 
     for (const fx of fixtures) {
@@ -624,6 +630,9 @@ export class DiscordBotService {
       if (details?.marketPredictions) preds.push(...details.marketPredictions);
     }
 
+    if (preds.length === 0) {
+      return 'No verified live fixtures are available from the configured providers. Please try again later or check the web dashboard.';
+    }
     const parlay = buildStatisticalParlay(preds, {
       targetLegsCount: 5,
       minProbability: 0.58,
