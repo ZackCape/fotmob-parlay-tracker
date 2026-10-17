@@ -101,6 +101,22 @@ CREATE TABLE IF NOT EXISTS model_evaluations (
   evaluated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- User-tracked parlays (persistent, user-specific)
+CREATE TABLE IF NOT EXISTS user_parlays (
+  id VARCHAR(128) PRIMARY KEY,
+  user_id VARCHAR(128) NOT NULL,
+  guild_id VARCHAR(128),
+  parlay_id VARCHAR(128) REFERENCES parlays(id) ON DELETE CASCADE,
+  status VARCHAR(32) NOT NULL DEFAULT 'TRACKING',
+  locked BOOLEAN NOT NULL DEFAULT FALSE,
+  odds_snapshot JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_parlays_user ON user_parlays(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_parlays_status ON user_parlays(status);
+
 -- Indices for rapid querying
 CREATE INDEX IF NOT EXISTS idx_fixtures_date ON fixtures(match_date);
 CREATE INDEX IF NOT EXISTS idx_fixtures_league ON fixtures(league);

@@ -27,6 +27,8 @@ export interface AppConfig {
   discordWebhookUrl?: string;
   enableDiscordHourly: boolean;
   discordUpdateInterval: '5m' | '15m' | '30m' | '45m' | '1h';
+  reportTimezone: string;
+  parlayReportChannelId?: string;
 }
 
 export const config: AppConfig = {
@@ -52,4 +54,6 @@ export const config: AppConfig = {
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || undefined,
   enableDiscordHourly: process.env.ENABLE_DISCORD_HOURLY !== 'false',
   discordUpdateInterval: (process.env.DISCORD_UPDATE_INTERVAL as any) || '1h',
+  reportTimezone: process.env.REPORT_TIMEZONE || 'Africa/Harare',
+  parlayReportChannelId: process.env.PARLAY_REPORT_CHANNEL_ID || undefined,
 };

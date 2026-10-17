@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { DataProviderFactory } from './providers/provider-factory.js';
 import { initializeBackgroundJobs } from './cron/scheduler.js';
+import { scheduleDailyReport } from './cron/dailyReport.js';
 import { DiscordBotService } from './discord/bot.js';
 import { LiveParlayTrackerService } from './parlays/live-tracker.js';
 import { config } from './config/env.js';
@@ -38,6 +39,17 @@ async function bootstrap() {
 
   // Initialize Background Scheduler
   initializeBackgroundJobs(factory);
+
+  // Daily parlay report (23:59 in configured timezone)
+  scheduleDailyReport(async (date, tz) => {
+    console.log(`[DailyReport] Generating report for ${date} (${tz})`);
+    if (config.parlayReportChannelId && discordBot) {
+      // Delegate to bot if it exposes a method; otherwise log only
+      console.log(`[DailyReport] Would send to channel ${config.parlayReportChannelId}`);
+    } else {
+      console.warn('[DailyReport] No PARLAY_REPORT_CHANNEL_ID configured; skipping send.');
+    }
+  });
 
   // Initialize App
   const app = createApp(factory, discordBot, parlayTracker);
