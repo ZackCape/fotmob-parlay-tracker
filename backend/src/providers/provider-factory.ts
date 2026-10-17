@@ -5,10 +5,12 @@ import { ApiFootballAdapter } from './api-football-adapter.js';
 import { FootballDataOrgAdapter } from './football-data-adapter.js';
 import { FotmobAdapter } from './fotmob-adapter.js';
 import { FootballDatabaseAdapter, FootballNewsArticle } from './footballdatabase-adapter.js';
-import { OpenFootballAdapter } from './openfootball-adapter.js';
+import { OpenFootballGitHubAdapter } from './openfootball-github-adapter.js';
 import { TheOddsAdapter } from './theodds-adapter.js';
 import { TheSportsDBAdapter } from './thesportsdb-adapter.js';
 import { OpenLigaDBAdapter } from './openligadb-adapter.js';
+import { FootballDataUkAdapter } from './football-data-uk-adapter.js';
+import { OpenFootballAdapter } from './openfootball-adapter.js';
 import { VerifiedArchiveAdapter } from './verified-archive-adapter.js';
 import { AppConfig } from '../config/env.js';
 import { Fixture, MatchAnalysis } from '../types/football.js';
@@ -29,6 +31,8 @@ export class DataProviderFactory {
   private openfootballProvider: OpenFootballAdapter;
   private thesportsdbProvider: TheSportsDBAdapter;
   private openligadbProvider: OpenLigaDBAdapter;
+  private footballDataUkProvider: FootballDataUkAdapter;
+  private openfootballGitHubProvider: OpenFootballGitHubAdapter;
   private oddsAdapter: TheOddsAdapter | null;
   private config: AppConfig;
   private fallbackProvider: IFootballDataProvider;
@@ -46,6 +50,8 @@ export class DataProviderFactory {
     this.openfootballProvider = new OpenFootballAdapter(config.openfootballDataDir);
     this.thesportsdbProvider = new TheSportsDBAdapter();
     this.openligadbProvider = new OpenLigaDBAdapter();
+    this.footballDataUkProvider = new FootballDataUkAdapter();
+    this.openfootballGitHubProvider = new OpenFootballGitHubAdapter();
     this.oddsAdapter = config.theOddsApiKey ? new TheOddsAdapter(config.theOddsApiKey, config.theOddsApiRegions, config.theOddsApiMonthlyLimit, config.theOddsApiSafetyReserve) : null;
     this.backupProvider = config.footballDataOrgKey ? new FootballDataOrgAdapter(config.footballDataOrgKey) : null;
     this.defaultTtlMs = config.cacheTtlMinutes * 60 * 1000;
@@ -209,6 +215,22 @@ export class DataProviderFactory {
             }
           }
         } catch (e: any) { console.warn('[Factory] TheSportsDB failed:', e.message); }
+      }
+
+      // e) Football-Data.co.uk free CSV fallback
+      if (fixtures.length === 0) {
+        try {
+          const fduk = await this.footballDataUkProvider.getFixturesByDate(date, league);
+          if (fduk.length > 0) fixtures.push(...fduk);
+        } catch (e: any) { console.warn('[Factory] FootballDataUk failed:', e.message); }
+      }
+
+      // f) OpenFootball static dataset fallback
+      if (fixtures.length === 0) {
+        try {
+          const of = await this.openfootballGitHubProvider.getFixturesByDate(date, league);
+          if (of.length > 0) fixtures.push(...of);
+        } catch (e: any) { console.warn('[Factory] OpenFootball failed:', e.message); }
       }
 
       // Guardrail: never serve synthetic archive

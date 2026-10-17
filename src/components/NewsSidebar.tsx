@@ -179,14 +179,14 @@ export const NewsSidebar: React.FC<NewsSidebarProps> = ({
         </button>
       </div>
 
-      {/* Real News Feed scraped directly from FootballDatabase.eu */}
+      {/* Cape News feed */}
       <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-4 shadow-lg">
         <div className="flex items-center justify-between pb-3 border-b border-[#252932]">
           <div className="flex items-center space-x-2">
             <Newspaper className="w-4 h-4 text-[#00d66c]" />
             <span className="text-xs font-bold text-white uppercase tracking-wider">Verified Football News</span>
           </div>
-          <span className="text-[10px] text-[#8c92a4]">FootballDatabase.eu</span>
+          <span className="text-[10px] text-[#8c92a4]">Cape News</span>
         </div>
 
         <div className="divide-y divide-[#252932] mt-1">

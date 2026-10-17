@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Fixture, League } from '../types';
-import { FotmobMatchRow } from './FotmobMatchRow';
+import { CapeMatchRow } from './CapeMatchRow';
 import { ChevronDown, ChevronRight, Trophy } from 'lucide-react';
 
 interface LeagueAccordionGroupProps {
@@ -23,9 +23,13 @@ const LEAGUE_META: Record<League, LeagueMeta> = {
   EUROPA_LEAGUE: { name: 'Europa League', country: 'Europe', flag: '🏆' },
   CONFERENCE_LEAGUE: { name: 'Conference League', country: 'Europe', flag: '🛡️' },
   CHAMPIONSHIP: { name: 'Championship', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+  BUNDESLIGA: { name: 'Bundesliga', country: 'Germany', flag: '🇩🇪' },
+  BUNDESLIGA2: { name: 'Bundesliga 2', country: 'Germany', flag: '🇩🇪' },
 };
 
 const LEAGUE_ORDER: League[] = [
+  'BUNDESLIGA',
+  'BUNDESLIGA2',
   'EPL',
   'CHAMPIONS_LEAGUE',
   'LALIGA',
@@ -112,7 +116,7 @@ export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
             {!isCollapsed && (
               <div className="divide-y divide-[#252932]/70">
                 {leagueFixtures.map(fixture => (
-                  <FotmobMatchRow
+                  <CapeMatchRow
                     key={fixture.id}
                     fixture={fixture}
                     onSelect={onSelectFixture}

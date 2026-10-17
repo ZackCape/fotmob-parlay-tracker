@@ -2,12 +2,12 @@ import React from 'react';
 import { Fixture } from '../types';
 import { Clock, TrendingUp, AlertTriangle, ChevronRight, Zap } from 'lucide-react';
 
-interface FotmobMatchRowProps {
+interface CapeMatchRowProps {
   fixture: Fixture;
   onSelect: (fixture: Fixture) => void;
 }
 
-export const FotmobMatchRow: React.FC<FotmobMatchRowProps> = ({ fixture, onSelect }) => {
+export const CapeMatchRow: React.FC<CapeMatchRowProps> = ({ fixture, onSelect }) => {
   const isLive = fixture.status === 'LIVE';
   const isFinished = fixture.status === 'FINISHED';
 
