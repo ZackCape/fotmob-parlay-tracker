@@ -16,7 +16,8 @@ export interface DiscordConfig {
   updateInterval?: UpdateInterval;
 }
 
-const DASHBOARD_URL = process.env.PUBLIC_URL || 'http://localhost:5000';
+import { getDashboardUrl } from '../utils/dashboardUrl.js';
+const DASHBOARD_URL = getDashboardUrl();
 
 export class DiscordBotService {
   private client: Client | null = null;

@@ -156,20 +156,35 @@ export class TheOddsAdapter {
     const homeNorm = this.normalizeTeamName(fixture.homeTeam.name);
     const awayNorm = this.normalizeTeamName(fixture.awayTeam.name);
     const kickoff = new Date(fixture.kickoffTime).getTime();
+    if (!isFinite(kickoff)) {
+      console.warn('[TheOddsAdapter] Invalid kickoff for fixture', fixture.id);
+      return null;
+    }
 
-    let best: { snap: OddsSnapshot; score: number } | null = null;
+    const TOLERANCE_MS = 10 * 60 * 1000; // 10 minutes
+    const candidates: OddsSnapshot[] = [];
     for (const snap of snapshots) {
       const snapHome = this.normalizeTeamName(snap.homeTeam);
       const snapAway = this.normalizeTeamName(snap.awayTeam);
       if (snapHome !== homeNorm || snapAway !== awayNorm) continue;
       const snapKickoff = new Date(snap.commenceTime).getTime();
+      if (!isFinite(snapKickoff)) continue;
       const timeDiff = Math.abs(snapKickoff - kickoff);
-      // within 2 hours
-      if (timeDiff > 2 * 60 * 60 * 1000) continue;
-      const score = timeDiff;
-      if (!best || score < best.score) best = { snap, score };
+      if (timeDiff > TOLERANCE_MS) {
+        console.warn(`[TheOddsAdapter] Rejected candidate ${snap.id}: kickoff diff ${timeDiff}ms > ${TOLERANCE_MS}ms`);
+        continue;
+      }
+      candidates.push(snap);
     }
-    return best ? best.snap : null;
+
+    console.info(`[TheOddsAdapter] fixture=${fixture.id} homeNorm=${homeNorm} awayNorm=${awayNorm} kickoff=${new Date(kickoff).toISOString()} candidates=${candidates.length}`);
+
+    // If more than one plausible candidate, reject (ambiguous)
+    if (candidates.length !== 1) {
+      if (candidates.length > 1) console.warn('[TheOddsAdapter] Ambiguous match; rejecting.');
+      return null;
+    }
+    return candidates[0];
   }
 
   getUsage(): { month: string; used: number; limit: number; reserve: number } {

@@ -44,6 +44,11 @@ export const FotmobMatchRow: React.FC<FotmobMatchRowProps> = ({ fixture, onSelec
             fallback
           </span>
         )}
+        {/archive|calendar|historical|offline/i.test(fixture.dataSource || '') && (
+          <span className="text-[9px] text-slate-500 font-mono" title={fixture.dataSource}>
+            offline
+          </span>
+        )}
       </div>
 
       {/* Match Teams & Score Column */}

@@ -18,9 +18,8 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
     let cancelled = false;
     setOddsLoading(true);
     const params = new URLSearchParams({
-      home: fixture.homeTeam.name,
-      away: fixture.awayTeam.name,
-      kickoff: fixture.kickoffTime,
+      fixtureId: fixture.id,
+      date: fixture.date,
       league: fixture.league,
     });
     const homePred = analysis.marketPredictions?.find(p => p.market === 'HOME_WIN');
