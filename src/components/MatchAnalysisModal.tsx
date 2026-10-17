@@ -128,10 +128,10 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
 
           <div className="flex items-center space-x-3 font-mono">
             <span className="bg-amber-500/10 px-3 py-1 rounded-xl border border-amber-500/25 text-amber-300 font-bold">
-              Home xG: {dixonColesParameters.homeExpectedGoals}
+              Home xG: {dixonColesParameters?.homeExpectedGoals ?? 'N/A'}
             </span>
             <span className="bg-sky-500/10 px-3 py-1 rounded-xl border border-sky-500/25 text-sky-300 font-bold">
-              Away xG: {dixonColesParameters.awayExpectedGoals}
+              Away xG: {dixonColesParameters?.awayExpectedGoals ?? 'N/A'}
             </span>
           </div>
         </div>
@@ -227,7 +227,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       <div className="flex items-center justify-between text-xs">
                         <span className={`font-semibold ${isTop ? 'text-white' : 'text-slate-300'}`}>{r.label}</span>
                         <span className={`font-mono font-bold ${isTop ? 'text-blue-300' : 'text-slate-400'}`}>
-                          {(r.value * 100).toFixed(1)}%
+                          {isFinite(r.value) ? `${(r.value * 100).toFixed(1)}%` : 'N/A'}
                         </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
@@ -407,20 +407,20 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                     <div className="text-sm font-bold text-white mb-3">Possession</div>
                     <div className="flex items-center gap-3">
                       <span className="font-mono font-bold text-white text-sm w-12 text-right">
-                        {fixture.statistics.possessionHome ?? '-'}%
+                        {(fixture.statistics.possessionHome ?? '-')}{typeof fixture.statistics.possessionHome === 'number' ? '%' : ''}
                       </span>
                       <div className="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden flex">
                         <div
                           className="bg-blue-500 h-full"
-                          style={{ width: `${fixture.statistics.possessionHome ?? 0}%` }}
+                          style={{ width: `${Math.max(0, Math.min(100, fixture.statistics.possessionHome ?? 0))}%` }}
                         />
                         <div
                           className="bg-slate-500 h-full flex-1"
-                          style={{ width: `${100 - (fixture.statistics.possessionHome ?? 0)}%` }}
+                          style={{ width: `${Math.max(0, 100 - Math.max(0, Math.min(100, fixture.statistics.possessionHome ?? 0)))}%` }}
                         />
                       </div>
                       <span className="font-mono font-bold text-white text-sm w-12">
-                        {fixture.statistics.possessionAway ?? '-'}%
+                        {(fixture.statistics.possessionAway ?? '-')}{typeof fixture.statistics.possessionAway === 'number' ? '%' : ''}
                       </span>
                     </div>
                   </div>
@@ -439,7 +439,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       const hv = row.home ?? 0;
                       const av = row.away ?? 0;
                       const total = hv + av;
-                      const hp = total > 0 ? (hv / total) * 100 : 50;
+                      const hp = total > 0 ? Math.max(0, Math.min(100, (hv / total) * 100)) : 50;
                       return (
                         <div key={row.label} className="px-4 py-2.5 border-b border-white/5 last:border-b-0">
                           <div className="flex items-center justify-between text-xs mb-1.5">

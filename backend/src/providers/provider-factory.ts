@@ -17,6 +17,8 @@ import { AppConfig } from '../config/env.js';
 import { Fixture, MatchAnalysis } from '../types/football.js';
 
 import { AdaptiveLearningEngine } from '../engine/adaptive-learning.js';
+import { isVerifiedFixture } from '../utils/fixtureValidation.js';
+import { buildGenericAnalysis } from '../utils/genericAnalysis.js';
 
 interface CacheEntry<T> {
   data: T;
@@ -286,6 +288,26 @@ export class DataProviderFactory {
         }
         if (details) {
           this.setCache(cacheKey, details);
+          return details;
+        }
+        // ESPN identity could not be verified: fall through to a model-only bundle
+        // built from the cached fixture list (never substitute another match).
+        const fx = await this.findFixtureById(fixtureId);
+        if (fx) {
+          details = buildGenericAnalysis(fx);
+          this.setCache(cacheKey, details);
+        }
+        return details;
+      }
+
+      // Other verified providers (OpenLigaDB / Football-Data.co.uk / TheSportsDB /
+      // OpenFootball) do not implement rich match endpoints: build a model-only bundle
+      // from the authoritative cached fixture record instead of returning 404.
+      if (/^(oldb|fduk|tsdb|openfoot)-/.test(fixtureId)) {
+        const fx = await this.findFixtureById(fixtureId);
+        if (fx && isVerifiedFixture(fx)) {
+          details = buildGenericAnalysis(fx);
+          this.setCache(cacheKey, details);
         }
         return details;
       }
@@ -317,6 +339,19 @@ export class DataProviderFactory {
     this.inFlight.set(inflightKey, promise);
     promise.finally(() => this.inFlight.delete(inflightKey));
     return promise;
+  }
+
+  /** Locate a fixture across a small window of recent dates using the cached list. */
+  private async findFixtureById(fixtureId: string): Promise<Fixture | null> {
+    for (const d of [0, -1, 1, -2, 2]) {
+      const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+      const cached = this.getCached<Fixture[]>(`fixtures:${date}:ALL`);
+      if (cached) {
+        const hit = cached.find(f => f.id === fixtureId);
+        if (hit) return hit;
+      }
+    }
+    return null;
   }
 
   async getHealth(): Promise<{ primary: ProviderHealth; fotmob: ProviderHealth; footballdatabase: ProviderHealth; fallback: ProviderHealth; cacheSize: number }> {

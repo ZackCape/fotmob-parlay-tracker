@@ -6,6 +6,7 @@ import { buildStatisticalParlay } from '../parlays/parlay-builder.js';
 import { MarketPrediction, ParlayMode } from '../types/football.js';
 import { LiveParlayTrackerService } from '../parlays/live-tracker.js';
 import { isVerifiedFixture } from '../utils/fixtureValidation.js';
+import * as CP from './interactions.js';
 
 export type UpdateInterval = '5m' | '15m' | '30m' | '45m' | '1h';
 
@@ -29,6 +30,7 @@ export class DiscordBotService {
   private lastBroadcastTime: string | null = null;
   private cronJob: any = null;
   private currentInterval: UpdateInterval = '1h';
+  private lastLiveSnapshot: Map<string, string> = new Map();
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
     this.config = config;
@@ -61,7 +63,21 @@ export class DiscordBotService {
     const pattern = this.getCronPattern(this.currentInterval);
     this.cronJob = cron.schedule(pattern, async () => {
       console.log(`[DiscordBot] Running scheduled ${this.currentInterval} odds & parlay broadcast...`);
-      await this.sendHourlyUpdate();
+      // Auto-recalibrate cadence from live match activity on every tick.
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+        const next = CP.recalibrateInterval(fixtures as any[], this.currentInterval);
+        if (next !== this.currentInterval) {
+          console.log(`[DiscordBot] Auto-recalibrating interval ${this.currentInterval} -> ${next}`);
+          this.setBroadcastConfig(undefined, next as any);
+          return;
+        }
+        await this.sendHourlyUpdate();
+        await this.pushLiveUpdates(fixtures as any[]);
+      } catch (e: any) {
+        console.warn(`[DiscordBot] scheduled tick failed: ${e.message}`);
+      }
     });
     console.log(`[DiscordBot] Updates scheduled: interval = ${this.currentInterval} (${pattern}) for channel = ${this.config.channelId || 'auto-discovered'}`);
   }
@@ -119,6 +135,12 @@ export class DiscordBotService {
       // Register Slash Commands globally
       try {
         const commands = [
+          new SlashCommandBuilder()
+            .setName('customparlay')
+            .setDescription('Build your own custom parlay: pick matches and markets, then save it'),
+          new SlashCommandBuilder()
+            .setName('livetracking')
+            .setDescription('Track a live or upcoming match of your choice (no manual IDs)'),
           new SlashCommandBuilder()
             .setName('info')
             .setDescription('View all available bot commands, leagues, and statistical engine details'),
@@ -201,7 +223,7 @@ export class DiscordBotService {
             .setDescription('Trigger a live odds & team news briefing right now in this channel'),
           new SlashCommandBuilder()
             .setName('help')
-            .setDescription('Display quick command directory and statistical modeling overview'),
+            .setDescription('Cape Predictor command directory with interactive navigation buttons'),
         ];
 
         await this.client?.application?.commands.set(commands);
@@ -271,6 +293,231 @@ export class DiscordBotService {
           await interaction.editReply(`⚠️ An error occurred: ${err.message}`);
         } else {
           await interaction.reply({ content: `⚠️ An error occurred: ${err.message}`, ephemeral: true });
+        }
+      }
+    });
+
+    // ---- Cape Predictor interactive commands -------------------------------
+    const todayStr = () => new Date().toISOString().slice(0, 10);
+
+    const sendFixturesPicker = async (channel: any) => {
+      await channel.send({
+        embeds: [CP.leaguePickerEmbed()],
+        components: [CP.buildLeagueSelectRow()],
+      });
+    };
+
+    const renderLeague = async (channel: any, league: string) => {
+      const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
+      const predictionsByFixture = new Map<string, any[]>();
+      for (const fx of fixtures.slice(0, 8)) {
+        try {
+          const d = await this.factory.getMatchDetails(fx.id);
+          if (d?.marketPredictions) predictionsByFixture.set(fx.id, d.marketPredictions);
+        } catch { /* analysis unavailable - still show fixture */ }
+      }
+      const label = CP.LEAGUE_OPTIONS.find((l) => l.id === league)?.label ?? league;
+      await channel.send({
+        embeds: [CP.buildFixturesEmbed(fixtures, predictionsByFixture, label)],
+        components: CP.buildFixtureActionRows(fixtures),
+      });
+    };
+
+    const sendHelp = async (channel: any) => {
+      await channel.send({ embeds: [CP.buildHelpEmbed()], components: [CP.buildHelpRow()] });
+    };
+
+    const sendCustomParlay = async (channel: any) => {
+      const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
+      if (!fixtures.length) {
+        await channel.send({ embeds: [CP.baseEmbed('Custom Parlay', 'No verified fixtures available today. Try again later.')] });
+        return;
+      }
+      const parlay = CP.getParlay(channel.id);
+      await channel.send({
+        embeds: [CP.buildParlayEmbed(parlay, 'Pick a match and a market, then press Add Leg.')],
+        components: [
+          CP.buildMatchSelectRow(fixtures),
+          CP.buildMarketSelectRow(),
+          ...CP.buildParlayActionRows(parlay.legs.length === 0),
+        ],
+      });
+    };
+
+    const sendLiveTracker = async (channel: any) => {
+      const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
+      const trackable = fixtures.filter((f: any) => f.status === 'LIVE' || f.status === 'TIMED');
+      if (!trackable.length) {
+        await channel.send({ embeds: [CP.baseEmbed('Live Tracking', 'No live or upcoming matches to track right now.')] });
+        return;
+      }
+      await channel.send({
+        embeds: [CP.buildLiveTrackingEmbed(trackable)],
+        components: [CP.buildLiveSelectRow(trackable)],
+      });
+    };
+
+    // Slash command routing for the new commands
+    this.client.on('interactionCreate', async (interaction: any) => {
+      if (interaction.isChatInputCommand?.()) {
+        const name = interaction.commandName;
+        if (name === 'help') {
+          await interaction.reply({ embeds: [CP.buildHelpEmbed()], components: [CP.buildHelpRow()], ephemeral: true });
+          return;
+        }
+        if (name === 'customparlay') {
+          await interaction.reply({ content: 'Opening the custom parlay builder…', ephemeral: true });
+          await sendCustomParlay(interaction.channel);
+          return;
+        }
+        if (name === 'livetracking') {
+          await interaction.reply({ content: 'Opening live tracking…', ephemeral: true });
+          await sendLiveTracker(interaction.channel);
+          return;
+        }
+      }
+    });
+
+    // Component interactions (select menus + buttons)
+    this.client.on('interactionCreate', async (interaction: any) => {
+      if (!interaction.isStringSelectMenu?.() && !interaction.isButton?.()) return;
+      const id: string = (interaction.customId || '') as string;
+
+      try {
+        // ---- league select ----
+        if (id === 'cp:fixtures:league') {
+          const league = interaction.values?.[0] ?? 'ALL';
+          await interaction.deferReply();
+          await renderLeague(interaction.channel, league);
+          return;
+        }
+
+        // ---- nav buttons ----
+        if (id.startsWith('cp:nav:')) {
+          const target = id.split(':')[2];
+          await interaction.deferReply();
+          if (target === 'fixtures') await sendFixturesPicker(interaction.channel);
+          else if (target === 'parlay') await sendCustomParlay(interaction.channel);
+          else if (target === 'live') await sendLiveTracker(interaction.channel);
+          else await interaction.followUp({
+            embeds: [CP.baseEmbed('Settings', `Broadcast cadence is set with \`/interval\`.\nLinked channel is managed with \`/channel\`.`)],
+          });
+          return;
+        }
+
+        // ---- analyze ----
+        if (id.startsWith('cp:analyze:')) {
+          const fixtureId = id.split(':')[2];
+          await interaction.deferReply();
+          const fx = (await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL')).find((f: any) => f.id === fixtureId);
+          if (!fx) { await interaction.followUp({ content: 'Match could not be verified.' }); return; }
+          const d = await this.factory.getMatchDetails(fixtureId);
+          if (!d) { await interaction.followUp({ content: 'Analysis unavailable for this match.' }); return; }
+          const preds = (d.marketPredictions || [])
+            .filter((p: any) => ['HOME_WIN', 'DRAW', 'AWAY_WIN'].includes(p.market))
+            .map((p: any) => `**${p.selection}** — ${(p.estimatedProbability * 100).toFixed(1)}%`).join('\n');
+          await interaction.followUp({
+            embeds: [CP.baseEmbed(`${d.fixture.homeTeam.name} vs ${d.fixture.awayTeam.name}`,
+              `${preds || 'No 1X2 prediction available.'}\nSource: ${d.fixture.dataSource}`)],
+          });
+          return;
+        }
+
+        // ---- track live ----
+        if (id.startsWith('cp:track:')) {
+          const fixtureId = id.split(':')[2];
+          await interaction.deferReply();
+          const fx = (await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL')).find((f: any) => f.id === fixtureId);
+          if (!fx) { await interaction.followUp({ content: 'Match could not be verified.' }); return; }
+          CP.subscribeLive(interaction.channel.id, fixtureId, `${fx.homeTeam.name} v ${fx.awayTeam.name}`);
+          await interaction.followUp({
+            embeds: [CP.baseEmbed('Live Tracking enabled',
+              `Watching **${fx.homeTeam.name} v ${fx.awayTeam.name}** (${fx.league}).\nScore and status updates will post in this channel.`)],
+          });
+          return;
+        }
+
+        // ---- custom parlay components ----
+        if (id === 'cp:parlay:match') {
+          interaction.deferUpdate().catch(() => {});
+          CP.pendingMatch.set(interaction.channel.id, interaction.values?.[0]);
+          return;
+        }
+        if (id === 'cp:parlay:market') {
+          const parlay = CP.getParlay(interaction.channel.id);
+          const fxId: string | undefined = CP.pendingMatch.get(interaction.channel.id);
+          const market: any = interaction.values?.[0];
+          await interaction.deferReply();
+          const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
+          const fx: any = fxId ? fixtures.find((f: any) => f.id === fxId) : undefined;
+          if (!fxId || !fx) { await interaction.followUp({ content: 'Please pick a match first.' }); return; }
+          let prob = 1 / 3;
+          try {
+            const d = await this.factory.getMatchDetails(fxId);
+            const mp = d?.marketPredictions?.find((p: any) => p.market === market);
+            if (mp) prob = mp.estimatedProbability;
+          } catch { /* use neutral prior */ }
+          const res = CP.addLeg(parlay, {
+            fixtureId: fxId,
+            description: `${fx.homeTeam.name} v ${fx.awayTeam.name}`,
+            market,
+            selection: market,
+            probability: prob,
+          });
+          await interaction.followUp({
+            embeds: [CP.buildParlayEmbed(parlay, res.ok ? 'Leg added.' : res.reason)],
+            components: [
+              CP.buildMatchSelectRow(fixtures),
+              CP.buildMarketSelectRow(),
+              ...CP.buildParlayActionRows(parlay.legs.length === 0),
+            ],
+          });
+          return;
+        }
+        if (id === 'cp:parlay:add') {
+          await interaction.deferReply();
+          const parlay = CP.getParlay(interaction.channel.id);
+          await interaction.followUp({
+            embeds: [CP.buildParlayEmbed(parlay, 'Choose a market for your selected match to add a leg.')],
+          });
+          return;
+        }
+        if (id === 'cp:parlay:save') {
+          await interaction.deferReply();
+          const parlay = CP.getParlay(interaction.channel.id);
+          parlay.saved = true;
+          await interaction.followUp({ embeds: [CP.buildParlayEmbed(parlay, 'Parlay saved for live tracking.')] });
+          return;
+        }
+        if (id === 'cp:parlay:clear') {
+          await interaction.deferReply();
+          const parlay = CP.getParlay(interaction.channel.id);
+          parlay.legs = [];
+          parlay.saved = false;
+          await interaction.followUp({ embeds: [CP.buildParlayEmbed(parlay, 'Slip cleared.')] });
+          return;
+        }
+
+        // ---- live tracking select ----
+        if (id === 'cp:live:match') {
+          const fixtureId = interaction.values?.[0];
+          await interaction.deferReply();
+          const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
+          const fx = fixtures.find((f: any) => f.id === fixtureId);
+          if (!fx) { await interaction.followUp({ content: 'Match could not be verified.' }); return; }
+          CP.subscribeLive(interaction.channel.id, fixtureId, `${fx.homeTeam.name} v ${fx.awayTeam.name}`);
+          await interaction.followUp({
+            embeds: [CP.baseEmbed('Live Tracking enabled',
+              `Watching **${fx.homeTeam.name} v ${fx.awayTeam.name}** (${fx.league}, ${fx.status}).`)],
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.warn(`[DiscordBot] interaction error (${id}): ${err.message}`);
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp({ content: 'Something went wrong handling that selection.' }).catch(() => {});
+        } else {
+          await interaction.reply({ content: 'Something went wrong handling that selection.', ephemeral: true }).catch(() => {});
         }
       }
     });
@@ -575,6 +822,32 @@ export class DiscordBotService {
         text: 'Cape Predictor • Transparent, Explainable Sports Analytics',
       })
       .setTimestamp();
+  }
+
+  /** Push score/status changes for channels with live subscriptions. */
+  private async pushLiveUpdates(fixtures: any[]): Promise<void> {
+    const subs = CP.allLiveSubscriptions();
+    if (!subs.length || !this.client?.isReady()) return;
+    for (const sub of subs) {
+      const fx = fixtures.find((f) => f.id === sub.fixtureId);
+      if (!fx) continue;
+      const key = `liveScore:${sub.channelId}`;
+      const current = `${fx.homeScore ?? '-'}-${fx.awayScore ?? '-'}@${fx.status}`;
+      if (this.lastLiveSnapshot.get(key) === current) continue;
+      this.lastLiveSnapshot.set(key, current);
+      try {
+        const channel: any = await this.client.channels.fetch(sub.channelId);
+        if (!channel?.send) continue;
+        await channel.send({
+          embeds: [CP.baseEmbed(
+            `${fx.homeTeam.name} ${fx.homeScore ?? '-'} - ${fx.awayScore ?? '-'} ${fx.awayTeam.name}`,
+            `**${fx.status}** • ${fx.league} • Updated ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC`,
+          )],
+        });
+      } catch (e: any) {
+        console.warn(`[DiscordBot] live update push failed: ${e.message}`);
+      }
+    }
   }
 
   public async generateFixturesReply(): Promise<string> {

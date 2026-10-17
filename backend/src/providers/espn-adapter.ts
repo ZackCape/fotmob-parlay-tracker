@@ -3,6 +3,7 @@ import { IFootballDataProvider, ProviderHealth } from './provider-interface.js';
 import { Fixture, League, Team, MatchAnalysis, FixtureStatistics, Lineup, LineupPlayer, MarketPrediction } from '../types/football.js';
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
+import { estimateTeamStrengths, sampleFromResults } from '../utils/teamStrength.js';
 
 /**
  * ESPN public scoreboard + summary adapter.
@@ -79,12 +80,34 @@ function num(v: any): number | null {
   return isNaN(n) ? null : n;
 }
 
+/**
+ * Parse an ESPN scoreline string written from one team's perspective,
+ * e.g. "2-1" or "6-3". Returns null when the value is not a scoreline.
+ */
+function scoreline(v: any): { forGoals: number; againstGoals: number } | null {
+  if (typeof v !== 'string') return null;
+  const m = v.trim().match(/^(\d+)\s*-\s*(\d+)$/);
+  if (!m) return null;
+  const forGoals = parseInt(m[1], 10);
+  const againstGoals = parseInt(m[2], 10);
+  if (!Number.isFinite(forGoals) || !Number.isFinite(againstGoals)) return null;
+  return { forGoals, againstGoals };
+}
+
 export interface EspnMatchStats {
   eventId: string;
   statistics: FixtureStatistics | null;
   events: Array<{ minute: string | null; team: string | null; type: string; detail: string | null; player: string | null }>;
   lineups: { home: Lineup | null; away: Lineup | null };
   form: { home: Array<'W' | 'D' | 'L'>; away: Array<'W' | 'D' | 'L'> };
+  /**
+   * Real scorelines from the last five completed matches, used to derive
+   * genuine per-team attack / defence strengths for the Dixon-Coles model.
+   */
+  recentGoals: {
+    home: Array<{ goalsFor: number; goalsAgainst: number }>;
+    away: Array<{ goalsFor: number; goalsAgainst: number }>;
+  };
 }
 
 export class EspnAdapter implements IFootballDataProvider {
@@ -229,27 +252,61 @@ export class EspnAdapter implements IFootballDataProvider {
         else lineups.away = lineup;
       }
 
-      // ---- Form (last five games) ----
+      // ---- Form + recent goals (last five games) ----
+      //
+      // NOTE: ESPN's `lastFiveGames` feed is NOT shaped like a scoreboard
+      // competitor list. Each entry looks like:
+      //   { displayOrder: 1 | 2, team: { id }, events: [{
+      //       atVs: 'vs' | '@', score: 'myGoals-opponentGoals',
+      //       homeTeamScore, awayTeamScore, gameResult: 'W' | 'L' | 'D' }] }
+      // `score` is always written from the team's own perspective, and
+      // `displayOrder` is numeric, not the strings 'home'/'away'.
       const form: EspnMatchStats['form'] = { home: [], away: [] };
+      const recentGoals: EspnMatchStats['recentGoals'] = { home: [], away: [] };
+
+      const currentHomeId = String(data.header?.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'home')?.team?.id ?? '');
+      const currentAwayId = String(data.header?.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'away')?.team?.id ?? '');
+
       for (const lf of data.lastFiveGames || []) {
+        const teamId = String(lf.team?.id ?? '');
+
+        // Prefer an explicit id match against the current fixture; fall back to
+        // ESPN's numeric displayOrder (1 = home, 2 = away).
+        let side: 'home' | 'away' | null = null;
+        if (teamId && currentHomeId && teamId === currentHomeId) side = 'home';
+        else if (teamId && currentAwayId && teamId === currentAwayId) side = 'away';
+        else if (lf.displayOrder === 1 || lf.displayOrder === '1') side = 'home';
+        else if (lf.displayOrder === 2 || lf.displayOrder === '2') side = 'away';
+        if (!side) continue;
+
         const results: Array<'W' | 'D' | 'L'> = [];
+        const scorelines: Array<{ goalsFor: number; goalsAgainst: number }> = [];
+
         for (const ev of lf.events || []) {
-          const comp = ev.competitions?.[0];
-          if (!comp) continue;
-          const competitors = comp.competitors || [];
-          const me = competitors.find((c: any) => c.team?.id === lf.team?.id);
-          const opp = competitors.find((c: any) => c.team?.id !== lf.team?.id);
-          if (!me || !opp) continue;
-          const mine = num(me.score);
-          const theirs = num(opp.score);
-          if (mine === null || theirs === null) continue;
-          results.push(mine > theirs ? 'W' : mine === theirs ? 'D' : 'L');
+          // Preferred: the "for-against" scoreline string (e.g. "2-1").
+          const line = scoreline(ev.score);
+          if (line) {
+            results.push(line.forGoals > line.againstGoals ? 'W' : line.forGoals === line.againstGoals ? 'D' : 'L');
+            scorelines.push({ goalsFor: line.forGoals, goalsAgainst: line.againstGoals });
+            continue;
+          }
+
+          // Fallback: explicit home/away totals combined with venue (atVs).
+          const homeScore = num(ev.homeTeamScore);
+          const awayScore = num(ev.awayTeamScore);
+          if (homeScore === null || awayScore === null) continue;
+          const atHome = ev.atVs !== '@';
+          const forGoals = atHome ? homeScore : awayScore;
+          const againstGoals = atHome ? awayScore : homeScore;
+          results.push(forGoals > againstGoals ? 'W' : forGoals === againstGoals ? 'D' : 'L');
+          scorelines.push({ goalsFor: forGoals, goalsAgainst: againstGoals });
         }
-        if (lf.displayOrder === 'home') form.home = results.slice(-5);
-        else form.away = results.slice(-5);
+
+        form[side] = results.slice(-5);
+        recentGoals[side] = scorelines.slice(-5);
       }
 
-      return { eventId: String(eventId), statistics, events, lineups, form };
+      return { eventId: String(eventId), statistics, events, lineups, form, recentGoals };
     } catch (err: any) {
       console.warn(`[EspnAdapter] getMatchStats error for ${eventId}:`, err.message);
       return null;
@@ -286,14 +343,30 @@ export class EspnAdapter implements IFootballDataProvider {
     const homeForm = this.buildForm(stats?.form.home || [], st || null, 'home');
     const awayForm = this.buildForm(stats?.form.away || [], st || null, 'away');
 
-    const dcResult = calculateDixonColes(1.25, 0.95, 1.10, 1.10, fixture.league);
+    // Derive genuine per-team strengths from observed scorelines rather than
+// the previously hardcoded constants, which produced identical probabilities
+    // for every fixture on the slate.
+    const strength = estimateTeamStrengths({
+      league: fixture.league,
+      homeRecent: sampleFromResults(stats?.recentGoals.home),
+      awayRecent: sampleFromResults(stats?.recentGoals.away),
+      homeXg: st?.xgHome ?? null,
+      awayXg: st?.xgAway ?? null,
+    });
+
+    const dcResult = calculateDixonColes(
+      strength.homeAttack, strength.homeDefense,
+      strength.awayAttack, strength.awayDefense,
+      fixture.league,
+    );
+
     const supportingStats = {
-      homeGoalAverageLast5: st?.shotsOnTargetHome ?? 1.5,
-      awayGoalAverageLast5: st?.shotsOnTargetAway ?? 1.3,
-      homeConcededAverageLast5: 1.1,
-      awayConcededAverageLast5: 1.2,
-      homeXgAverage: st?.xgHome ?? 1.35,
-      awayXgAverage: st?.xgAway ?? 1.15,
+      homeGoalAverageLast5: st?.xgHome ?? sampleFromResults(stats?.recentGoals.home)?.goalsForPerMatch ?? 1.5,
+      awayGoalAverageLast5: st?.xgAway ?? sampleFromResults(stats?.recentGoals.away)?.goalsForPerMatch ?? 1.3,
+      homeConcededAverageLast5: sampleFromResults(stats?.recentGoals.home)?.goalsConcededPerMatch ?? 1.1,
+      awayConcededAverageLast5: sampleFromResults(stats?.recentGoals.away)?.goalsConcededPerMatch ?? 1.2,
+      homeXgAverage: st?.xgHome ?? dcResult.homeExpectedGoals,
+      awayXgAverage: st?.xgAway ?? dcResult.awayExpectedGoals,
       bttsFrequencyLast10: 0.55,
       over25FrequencyLast10: 0.58,
       h2hSummary: 'ESPN public match feed',
@@ -303,7 +376,8 @@ export class EspnAdapter implements IFootballDataProvider {
 
     const marketPredictions = deriveMarketPredictions(
       fixture,
-      1.25, 0.95, 1.10, 1.10,
+      strength.homeAttack, strength.homeDefense,
+      strength.awayAttack, strength.awayDefense,
       supportingStats,
       homeForm.matchesPlayed,
       awayForm.matchesPlayed,
@@ -333,12 +407,17 @@ export class EspnAdapter implements IFootballDataProvider {
         fixture.statistics
           ? 'Team statistics populated from ESPN boxscore.'
           : 'Match statistics unavailable at this time.',
+        `Model strengths: ${strength.basis}.`,
+        strength.priorOnly
+          ? 'No recent results were published for these teams, so probabilities fall back to a neutral league prior and should be treated as low-confidence.'
+          : 'Probabilities are model estimates, not bookmaker odds, and are not a guarantee of outcome.',
       ],
     };
   }
 
   private buildForm(results: Array<'W' | 'D' | 'L'>, st: FixtureStatistics | null, side: 'home' | 'away') {
-    const played = results.length || 10;
+    // Never claim matches were played when the provider supplied none.
+    const played = results.length;
     const wins = results.filter(r => r === 'W').length;
     const draws = results.filter(r => r === 'D').length;
     const losses = results.filter(r => r === 'L').length;
