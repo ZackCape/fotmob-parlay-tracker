@@ -64,8 +64,8 @@ export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
     return (
       <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-8 text-center text-[#8c92a4]">
         <Trophy className="w-10 h-10 mx-auto mb-2 text-[#8c92a4]/40" />
-        <p className="text-sm font-semibold text-white">No matches scheduled for this selection</p>
-        <p className="text-xs mt-1">Try switching the date or changing the league filter from the sidebar.</p>
+        <p className="text-sm font-semibold text-white">No verified fixtures available</p>
+        <p className="text-xs mt-1">The configured football providers did not return verified matches for this date. Try another date or check provider/API quota status.</p>
       </div>
     );
   }

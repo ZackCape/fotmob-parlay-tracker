@@ -166,13 +166,9 @@ export class DataProviderFactory {
         }
       }
 
-      if (fixtures.length === 0) {
-        fixtures = await this.fallbackProvider.getFixturesByDate(date, league);
-        if (fixtures.length > 0) {
-          source = this.fallbackProvider.name;
-          fallbackReason = fallbackReason || 'offline_fallback';
-        }
-      }
+      // Verified archive is NOT used as a substitute for live/scheduled fixtures.
+      // Only OpenFootball historical data may be used for past dates (labelled).
+      // If no real provider data is available, return empty (unavailable).
 
       const retrievedAt = new Date().toISOString();
       fixtures = fixtures.map((f) => ({
