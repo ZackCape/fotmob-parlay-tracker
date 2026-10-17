@@ -23,18 +23,18 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="sticky top-0 z-40 bg-[#0d0e11]/95 backdrop-blur-md border-b border-[#252932] shadow-sm">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
         <div className="flex items-center justify-between h-16 gap-4">
-          {/* FotMob Logo & Brand */}
+          {/* Cape Predictor Logo & Brand */}
           <div className="flex items-center space-x-3 shrink-0 cursor-pointer" onClick={() => onTabChange('fixtures')}>
             <div className="flex items-center space-x-2">
               <div className="w-8 h-8 rounded-full bg-[#00d66c] flex items-center justify-center font-black text-black text-sm shadow-md shadow-[#00d66c]/20">
                 ⚡
               </div>
-              <div className="flex items-baseline space-x-1.5">
-                <span className="text-xl font-black tracking-tight text-white font-sans">
-                  FOTMOB
+              <div className="flex flex-col leading-none">
+                <span className="text-base font-black tracking-tight text-white font-sans">
+                  Cape Predictor
                 </span>
-                <span className="text-[10px] font-black uppercase text-[#00d66c] tracking-widest">
-                  PRO
+                <span className="text-[9px] font-semibold text-[#00d66c] tracking-wide">
+                  Football Intelligence. Smarter Predictions.
                 </span>
               </div>
             </div>

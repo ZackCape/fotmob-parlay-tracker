@@ -57,7 +57,7 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
 
   return (
     <div className="space-y-6">
-      {/* Configuration Card with FotMob Dark Styling */}
+      {/* Configuration Card */}
       <div className="bg-[#16181d] border border-[#252932] rounded-3xl p-6 sm:p-8 shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center space-x-3.5">
@@ -68,7 +68,7 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
               <div className="flex items-center space-x-2">
                 <h2 className="text-xl font-black text-white">Statistical Parlay & SGP Engine</h2>
                 <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-[#00d66c]/20 text-[#00d66c] border border-[#00d66c]/30">
-                  FotMob Live Feed
+                  Live Verified Feed
                 </span>
               </div>
               <p className="text-xs text-[#8c92a4] mt-0.5">

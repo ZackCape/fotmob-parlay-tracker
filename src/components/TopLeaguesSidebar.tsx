@@ -120,7 +120,7 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
       <div className="bg-gradient-to-br from-[#16181d] to-[#1c1f26] border border-[#252932] rounded-2xl p-4 text-xs text-[#8c92a4]">
         <div className="flex items-center space-x-2 text-white font-bold mb-1">
           <Shield className="w-4 h-4 text-[#00d66c]" />
-          <span>FotMob Fast Sync</span>
+          <span>Fast Sync</span>
         </div>
         <p className="text-[11px] leading-relaxed">
           Poisson & Dixon-Coles model recalibrated across 7 top leagues with live match state tracking.

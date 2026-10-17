@@ -401,7 +401,7 @@ export class DiscordBotService {
         .join('\n');
 
       const embedPayload = {
-        title: `🏆 Football Analytics Briefing • ${data.today}`,
+        title: `🏆 Cape Predictor Briefing • ${data.today}`,
         description: `Live statistical projections across **Premier League, Championship, La Liga, Ligue 1 & UEFA Competitions**.\n*Pure mathematical models • Real-time stats from API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
         color: 0x2563EB, // Restrained blue primary
         fields: [

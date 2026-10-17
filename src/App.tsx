@@ -133,7 +133,7 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#0d0e11] text-white flex flex-col justify-between selection:bg-[#00d66c] selection:text-black">
       <div>
-        {/* Top FotMob Header */}
+        {/* Top Cape Predictor Header */}
         <Navbar
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -143,7 +143,7 @@ export const App: React.FC = () => {
           onSearchChange={setSearchQuery}
         />
 
-        {/* FotMob Desktop 3-Column Layout */}
+        {/* Cape Predictor Desktop 3-Column Layout */}
         <main className="max-w-[1600px] mx-auto px-3 sm:px-6 py-6">
           <div className="flex flex-col lg:flex-row gap-6">
             {/* COLUMN 1: Top Leagues Sidebar */}
@@ -164,7 +164,7 @@ export const App: React.FC = () => {
               {/* Center Content Switcher Based on Active Tab */}
               {activeTab === 'fixtures' && (
                 <div>
-                  {/* FotMob < Today, 17 Oct > Navigation Bar */}
+                  {/* Date Navigation Bar */}
                   <DatePickerBar
                     selectedDate={selectedDate}
                     onDateChange={setSelectedDate}
@@ -189,7 +189,7 @@ export const App: React.FC = () => {
                       <p className="font-semibold text-sm">{fixtureError}</p>
                     </div>
                   ) : (
-                    /* Grouped League Accordions Matching FotMob Desktop */
+                    /* Grouped League Accordions */
                     <LeagueAccordionGroup
                       fixtures={filteredFixtures}
                       onSelectFixture={handleSelectFixture}
@@ -256,12 +256,12 @@ export const App: React.FC = () => {
         <StatusModal status={systemStatus} onClose={() => setIsStatusOpen(false)} />
       )}
 
-      {/* Sleek FotMob Footer */}
+      {/* Footer */}
       <footer className="border-t border-[#252932] bg-[#0d0e11] mt-12 py-6 text-xs text-[#8c92a4]">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-2">
             <span className="w-2 h-2 rounded-full bg-[#00d66c]" />
-            <span>FotMob Desktop Dark UI Engine • 7 Top European Leagues • Zero Bookmaker Odds Biases</span>
+            <span>Cape Predictor • 7 Top European Leagues • Zero Bookmaker Odds Biases</span>
           </div>
           <div className="flex items-center space-x-4">
             <span>24/7 Discord Uptime</span>

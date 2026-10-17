@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import nodePath from 'node:path';
 import { IFootballDataProvider, ProviderHealth } from './provider-interface.js';
 import { ApiFootballAdapter } from './api-football-adapter.js';
 import { FootballDataOrgAdapter } from './football-data-adapter.js';
@@ -119,11 +121,10 @@ export class DataProviderFactory {
     });
   }
 
-  private readonly FILE_CACHE = require('path').resolve(process.cwd(), 'data', 'fixtures_cache.json');
+  private readonly FILE_CACHE = nodePath.resolve(process.cwd(), 'data', 'fixtures_cache.json');
   private readJsonCache(): { data: any; cachedAt: number } | null {
     if (process.env.NODE_ENV !== 'production') return null;
     try {
-      const fs = require('fs');
       if (!fs.existsSync(this.FILE_CACHE)) return null;
       const raw = JSON.parse(fs.readFileSync(this.FILE_CACHE, 'utf8'));
       if (!raw || !raw.cachedAt || !raw.data) return null;
@@ -134,9 +135,7 @@ export class DataProviderFactory {
   private writeJsonCache(data: any) {
     if (process.env.NODE_ENV !== 'production') return;
     try {
-      const fs = require('fs');
-      const path = require('path');
-      fs.mkdirSync(path.dirname(this.FILE_CACHE), { recursive: true });
+      fs.mkdirSync(nodePath.dirname(this.FILE_CACHE), { recursive: true });
       fs.writeFileSync(this.FILE_CACHE, JSON.stringify({ cachedAt: Date.now(), data }));
     } catch {}
   }
@@ -162,7 +161,13 @@ export class DataProviderFactory {
       // a) File cache (30-min TTL)
       const fc = this.readJsonCache();
       if (fc && Array.isArray(fc.data)) {
-        const filtered = fc.data.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
+        // Purge synthetic archive entries from cache immediately
+        const cleaned = fc.data.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+        if (cleaned.length !== fc.data.length) {
+          console.warn(`[Factory] purged ${fc.data.length - cleaned.length} synthetic fixtures from file cache`);
+          this.writeJsonCache(cleaned);
+        }
+        const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
         if (filtered.length > 0) {
           console.info(`[Factory] file cache HIT ${date} ${league}`);
           return filtered;

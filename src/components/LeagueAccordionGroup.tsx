@@ -82,7 +82,7 @@ export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
             key={league}
             className="bg-[#16181d] border border-[#252932] rounded-2xl overflow-hidden shadow-lg"
           >
-            {/* FotMob League Accordion Header */}
+            {/* League Accordion Header */}
             <div
               onClick={() => toggleCollapse(league)}
               className="flex items-center justify-between px-4 py-3 bg-[#1c1f26]/80 hover:bg-[#1c1f26] border-b border-[#252932] cursor-pointer transition-colors"

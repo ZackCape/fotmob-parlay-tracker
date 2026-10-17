@@ -7,7 +7,7 @@ export function createNewsRouter(factory: DataProviderFactory): Router {
   /**
    * GET /api/news
    * Returns authentic breaking European football news headlines and match previews
-   * scraped directly from FootballDatabase.eu and FotMob wires.
+   * scraped directly from FootballDatabase.eu.
    */
   router.get('/', async (req: Request, res: Response) => {
     try {

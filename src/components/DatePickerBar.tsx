@@ -49,7 +49,7 @@ export const DatePickerBar: React.FC<DatePickerBarProps> = ({
   return (
     <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-3.5 shadow-md mb-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        {/* Date Selector with < Today > FotMob Navigation */}
+        {/* Date Selector with < Today > Navigation */}
         <div className="flex items-center space-x-2">
           <div className="flex items-center bg-[#1c1f26] border border-[#252932] rounded-xl p-1">
             <button

@@ -17,7 +17,9 @@ export function createFixturesRouter(factory: DataProviderFactory): Router {
         return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
       }
 
-      const fixtures = await factory.getFixturesByDate(date, league);
+      let fixtures = await factory.getFixturesByDate(date, league);
+      // Never serve synthetic/archive fixtures as live matches
+      fixtures = fixtures.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
 
       // Do not fetch match analysis for every fixture (avoids N+1 API calls).
       // Detailed analysis is loaded on demand via /api/analysis/:id.
