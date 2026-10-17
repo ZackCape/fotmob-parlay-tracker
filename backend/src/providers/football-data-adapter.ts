@@ -6,9 +6,19 @@ export class FootballDataOrgAdapter implements IFootballDataProvider {
   readonly name = 'Football-Data.org (REST)';
   private apiKey?: string;
   private baseUrl = 'https://api.football-data.org/v4';
+  private cooldownUntil: number = 0;
+  private authFailed: boolean = false;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey;
+  }
+
+  public isQuotaExhausted(): boolean {
+    return this.authFailed;
+  }
+
+  public isInCooldown(): boolean {
+    return Date.now() < this.cooldownUntil;
   }
 
   private getHeaders() {
@@ -83,7 +93,10 @@ export class FootballDataOrgAdapter implements IFootballDataProvider {
         });
       }
     } catch (err: any) {
+      const status = err?.response?.status;
       console.warn('[FootballDataOrgAdapter] Error fetching fixtures:', err.message);
+      if (status === 429) this.cooldownUntil = Date.now() + 60000;
+      if (status === 401 || status === 403) this.authFailed = true;
     }
     return fixtures;
   }

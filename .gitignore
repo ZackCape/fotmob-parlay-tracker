@@ -1,3 +1,18 @@
-node_modules/ 
-.env 
-.env.* 
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Data / databases / caches
+data/*.db
+data/*.sqlite
+*.log
+
+# Build output
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

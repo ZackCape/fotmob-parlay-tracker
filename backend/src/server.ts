@@ -42,7 +42,7 @@ async function bootstrap() {
   // Initialize App
   const app = createApp(factory, discordBot, parlayTracker);
 
-  const server = app.listen(config.port, () => {
+  const server = app.listen(config.port, "0.0.0.0", () => {
     console.log(`🚀 Server listening on http://localhost:${config.port}`);
     console.log(`📊 Health Check: http://localhost:${config.port}/api/system/status`);
     console.log(`🤖 Discord Status: http://localhost:${config.port}/api/discord/status`);

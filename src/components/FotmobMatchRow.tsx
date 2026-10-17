@@ -25,18 +25,23 @@ export const FotmobMatchRow: React.FC<FotmobMatchRowProps> = ({ fixture, onSelec
       {/* Time / Status Column */}
       <div className="flex items-center sm:w-24 shrink-0 space-x-2 mb-2 sm:mb-0">
         {isLive ? (
-          <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-mono font-black text-[11px] animate-pulse">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+          <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-400 font-mono font-bold text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
             <span>LIVE</span>
           </span>
         ) : isFinished ? (
-          <span className="px-2 py-0.5 rounded bg-[#252932] text-[#8c92a4] font-mono font-bold text-[11px]">
+          <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-mono font-bold text-[11px]">
             FT
           </span>
         ) : (
           <span className="text-white font-mono font-semibold text-xs flex items-center space-x-1">
             <Clock className="w-3 h-3 text-[#8c92a4]" />
             <span>{kickoff}</span>
+          </span>
+        )}
+        {fixture.fallbackReason && (
+          <span className="text-[9px] text-amber-400/80 font-mono" title={fixture.fallbackReason}>
+            fallback
           </span>
         )}
       </div>

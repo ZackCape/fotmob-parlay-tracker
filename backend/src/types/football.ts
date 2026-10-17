@@ -79,6 +79,8 @@ export interface Fixture {
   homeLineup?: Lineup | null;
   awayLineup?: Lineup | null;
   dataSource: string; // e.g., 'API-Football (Live)', 'Football-Data.org', 'Verified Archive'
+  retrievedAt?: string;
+  fallbackReason?: string;
 }
 
 export type MarketType =

@@ -187,7 +187,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({ fixture, onSelect }) =
       {/* Action CTA Button */}
       <button
         onClick={() => onSelect(fixture)}
-        className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-2xl bg-gradient-to-r from-slate-800 to-slate-800/80 hover:from-amber-500 hover:to-yellow-500 text-slate-200 hover:text-slate-950 text-xs font-bold transition-all duration-200 shadow-md active:scale-98"
+        className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-2xl bg-gradient-to-r from-slate-800 to-slate-800/80 hover:from-blue-600 hover:to-blue-500 text-slate-200 hover:text-slate-950 text-xs font-bold transition-all duration-200 shadow-md active:scale-98"
       >
         <span>Detailed Match Intelligence</span>
         <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />

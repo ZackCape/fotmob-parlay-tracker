@@ -12,13 +12,74 @@ export class ApiFootballAdapter implements IFootballDataProvider {
   private isRapidApi: boolean;
   private rateLimitRemaining: number = 100;
   private rateLimitReset?: string;
+  private dailyLimit: number;
+  private safetyMargin: number;
+  private madeToday: number = 0;
+  private resetDate: string = new Date().toISOString().slice(0, 10);
+  private dailyQuotaExhausted: boolean = false;
+  private authFailed: boolean = false;
+  private cooldownUntil: number = 0;
+  private lastError: string | null = null;
 
-  constructor(apiKey: string, isRapidApi: boolean = false) {
+  constructor(apiKey: string, isRapidApi: boolean = false, dailyLimit: number = 90, safetyMargin: number = 10) {
     this.apiKey = apiKey;
     this.isRapidApi = isRapidApi;
+    this.dailyLimit = dailyLimit;
+    this.safetyMargin = safetyMargin;
     this.baseUrl = isRapidApi
       ? 'https://api-football-v1.p.rapidapi.com/v3'
       : 'https://v3.football.api-sports.io';
+  }
+
+  private effectiveLimit(): number {
+    return Math.max(1, this.dailyLimit - this.safetyMargin);
+  }
+
+  private maybeResetDaily() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== this.resetDate) {
+      this.resetDate = today;
+      this.madeToday = 0;
+      this.dailyQuotaExhausted = false;
+      this.lastError = null;
+    }
+  }
+
+  private canSpend(n: number = 1): boolean {
+    this.maybeResetDaily();
+    if (this.dailyQuotaExhausted || this.authFailed) return false;
+    if (Date.now() < this.cooldownUntil) return false;
+    if (this.rateLimitRemaining !== null && this.rateLimitRemaining < n) return false;
+    return this.madeToday + n <= this.effectiveLimit();
+  }
+
+  public isQuotaExhausted(): boolean {
+    this.maybeResetDaily();
+    return this.dailyQuotaExhausted || this.authFailed;
+  }
+
+  public isInCooldown(): boolean {
+    return Date.now() < this.cooldownUntil;
+  }
+
+  public getLastError(): string | null {
+    return this.lastError;
+  }
+
+  private seasonForDate(date: string): number {
+    const y = parseInt(date.substring(0, 4), 10);
+    const m = parseInt(date.substring(5, 7), 10);
+    // Football seasons start in July/August
+    return m >= 7 ? y : y - 1;
+  }
+
+  private recordRequest(headers: any) {
+    this.maybeResetDaily();
+    this.madeToday++;
+    if (headers?.['x-ratelimit-requests-remaining']) {
+      const r = parseInt(headers['x-ratelimit-requests-remaining'], 10);
+      if (!isNaN(r)) this.rateLimitRemaining = r;
+    }
   }
 
   private getHeaders() {
@@ -34,51 +95,101 @@ export class ApiFootballAdapter implements IFootballDataProvider {
   }
 
   async getFixturesByDate(date: string, league: 'ALL' | 'EPL' | 'CHAMPIONSHIP' = 'ALL'): Promise<Fixture[]> {
-    const leaguesToFetch: Array<{ id: number; leagueName: League }> = [];
-    if (league === 'ALL' || league === 'EPL') leaguesToFetch.push({ id: 39, leagueName: 'EPL' });
-    if (league === 'ALL' || league === 'CHAMPIONSHIP') leaguesToFetch.push({ id: 40, leagueName: 'CHAMPIONSHIP' });
+    const targetLeagueIds = new Set<number>();
+    if (league === 'ALL' || league === 'EPL') targetLeagueIds.add(39);
+    if (league === 'ALL' || league === 'CHAMPIONSHIP') targetLeagueIds.add(40);
 
-    const fixtures: Fixture[] = [];
-
-    for (const target of leaguesToFetch) {
-      try {
-        const response = await axios.get(`${this.baseUrl}/fixtures`, {
-          params: {
-            date,
-            league: target.id,
-            season: parseInt(date.substring(0, 4), 10),
-          },
-          headers: this.getHeaders(),
-          timeout: 8000,
-        });
-
-        // Track rate limits
-        if (response.headers['x-ratelimit-requests-remaining']) {
-          this.rateLimitRemaining = parseInt(response.headers['x-ratelimit-requests-remaining'], 10);
-        }
-
-        const rawList = response.data?.response || [];
-        for (const item of rawList) {
-          const fx = this.mapRawFixtureToDomain(item, target.leagueName);
-          fixtures.push(fx);
-        }
-      } catch (err: any) {
-        console.warn(`[ApiFootballAdapter] Error fetching fixtures for league ${target.id} on ${date}:`, err.message);
-      }
+    if (!this.canSpend(1)) {
+      console.warn('[ApiFootballAdapter] Daily budget exhausted; skipping fixtures fetch.');
+      return [];
     }
 
-    return fixtures;
+    // Free plan: fetching by league+season is restricted for current dates.
+    // Fetch all fixtures for the date (no league/season) then filter by league id.
+    let attempt = 0;
+    while (attempt < 3) {
+      attempt++;
+      try {
+        const response = await axios.get(`${this.baseUrl}/fixtures`, {
+          params: { date },
+          headers: this.getHeaders(),
+          timeout: 10000,
+        });
+
+        this.recordRequest(response.headers);
+
+        if (response.data?.errors && (Array.isArray(response.data.errors) ? response.data.errors.length : Object.keys(response.data.errors).length)) {
+          const errs = response.data.errors;
+          const msg = JSON.stringify(errs);
+          console.warn('[ApiFootballAdapter] Provider returned errors:', errs);
+          if (/quota|limit|plan/i.test(msg)) this.dailyQuotaExhausted = true;
+          if (/key|auth|token/i.test(msg)) this.authFailed = true;
+          this.lastError = msg;
+          return [];
+        }
+
+        const fixtures: Fixture[] = [];
+        const rawList = response.data?.response || [];
+        for (const item of rawList) {
+          const lid = item?.league?.id;
+          if (!targetLeagueIds.has(lid)) continue;
+          const leagueName: League = lid === 39 ? 'EPL' : 'CHAMPIONSHIP';
+          fixtures.push(this.mapRawFixtureToDomain(item, leagueName));
+        }
+        return fixtures;
+      } catch (err: any) {
+        const status = err?.response?.status;
+        console.warn(`[ApiFootballAdapter] Error fetching fixtures for ${date} (attempt ${attempt}):`, err.message);
+        if (status === 429) {
+          this.cooldownUntil = Date.now() + 60000;
+          this.lastError = 'rate_limit';
+        } else if (status === 401 || status === 403) {
+          this.authFailed = true;
+          this.lastError = 'auth_failed';
+        } else if (status >= 500) {
+          // temporary: backoff only
+        }
+        if (attempt < 3 && status !== 401 && status !== 403) {
+          await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 8000)));
+        }
+      }
+    }
+    return [];
   }
 
   async getMatchDetails(fixtureId: string): Promise<MatchAnalysis | null> {
+    if (!this.canSpend(1)) {
+      console.warn('[ApiFootballAdapter] Daily budget exhausted; skipping match details fetch.');
+      return null;
+    }
     try {
-      const externalId = fixtureId.replace('api-epl-', '').replace('api-ch-', '');
-      const response = await axios.get(`${this.baseUrl}/fixtures`, {
-        params: { id: externalId },
-        headers: this.getHeaders(),
-        timeout: 8000,
-      });
+      const externalId = fixtureId.replace('apifx-', '').replace('api-epl-', '').replace('api-ch-', '');
+      let response: any;
+      let attempt = 0;
+      while (attempt < 3) {
+        attempt++;
+        try {
+          response = await axios.get(`${this.baseUrl}/fixtures`, {
+            params: { id: externalId },
+            headers: this.getHeaders(),
+            timeout: 8000,
+          });
+          this.recordRequest(response.headers);
+          if (response.data?.errors && (Array.isArray(response.data.errors) ? response.data.errors.length : Object.keys(response.data.errors).length)) {
+            console.warn('[ApiFootballAdapter] Provider returned errors:', response.data.errors);
+            response = null;
+          }
+          break;
+        } catch (e: any) {
+          const status = e?.response?.status;
+          if (status === 429) { this.cooldownUntil = Date.now() + 60000; this.lastError='rate_limit'; }
+          if (status === 401 || status === 403) { this.authFailed = true; this.lastError='auth_failed'; }
+          if (attempt >= 3) throw e;
+          if (status !== 401 && status !== 403) await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 8000)));
+        }
+      }
 
+      if (!response) return null;
       const fixtureData = response.data?.response?.[0];
       if (!fixtureData) return null;
 

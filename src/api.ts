@@ -114,3 +114,33 @@ export async function configureDiscord(config: { channelId?: string; interval?: 
   return res.json();
 }
 
+export interface FootballNewsArticle {
+  id: string;
+  title: string;
+  summary: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+  imageUrl?: string;
+  tag?: string;
+}
+
+export async function fetchNews(): Promise<{ success: boolean; count: number; articles: FootballNewsArticle[] }> {
+  const res = await fetch(`${API_BASE}/news`);
+  if (!res.ok) throw new Error(`Failed to fetch news: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchLearningStats(): Promise<any> {
+  const res = await fetch(`${API_BASE}/learning/stats`);
+  if (!res.ok) throw new Error(`Failed to fetch learning stats: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchLearningEvents(): Promise<any> {
+  const res = await fetch(`${API_BASE}/learning/events`);
+  if (!res.ok) throw new Error(`Failed to fetch learning events: ${res.statusText}`);
+  return res.json();
+}
+
+

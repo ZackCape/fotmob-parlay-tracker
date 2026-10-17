@@ -99,12 +99,99 @@ export const ALL_AUTHENTIC_TEAMS: Team[] = [
   ...AUTHENTIC_EUROPEAN_TEAMS,
 ];
 
-export function findTeamByIdOrName(query: string): Team | undefined {
-  const q = query.toLowerCase().trim();
-  return ALL_AUTHENTIC_TEAMS.find(
-    t => t.id.toLowerCase() === q ||
-         t.name.toLowerCase() === q ||
-         t.shortName.toLowerCase() === q ||
-         t.code.toLowerCase() === q
-  );
+const COMMON_ALIASES: Record<string, string> = {
+  'paris sg': 'fr-psg',
+  'psg': 'fr-psg',
+  'paris': 'fr-psg',
+  'man city': 'epl-mci',
+  'manchester city': 'epl-mci',
+  'man utd': 'epl-mun',
+  'man united': 'epl-mun',
+  'manchester united': 'epl-mun',
+  'athletic bilbao': 'es-ath',
+  'athletic club': 'es-ath',
+  'atletico madrid': 'es-atm',
+  'atlético madrid': 'es-atm',
+  'atletico': 'es-atm',
+  'real madrid': 'es-rma',
+  'barcelona': 'es-bar',
+  'fc barcelona': 'es-bar',
+  'bayern': 'eu-bay',
+  'bayern munich': 'eu-bay',
+  'dortmund': 'eu-dor',
+  'borussia dortmund': 'eu-dor',
+  'inter': 'eu-int',
+  'inter milan': 'eu-int',
+  'milan': 'eu-mil',
+  'ac milan': 'eu-mil',
+  'sporting': 'eu-spo',
+  'sporting cp': 'eu-spo',
+  'benfica': 'eu-ben',
+  'ajax': 'eu-aja',
+  'fiorentina': 'eu-fio',
+  'juventus': 'eu-juv',
+  'roma': 'eu-rom',
+  'as roma': 'eu-rom',
+  'spurs': 'epl-tot',
+  'tottenham': 'epl-tot',
+  'wolves': 'epl-wol',
+  'west ham': 'epl-whu',
+  'newcastle': 'epl-new',
+  'aston villa': 'epl-avl',
+  'bournemouth': 'epl-bou',
+  'brighton': 'epl-bha',
+  'crystal palace': 'epl-cry',
+  'nottingham': 'epl-nfo',
+  'notts forest': 'epl-nfo',
+};
+
+function normalizeString(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove diacritics / accents
+    .replace(/\b(fc|cf|afc|sc|osc|bkt|ea sports)\b/gi, '')
+    .replace(/[^a-z0-9]/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
+
+export function findTeamByIdOrName(query: string): Team | undefined {
+  if (!query) return undefined;
+  const qRaw = query.toLowerCase().trim();
+  const qNorm = normalizeString(query);
+
+  // 1. Direct ID match
+  const byId = ALL_AUTHENTIC_TEAMS.find(t => t.id.toLowerCase() === qRaw);
+  if (byId) return byId;
+
+  // 2. Direct alias match
+  if (COMMON_ALIASES[qRaw]) {
+    const aliased = ALL_AUTHENTIC_TEAMS.find(t => t.id === COMMON_ALIASES[qRaw]);
+    if (aliased) return aliased;
+  }
+  if (COMMON_ALIASES[qNorm]) {
+    const aliased = ALL_AUTHENTIC_TEAMS.find(t => t.id === COMMON_ALIASES[qNorm]);
+    if (aliased) return aliased;
+  }
+
+  // 3. Exact normalized name or shortName match
+  const exact = ALL_AUTHENTIC_TEAMS.find(
+    t => normalizeString(t.name) === qNorm ||
+         normalizeString(t.shortName) === qNorm ||
+         t.code.toLowerCase() === qRaw
+  );
+  if (exact) return exact;
+
+  // 4. Substring inclusion
+  const partial = ALL_AUTHENTIC_TEAMS.find(
+    t => {
+      const tNorm = normalizeString(t.name);
+      const sNorm = normalizeString(t.shortName);
+      return (tNorm.length > 3 && (tNorm.includes(qNorm) || qNorm.includes(tNorm))) ||
+             (sNorm.length > 3 && (sNorm.includes(qNorm) || qNorm.includes(sNorm)));
+    }
+  );
+  return partial;
+}
+

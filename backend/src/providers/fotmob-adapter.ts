@@ -275,10 +275,10 @@ export class FotmobAdapter implements IFootballDataProvider {
   async getHealth(): Promise<ProviderHealth> {
     return {
       providerName: this.name,
-      isAvailable: true,
-      rateLimitRemaining: 10000,
+      isAvailable: false,
+      rateLimitRemaining: 0,
       lastSync: new Date().toISOString(),
-      details: 'Connected to FotMob public analytics gateway for European competitions.',
+      details: 'Deprecated/unofficial: FotMob undocumented endpoints are not a required production dependency.',
     };
   }
 }

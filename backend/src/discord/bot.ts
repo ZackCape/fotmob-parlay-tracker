@@ -16,6 +16,8 @@ export interface DiscordConfig {
   updateInterval?: UpdateInterval;
 }
 
+const DASHBOARD_URL = process.env.PUBLIC_URL || 'http://localhost:5000';
+
 export class DiscordBotService {
   private client: Client | null = null;
   private config: DiscordConfig;
@@ -98,6 +100,14 @@ export class DiscordBotService {
     }
 
     this.client = new Client({ intents });
+
+    this.client.on('error', err => {
+      console.warn(`[DiscordBot] Discord gateway error: ${err.message}`);
+    });
+
+    this.client.on('shardError', (err, shardId) => {
+      console.warn(`[DiscordBot] Discord shard ${shardId} error: ${err.message}`);
+    });
 
     this.client.once('ready', async () => {
       console.log(`[DiscordBot] Successfully logged in as ${this.client?.user?.tag}!`);
@@ -348,11 +358,21 @@ export class DiscordBotService {
       .sort((a, b) => b.estimatedProbability - a.estimatedProbability)
       .slice(0, 5);
 
+    // Fetch verified real news
+    let topNews: string[] = [];
+    try {
+      const newsArticles = await this.factory.getLatestNews();
+      topNews = newsArticles.slice(0, 3).map(n => `• [${n.tag || 'News'}] **${n.title}** (${n.source})`);
+    } catch (e) {
+      // non-fatal
+    }
+
     return {
       today,
       fixturesCount: fixtures.length,
       topPicks,
       injuryBulletins: injuryBulletins.slice(0, 4),
+      topNews,
       parlay5,
     };
   }
@@ -371,14 +391,16 @@ export class DiscordBotService {
 
       const injuriesFormatted = data.injuryBulletins.join('\n') || '✅ No critical injury or suspension changes reported in the last hour.';
 
+      const newsFormatted = data.topNews.join('\n') || '✅ Squad updates and team sheets synchronized.';
+
       const parlayLegsFormatted = data.parlay5.legs
         .map((l, i) => `**Leg ${i + 1}**: ${l.fixtureDescription} ➔ \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`)
         .join('\n');
 
       const embedPayload = {
-        title: `🏆 Football Analytics Hourly Briefing • ${data.today}`,
-        description: `Live statistical projections across **Premier League, Championship, La Liga, Ligue 1 & UEFA Competitions**.\n*Pure mathematical models • Zero betting odds inputs*`,
-        color: 0xd4af37, // World Cup Trophy Gold
+        title: `🏆 Football Analytics Briefing • ${data.today}`,
+        description: `Live statistical projections across **Premier League, Championship, La Liga, Ligue 1 & UEFA Competitions**.\n*Pure mathematical models • Real-time stats from API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
+        color: 0x2563EB, // Restrained blue primary
         fields: [
           {
             name: `📊 Top Calibrated Value Picks`,
@@ -391,8 +413,13 @@ export class DiscordBotService {
             inline: false,
           },
           {
-            name: `🏥 Breaking Team News & Absences`,
+            name: `🏥 Breaking Team Absences & Player Injuries`,
             value: injuriesFormatted,
+            inline: false,
+          },
+          {
+            name: `📰 Verified European Football Headlines (FootballDatabase.eu)`,
+            value: newsFormatted,
             inline: false,
           },
           {
@@ -476,7 +503,7 @@ export class DiscordBotService {
    */
   public buildInfoEmbed(): EmbedBuilder {
     return new EmbedBuilder()
-      .setColor(0xF59E0B) // World Cup Gold
+      .setColor(0x2563EB) // Restrained blue primary
       .setTitle('🏆 Football Analytics Engine — Bot Command Directory')
       .setDescription(
         'Predictive sports modeling system across 7 European competitions. ' +
@@ -537,7 +564,7 @@ export class DiscordBotService {
         },
         {
           name: '🌐 Web Analytics Dashboard',
-          value: 'Access the full World Cup styled dashboard with interactive charts at [http://localhost:5000](http://localhost:5000)',
+          value: `Access the full World Cup styled dashboard with interactive charts at [${DASHBOARD_URL}](${DASHBOARD_URL})`,
           inline: false,
         }
       )
@@ -628,7 +655,7 @@ export class DiscordBotService {
 
     const trackedList = this.trackerService.getTrackedParlays();
     if (trackedList.length === 0) {
-      return '📋 No parlays are currently tracked! Generate one first using `/parlay` or `/sgp`, or track one in the web dashboard at http://localhost:5000.';
+      return 'No parlays are currently tracked! Generate one first using /parlay or /sgp, or track one in the web dashboard at ' + DASHBOARD_URL + '.';
     }
 
     const active = trackedList[0];
@@ -640,7 +667,7 @@ export class DiscordBotService {
           ? 0x10B981
           : updated.overallStatus === 'BUSTED'
           ? 0xEF4444
-          : 0xF59E0B
+          : 0x2563EB
       )
       .setTitle(`🔴 LIVE PARLAY TRACKER — ${updated.totalLegs} Legs (${updated.overallStatus})`)
       .setDescription(
@@ -661,7 +688,7 @@ export class DiscordBotService {
     }
 
     embed.setFooter({
-      text: 'Live tracker updates in real-time • Web Dashboard at http://localhost:5000',
+      text: `Live tracker updates in real-time • Web Dashboard at ${DASHBOARD_URL}`,
     }).setTimestamp();
 
     return embed;

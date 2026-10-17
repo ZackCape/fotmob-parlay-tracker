@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MatchAnalysis, MarketPrediction } from '../types';
+import { computeOutcomeProbabilities } from '../utils/matchOutcome';
 import { X, TrendingUp, AlertTriangle, Shield, Activity, Users, CheckCircle2, Trophy } from 'lucide-react';
 
 interface MatchAnalysisModalProps {
@@ -16,10 +17,10 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
-      <div className="relative bg-slate-900 border border-white/10 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden ring-1 ring-amber-500/20">
+      <div className="relative bg-slate-900 border border-white/10 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
         
         {/* Header with Trophy Gold Styling */}
-        <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950/40 border-b border-white/10 flex items-center justify-between shrink-0">
+        <div className="p-5 sm:p-6 bg-slate-950 border-b border-white/10 flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2.5">
               <img src={fixture.homeTeam.logo} alt={fixture.homeTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-white/10" />
@@ -110,6 +111,60 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
         {/* Content Body */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
 
+          {/* MATCH OUTCOME PROBABILITIES */}
+          {(() => {
+            const homePred = marketPredictions.find(p => p.market === 'HOME_WIN');
+            const drawPred = marketPredictions.find(p => p.market === 'DRAW');
+            const awayPred = marketPredictions.find(p => p.market === 'AWAY_WIN');
+            const res = computeOutcomeProbabilities(
+              homePred?.estimatedProbability,
+              drawPred?.estimatedProbability,
+              awayPred?.estimatedProbability,
+            );
+            if (!res) return null;
+            const rows = [
+              { label: `${fixture.homeTeam.name} Win`, value: res.home, color: 'bg-blue-500', key: 'home' as const },
+              { label: 'Draw', value: res.draw, color: 'bg-slate-400', key: 'draw' as const },
+              { label: `${fixture.awayTeam.name} Win`, value: res.away, color: 'bg-sky-500', key: 'away' as const },
+            ];
+            const mostLikelyLabel = res.tied
+              ? 'Tied highest probability'
+              : res.mostLikely === 'home'
+              ? `${fixture.homeTeam.name} Win`
+              : res.mostLikely === 'away'
+              ? `${fixture.awayTeam.name} Win`
+              : 'Draw';
+            return (
+              <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-white">Match Outcome (Predicted)</span>
+                  <span className="text-xs text-slate-400">
+                    {res.tied ? 'Tied highest probability' : `Most likely: ${mostLikelyLabel}`}
+                  </span>
+                </div>
+                {rows.map((r, i) => {
+                  const isTop = !res.tied && res.mostLikely === r.key;
+                  return (
+                    <div key={i} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className={`font-semibold ${isTop ? 'text-white' : 'text-slate-300'}`}>{r.label}</span>
+                        <span className={`font-mono font-bold ${isTop ? 'text-blue-300' : 'text-slate-400'}`}>
+                          {(r.value * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                        <div className={`${r.color} h-1.5 rounded-full transition-all`} style={{ width: `${Math.min(100, r.value * 100)}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="text-[10px] text-slate-500">
+                  Model estimates, not guaranteed results. Probabilities are calibrated and may not sum to exactly 100% after rounding.
+                </p>
+              </div>
+            );
+          })()}
+
           {/* TAB 1: MARKET PREDICTIONS */}
           {activeTab === 'markets' && (
             <div className="space-y-4">
@@ -143,7 +198,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       {/* Probability Bar */}
                       <div className="w-full bg-slate-800 rounded-full h-2 mb-3 overflow-hidden">
                         <div
-                          className="bg-gradient-to-r from-amber-500 to-yellow-400 h-2 rounded-full"
+                          className="bg-gradient-to-r from-blue-600 to-blue-400 h-2 rounded-full"
                           style={{ width: `${Math.min(100, pred.estimatedProbability * 100)}%` }}
                         />
                       </div>

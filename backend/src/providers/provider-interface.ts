@@ -28,4 +28,14 @@ export interface IFootballDataProvider {
    * Health check and rate limit status
    */
   getHealth(): Promise<ProviderHealth>;
+
+  /**
+   * Whether the provider's daily quota is exhausted.
+   */
+  isQuotaExhausted?(): boolean;
+
+  /**
+   * Whether the provider is in a temporary cooldown (e.g. after HTTP 429).
+   */
+  isInCooldown?(): boolean;
 }

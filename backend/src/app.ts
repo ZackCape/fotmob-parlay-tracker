@@ -13,6 +13,7 @@ import { createPerformanceRouter } from './routes/performance.js';
 import { createStatusRouter } from './routes/status.js';
 import { createDiscordRouter } from './routes/discord.js';
 import { createLearningRouter } from './routes/learning.js';
+import { createNewsRouter } from './routes/news.js';
 import { LiveParlayTrackerService } from './parlays/live-tracker.js';
 import { config } from './config/env.js';
 
@@ -41,6 +42,7 @@ export function createApp(
   app.use('/api/system/status', createStatusRouter(factory));
   app.use('/api/discord', createDiscordRouter(discordBot));
   app.use('/api/learning', createLearningRouter(factory));
+  app.use('/api/news', createNewsRouter(factory));
 
   // Serve static client build if present (for single-container production deployment)
   const clientBuildPath = path.resolve(process.cwd(), 'dist', 'client');

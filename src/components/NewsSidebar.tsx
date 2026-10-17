@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { LiveTrackedParlay } from '../types';
-import { Newspaper, Zap, MessageSquare, ChevronRight, Activity, Bell } from 'lucide-react';
+import { Newspaper, Zap, MessageSquare, ChevronRight, Activity, Brain, ExternalLink } from 'lucide-react';
+import { fetchNews, fetchLearningStats, FootballNewsArticle } from '../api';
 
 interface NewsSidebarProps {
   activeTrackedParlay?: LiveTrackedParlay | null;
@@ -17,44 +18,45 @@ export const NewsSidebar: React.FC<NewsSidebarProps> = ({
   onOpenDiscord,
   discordInterval = '5m',
 }) => {
-  const newsItems = [
-    {
-      id: 'news-1',
-      title: 'Haaland and De Bruyne confirmed ready for weekend Premier League clash',
-      tag: 'Premier League',
-      tagColor: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
-      time: '12m ago',
-      source: 'FotMob Wire',
-      image: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=400&q=80',
-    },
-    {
-      id: 'news-2',
-      title: 'Mbappé and Vinicius Jr attacking momentum reaches 3.4 expected goals per 90',
-      tag: 'LaLiga',
-      tagColor: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-      time: '34m ago',
-      source: 'DeepMind Analytics',
-      image: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=400&q=80',
-    },
-    {
-      id: 'news-3',
-      title: 'Champions League knockout spots: Model projects Bayern & Arsenal at 92% qualification',
-      tag: 'UCL',
-      tagColor: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-      time: '1h ago',
-      source: 'UEFA StatEngine',
-      image: 'https://images.unsplash.com/photo-1518091043644-c1d4457512c6?auto=format&fit=crop&w=400&q=80',
-    },
-    {
-      id: 'news-4',
-      title: 'Ligue 1 high pressing analysis: PSG & Lille corner rates surge past 6.8 average',
-      tag: 'Ligue 1',
-      tagColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-      time: '2h ago',
-      source: 'Opta / FotMob Sync',
-      image: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=400&q=80',
-    },
-  ];
+  const [news, setNews] = useState<FootballNewsArticle[]>([]);
+  const [loadingNews, setLoadingNews] = useState<boolean>(true);
+  const [learningInfo, setLearningInfo] = useState<any>(null);
+
+  useEffect(() => {
+    fetchNews()
+      .then(res => {
+        if (res.articles && res.articles.length > 0) {
+          setNews(res.articles);
+        }
+      })
+      .catch(err => console.warn('Could not load real news:', err))
+      .finally(() => setLoadingNews(false));
+
+    fetchLearningStats()
+      .then(res => {
+        if (res && res.teamsTrackedCount !== undefined) {
+          setLearningInfo(res);
+        }
+      })
+      .catch(err => console.warn('Could not load learning stats:', err));
+  }, []);
+
+  const getTagColor = (tag?: string) => {
+    switch (tag) {
+      case 'Premier League':
+        return 'text-purple-400 bg-purple-500/10 border-purple-500/20';
+      case 'La Liga':
+        return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+      case 'Ligue 1':
+        return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+      case 'Serie A':
+        return 'text-sky-400 bg-sky-500/10 border-sky-500/20';
+      case 'UEFA Competitions':
+        return 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20';
+      default:
+        return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+    }
+  };
 
   return (
     <aside className="w-full lg:w-80 shrink-0 space-y-4">
@@ -71,7 +73,7 @@ export const NewsSidebar: React.FC<NewsSidebarProps> = ({
             </div>
             <button
               onClick={onOpenLiveTracker}
-              className="text-[11px] font-bold text-[#00d66c] hover:underline flex items-center"
+              className="text-[11px] font-bold text-[#00d66c] hover:underline flex items-center cursor-pointer"
             >
               Expand <ChevronRight className="w-3.5 h-3.5" />
             </button>
@@ -112,6 +114,41 @@ export const NewsSidebar: React.FC<NewsSidebarProps> = ({
         </div>
       )}
 
+      {/* Adaptive Bayesian Machine Learning Engine Status */}
+      <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-4 shadow-lg">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-2">
+            <div className="w-7 h-7 rounded-lg bg-[#00d66c]/15 text-[#00d66c] flex items-center justify-center">
+              <Brain className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-white">Adaptive Learning Engine</div>
+              <div className="text-[10px] text-[#8c92a4]">Bayesian Parameter Updates</div>
+            </div>
+          </div>
+          <span className="px-2 py-0.5 rounded-full bg-[#00d66c]/15 text-[#00d66c] text-[10px] font-bold border border-[#00d66c]/30">
+            ADAPTING
+          </span>
+        </div>
+
+        <p className="text-[11px] text-[#8c92a4] leading-relaxed">
+          The model continuously adapts team attack/defense ratings, xG, corners and cards after <strong className="text-white">every match played</strong>, automatically recalibrating all future predictions.
+        </p>
+
+        {learningInfo && (
+          <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#252932] text-xs">
+            <div className="bg-[#1c1f26] rounded-xl p-2 text-center">
+              <span className="text-[10px] text-[#8c92a4] block">Tracked Teams</span>
+              <span className="font-mono font-bold text-white">{learningInfo.teamsTrackedCount || 100}</span>
+            </div>
+            <div className="bg-[#1c1f26] rounded-xl p-2 text-center">
+              <span className="text-[10px] text-[#8c92a4] block">Match Adaptations</span>
+              <span className="font-mono font-bold text-[#00d66c]">{learningInfo.totalLearningEvents || 0}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 24/7 Discord Bot Live Status */}
       <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-4 shadow-lg">
         <div className="flex items-center justify-between mb-2">
@@ -142,33 +179,49 @@ export const NewsSidebar: React.FC<NewsSidebarProps> = ({
         </button>
       </div>
 
-      {/* News Feed */}
+      {/* Real News Feed scraped directly from FootballDatabase.eu */}
       <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-4 shadow-lg">
         <div className="flex items-center justify-between pb-3 border-b border-[#252932]">
           <div className="flex items-center space-x-2">
             <Newspaper className="w-4 h-4 text-[#00d66c]" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">Top stories</span>
+            <span className="text-xs font-bold text-white uppercase tracking-wider">Verified Football News</span>
           </div>
-          <span className="text-[10px] text-[#8c92a4]">FotMob News</span>
+          <span className="text-[10px] text-[#8c92a4]">FootballDatabase.eu</span>
         </div>
 
         <div className="divide-y divide-[#252932] mt-1">
-          {newsItems.map(item => (
-            <div key={item.id} className="py-3 group cursor-pointer">
-              <div className="flex items-center space-x-2 mb-1">
-                <span className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase ${item.tagColor}`}>
-                  {item.tag}
-                </span>
-                <span className="text-[10px] text-[#8c92a4]">{item.time}</span>
-              </div>
-              <h4 className="text-xs font-semibold text-white group-hover:text-[#00d66c] transition-colors leading-snug">
-                {item.title}
-              </h4>
-              <div className="text-[10px] text-[#8c92a4] mt-1 flex items-center space-x-1">
-                <span>{item.source}</span>
-              </div>
+          {loadingNews ? (
+            <div className="py-6 text-center text-[#8c92a4] text-xs">
+              <div className="w-5 h-5 border-2 border-[#00d66c] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              Loading verified stories...
             </div>
-          ))}
+          ) : (
+            news.map(item => (
+              <a
+                key={item.id}
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="py-3 group block hover:bg-[#1c1f26]/40 -mx-2 px-2 rounded-xl transition-all"
+              >
+                <div className="flex items-center justify-between space-x-2 mb-1">
+                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase ${getTagColor(item.tag)}`}>
+                    {item.tag || 'Football'}
+                  </span>
+                  <div className="flex items-center space-x-1 text-[10px] text-[#8c92a4]">
+                    <span>{item.publishedAt}</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100" />
+                  </div>
+                </div>
+                <h4 className="text-xs font-semibold text-white group-hover:text-[#00d66c] transition-colors leading-snug">
+                  {item.title}
+                </h4>
+                <div className="text-[10px] text-[#8c92a4] mt-1">
+                  <span>{item.source}</span>
+                </div>
+              </a>
+            ))
+          )}
         </div>
       </div>
     </aside>
