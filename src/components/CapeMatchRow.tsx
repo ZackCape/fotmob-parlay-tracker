@@ -11,7 +11,7 @@ export const CapeMatchRow: React.FC<CapeMatchRowProps> = ({ fixture, onSelect })
   const isLive = fixture.status === 'LIVE';
   const isFinished = fixture.status === 'FINISHED';
 
-  const kickoff = fixture.kickoffTime
+  const kickoff = fixture?.kickoffTime
     ? new Date(fixture.kickoffTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : '15:00';
 
@@ -57,19 +57,19 @@ export const CapeMatchRow: React.FC<CapeMatchRowProps> = ({ fixture, onSelect })
         <div className="flex items-center justify-between sm:justify-start space-x-2.5">
           <div className="flex items-center space-x-2.5 truncate">
             <img
-              src={fixture.homeTeam.logo}
-              alt={fixture.homeTeam.name}
+              src={fixture.homeTeam?.logo}
+              alt={fixture.homeTeam?.name || ''}
               className="w-5 h-5 object-contain shrink-0"
               onError={e => {
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
             <span className="text-xs sm:text-sm font-semibold text-white group-hover:text-[#00d66c] transition-colors truncate">
-              {fixture.homeTeam.name}
+              {fixture.homeTeam?.name || 'Unknown'}
             </span>
           </div>
           <span className="font-mono font-black text-sm text-white px-2">
-            {fixture.homeScore !== null ? fixture.homeScore : '-'}
+            {fixture.homeScore != null ? fixture.homeScore : '-'}
           </span>
         </div>
 
@@ -77,19 +77,19 @@ export const CapeMatchRow: React.FC<CapeMatchRowProps> = ({ fixture, onSelect })
         <div className="flex items-center justify-between sm:justify-start space-x-2.5">
           <div className="flex items-center space-x-2.5 truncate">
             <img
-              src={fixture.awayTeam.logo}
-              alt={fixture.awayTeam.name}
+              src={fixture.awayTeam?.logo}
+              alt={fixture.awayTeam?.name || ''}
               className="w-5 h-5 object-contain shrink-0"
               onError={e => {
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
             <span className="text-xs sm:text-sm font-semibold text-white group-hover:text-[#00d66c] transition-colors truncate">
-              {fixture.awayTeam.name}
+              {fixture.awayTeam?.name || 'Unknown'}
             </span>
           </div>
           <span className="font-mono font-black text-sm text-white px-2">
-            {fixture.awayScore !== null ? fixture.awayScore : '-'}
+            {fixture.awayScore != null ? fixture.awayScore : '-'}
           </span>
         </div>
       </div>
@@ -103,7 +103,7 @@ export const CapeMatchRow: React.FC<CapeMatchRowProps> = ({ fixture, onSelect })
               {fixture.topPrediction.selection}
             </span>
             <span className="text-[11px] font-mono font-black text-white ml-1">
-              {(fixture.topPrediction.estimatedProbability * 100).toFixed(0)}%
+              {((fixture.topPrediction.estimatedProbability ?? 0) * 100).toFixed(0)}%
             </span>
           </div>
         )}

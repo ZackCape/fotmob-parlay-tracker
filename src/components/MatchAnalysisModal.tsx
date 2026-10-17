@@ -9,6 +9,20 @@ interface MatchAnalysisModalProps {
   onClose: () => void;
 }
 
+const EMPTY_FORM: any = {
+  matchesPlayed: 0, wins: 0, draws: 0, losses: 0, goalsScored: 0, goalsConceded: 0,
+  cleanSheets: 0, failedToScore: 0, avgShots: null, avgShotsOnTarget: null, avgCorners: null,
+  avgYellowCards: null, avgXg: null, last5Results: [], recentFixtures: [],
+};
+const EMPTY_H2H: any = { totalMeetings: 0, homeWins: 0, draws: 0, awayWins: 0, avgGoals: 0, recentMeetings: [] };
+const EMPTY_DC: any = {
+  homeExpectedGoals: 0, awayExpectedGoals: 0, homeAttackStrength: 0, homeDefenseWeakness: 0,
+  awayAttackStrength: 0, awayDefenseWeakness: 0, homeAdvantage: 0,
+};
+const EMPTY_MATRIX: any[] = [];
+const EMPTY_PREDICTIONS: any[] = [];
+const EMPTY_LINEUPS: any = { home: null, away: null };
+
 export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis, onClose }) => {
   const [activeTab, setActiveTab] = useState<'markets' | 'stats' | 'matrix' | 'form' | 'lineups'>('markets');
   const [oddsData, setOddsData] = useState<any>(null);
@@ -36,9 +50,29 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
     return () => { cancelled = true; };
   }, [fixture.id]);
 
-  if (!analysis) return null;
+  if (!analysis || !analysis.fixture) return null;
 
-  const { fixture, homeForm, awayForm, headToHead, dixonColesParameters, scoreMatrix, marketPredictions, injuries, lineups } = analysis;
+  const {
+    fixture,
+    homeForm = EMPTY_FORM,
+    awayForm = EMPTY_FORM,
+    headToHead = EMPTY_H2H,
+    dixonColesParameters = EMPTY_DC,
+    scoreMatrix = EMPTY_MATRIX,
+    marketPredictions = EMPTY_PREDICTIONS,
+    injuries = null,
+    lineups = EMPTY_LINEUPS,
+  } = analysis ?? ({} as any);
+
+  // Adapter data may be partially populated; never trust missing collections.
+  const dataQualityNotes: string[] = Array.isArray(analysis?.dataQualityNotes) ? analysis.dataQualityNotes : [];
+  const homeXI = lineups?.home?.startingXI ?? [];
+  const awayXI = lineups?.away?.startingXI ?? [];
+  const homeSubs = lineups?.home?.substitutes ?? [];
+  const awaySubs = lineups?.away?.substitutes ?? [];
+  const homeLast5 = homeForm?.last5Results ?? [];
+  const awayLast5 = awayForm?.last5Results ?? [];
+  const h2hMeetings = headToHead?.recentMeetings ?? [];
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
@@ -292,7 +326,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                     </div>
 
                     {/* Risk Factors */}
-                    {pred.riskFactors.length > 0 && (
+                    {(pred.riskFactors?.length ?? 0) > 0 && (
                       <div className="border-t border-white/5 pt-2 text-[10px] text-amber-300/90 flex items-start space-x-1.5">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
                         <span>{pred.riskFactors.join(' • ')}</span>
@@ -437,7 +471,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.homeTeam.name} (Home)</span>
                     <div className="flex space-x-1.5">
-                      {homeForm.last5Results.map((r, i) => (
+                      {homeLast5.map((r, i) => (
                         <span
                           key={i}
                           className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] ${
@@ -465,7 +499,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.awayTeam.name} (Away)</span>
                     <div className="flex space-x-1.5">
-                      {awayForm.last5Results.map((r, i) => (
+                      {awayLast5.map((r, i) => (
                         <span
                           key={i}
                           className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] ${
@@ -498,7 +532,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       Over last {headToHead.totalMeetings} meetings: {fixture.homeTeam.name} won {headToHead.homeWins}, {headToHead.draws} draws, {fixture.awayTeam.name} won {headToHead.awayWins}. Avg goals: {headToHead.avgGoals}.
                     </p>
                     <div className="divide-y divide-white/5">
-                      {headToHead.recentMeetings.map((m, idx) => (
+                      {h2hMeetings.map((m, idx) => (
                         <div key={idx} className="py-2 flex items-center justify-between text-xs">
                           <span className="text-slate-500 font-mono">{m.date}</span>
                           <span className="font-semibold text-slate-200">{m.homeTeam} vs {m.awayTeam}</span>
@@ -555,9 +589,9 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       {lineups.home?.formation || '4-3-3'}
                     </span>
                   </div>
-                  {lineups.home?.startingXI ? (
+                  {homeXI.length > 0 ? (
                     <div className="space-y-1 text-xs">
-                      {lineups.home.startingXI.map(p => (
+                      {homeXI.map(p => (
                         <div key={p.id} className="flex items-center justify-between py-1 border-b border-white/5 text-slate-300">
                           <span><span className="font-mono text-amber-400 mr-2">#{p.number}</span>{p.name}</span>
                           <span className="text-slate-500 text-[10px] uppercase font-mono">{p.position}</span>
@@ -576,9 +610,9 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       {lineups.away?.formation || '4-2-3-1'}
                     </span>
                   </div>
-                  {lineups.away?.startingXI ? (
+                  {awayXI.length > 0 ? (
                     <div className="space-y-1 text-xs">
-                      {lineups.away.startingXI.map(p => (
+                      {awayXI.map(p => (
                         <div key={p.id} className="flex items-center justify-between py-1 border-b border-white/5 text-slate-300">
                           <span><span className="font-mono text-amber-400 mr-2">#{p.number}</span>{p.name}</span>
                           <span className="text-slate-500 text-[10px] uppercase font-mono">{p.position}</span>
@@ -596,7 +630,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           {/* Data Quality & Integrity Footer */}
           <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 text-[11px] text-slate-400 space-y-1">
             <div className="font-bold text-amber-300">Data Integrity Policy:</div>
-            {analysis.dataQualityNotes.map((note, i) => (
+            {dataQualityNotes.map((note, i) => (
               <div key={i}>• {note}</div>
             ))}
           </div>
