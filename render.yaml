@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: football-analytics-bot
+    env: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: DATA_PROVIDER
+        value: auto
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        value: "1560911275502870638"
+      - key: DISCORD_TARGET_CHANNEL_ID
+        sync: false
+      - key: DISCORD_UPDATE_INTERVAL
+        value: "5m"
+      - key: ENABLE_DISCORD_HOURLY
+        value: "true"
+      - key: CACHE_TTL_MINUTES
+        value: 15
+      - key: SYNC_CRON_SCHEDULE
+        value: "0 */4 * * *"

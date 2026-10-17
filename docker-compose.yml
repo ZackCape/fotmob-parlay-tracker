@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: football-analytics-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-football_analytics}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/src/database/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-football_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: football-analytics-app
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-football_analytics}
+      DATA_PROVIDER: ${DATA_PROVIDER:-auto}
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY:-}
+      FOOTBALL_DATA_ORG_KEY: ${FOOTBALL_DATA_ORG_KEY:-}
+      CACHE_TTL_MINUTES: ${CACHE_TTL_MINUTES:-15}
+      SYNC_CRON_SCHEDULE: ${SYNC_CRON_SCHEDULE:-0 */4 * * *}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/system/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:
+    driver: local

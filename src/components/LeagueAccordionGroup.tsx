@@ -1,0 +1,128 @@
+import React, { useState } from 'react';
+import { Fixture, League } from '../types';
+import { FotmobMatchRow } from './FotmobMatchRow';
+import { ChevronDown, ChevronRight, Trophy } from 'lucide-react';
+
+interface LeagueAccordionGroupProps {
+  fixtures: Fixture[];
+  onSelectFixture: (fixture: Fixture) => void;
+  selectedLeagueFilter: string;
+}
+
+interface LeagueMeta {
+  name: string;
+  country: string;
+  flag: string;
+}
+
+const LEAGUE_META: Record<League, LeagueMeta> = {
+  EPL: { name: 'Premier League', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+  CHAMPIONS_LEAGUE: { name: 'Champions League', country: 'Europe', flag: '⭐️' },
+  LALIGA: { name: 'LaLiga', country: 'Spain', flag: '🇪🇸' },
+  LIGUE1: { name: 'Ligue 1', country: 'France', flag: '🇫🇷' },
+  EUROPA_LEAGUE: { name: 'Europa League', country: 'Europe', flag: '🏆' },
+  CONFERENCE_LEAGUE: { name: 'Conference League', country: 'Europe', flag: '🛡️' },
+  CHAMPIONSHIP: { name: 'Championship', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+};
+
+const LEAGUE_ORDER: League[] = [
+  'EPL',
+  'CHAMPIONS_LEAGUE',
+  'LALIGA',
+  'LIGUE1',
+  'EUROPA_LEAGUE',
+  'CONFERENCE_LEAGUE',
+  'CHAMPIONSHIP',
+];
+
+export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
+  fixtures,
+  onSelectFixture,
+  selectedLeagueFilter,
+}) => {
+  // Keep track of collapsed league sections (default all expanded)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const toggleCollapse = (leagueId: string) => {
+    setCollapsed(prev => ({ ...prev, [leagueId]: !prev[leagueId] }));
+  };
+
+  // Group fixtures by league
+  const grouped = fixtures.reduce<Record<string, Fixture[]>>((acc, f) => {
+    if (!acc[f.league]) acc[f.league] = [];
+    acc[f.league].push(f);
+    return acc;
+  }, {});
+
+  // Determine which leagues to display based on selected filter
+  const visibleLeagues = LEAGUE_ORDER.filter(league => {
+    if (selectedLeagueFilter !== 'ALL' && selectedLeagueFilter !== league) return false;
+    return grouped[league] && grouped[league].length > 0;
+  });
+
+  if (visibleLeagues.length === 0) {
+    return (
+      <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-8 text-center text-[#8c92a4]">
+        <Trophy className="w-10 h-10 mx-auto mb-2 text-[#8c92a4]/40" />
+        <p className="text-sm font-semibold text-white">No matches scheduled for this selection</p>
+        <p className="text-xs mt-1">Try switching the date or changing the league filter from the sidebar.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {visibleLeagues.map(league => {
+        const leagueFixtures = grouped[league] || [];
+        const meta = LEAGUE_META[league] || { name: league, country: 'Europe', flag: '⚽' };
+        const isCollapsed = !!collapsed[league];
+
+        return (
+          <div
+            key={league}
+            className="bg-[#16181d] border border-[#252932] rounded-2xl overflow-hidden shadow-lg"
+          >
+            {/* FotMob League Accordion Header */}
+            <div
+              onClick={() => toggleCollapse(league)}
+              className="flex items-center justify-between px-4 py-3 bg-[#1c1f26]/80 hover:bg-[#1c1f26] border-b border-[#252932] cursor-pointer transition-colors"
+            >
+              <div className="flex items-center space-x-2.5">
+                <span className="text-lg">{meta.flag}</span>
+                <div>
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    {meta.country} - {meta.name}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-[#252932] text-[#8c92a4]">
+                  {leagueFixtures.length}
+                </span>
+                {isCollapsed ? (
+                  <ChevronRight className="w-4 h-4 text-[#8c92a4]" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-[#8c92a4]" />
+                )}
+              </div>
+            </div>
+
+            {/* Match Rows */}
+            {!isCollapsed && (
+              <div className="divide-y divide-[#252932]/70">
+                {leagueFixtures.map(fixture => (
+                  <FotmobMatchRow
+                    key={fixture.id}
+                    fixture={fixture}
+                    onSelect={onSelectFixture}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
