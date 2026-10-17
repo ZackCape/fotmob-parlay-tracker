@@ -3,6 +3,7 @@
  * Usage: npx tsx backend/scripts/debug-providers.ts
  * Tests raw provider output for a target date without mutating application state.
  */
+import { EspnAdapter } from '../src/providers/espn-adapter.js';
 import { FootballDataOrgAdapter } from '../src/providers/football-data-adapter.js';
 import { TheSportsDBAdapter } from '../src/providers/thesportsdb-adapter.js';
 import { OpenLigaDBAdapter } from '../src/providers/openligadb-adapter.js';
@@ -17,6 +18,24 @@ function line(t: string) { console.log('\n=== ' + t + ' ==='); }
 async function main() {
   console.log('Cape Predictor provider diagnostics for', DATE);
   console.log('Football-Data.org key configured:', Boolean(config.footballDataOrgKey));
+
+
+  // 0) ESPN (primary)
+  line('EspnAdapter (primary, all leagues)');
+  try {
+    const a = new EspnAdapter();
+    const fixtures = await a.getFixturesByDate(DATE, 'ALL');
+    console.log('TOTAL ESPN fixtures:', fixtures.length);
+    const byLeague: Record<string, number> = {};
+    fixtures.forEach(f => { byLeague[f.league] = (byLeague[f.league] || 0) + 1; });
+    console.log('by league:', JSON.stringify(byLeague));
+    ['EPL', 'LALIGA', 'SERIE_A', 'LIGUE1', 'BUNDESLIGA', 'BUNDESLIGA2', 'CHAMPIONSHIP', 'CHAMPIONS_LEAGUE']
+      .forEach(lg => console.log(`  ${lg}: ${byLeague[lg] || 0}`));
+    fixtures.slice(0, 8).forEach(f =>
+      console.log('  ', f.homeTeam.name, '-', f.awayTeam.name, f.homeScore, f.awayScore, `[${f.league}]`, f.status));
+  } catch (e: any) {
+    console.log('ERROR:', e.message);
+  }
 
   // 1) Football-Data.org
   line('FootballDataOrgAdapter');

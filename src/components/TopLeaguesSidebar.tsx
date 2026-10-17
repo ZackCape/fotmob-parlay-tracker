@@ -25,6 +25,7 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
     { id: 'CHAMPIONS_LEAGUE', name: 'Champions League', country: 'Europe', flag: '⭐️' },
     { id: 'LALIGA', name: 'LaLiga', country: 'Spain', flag: '🇪🇸' },
     { id: 'LIGUE1', name: 'Ligue 1', country: 'France', flag: '🇫🇷' },
+    { id: 'SERIE_A', name: 'Serie A', country: 'Italy', flag: '🇮🇹' },
     { id: 'BUNDESLIGA', name: 'Bundesliga', country: 'Germany', flag: '🇩🇪' },
     { id: 'BUNDESLIGA2', name: 'Bundesliga 2', country: 'Germany', flag: '🇩🇪' },
     { id: 'EUROPA_LEAGUE', name: 'Europa League', country: 'Europe', flag: '🏆' },

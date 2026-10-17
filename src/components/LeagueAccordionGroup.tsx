@@ -19,6 +19,7 @@ const LEAGUE_META: Record<League, LeagueMeta> = {
   EPL: { name: 'Premier League', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
   CHAMPIONS_LEAGUE: { name: 'Champions League', country: 'Europe', flag: '⭐️' },
   LALIGA: { name: 'LaLiga', country: 'Spain', flag: '🇪🇸' },
+  SERIE_A: { name: 'Serie A', country: 'Italy', flag: '🇮🇹' },
   LIGUE1: { name: 'Ligue 1', country: 'France', flag: '🇫🇷' },
   EUROPA_LEAGUE: { name: 'Europa League', country: 'Europe', flag: '🏆' },
   CONFERENCE_LEAGUE: { name: 'Conference League', country: 'Europe', flag: '🛡️' },
@@ -28,6 +29,7 @@ const LEAGUE_META: Record<League, LeagueMeta> = {
 };
 
 const LEAGUE_ORDER: League[] = [
+  'SERIE_A',
   'BUNDESLIGA',
   'BUNDESLIGA2',
   'EPL',

@@ -8,6 +8,8 @@ import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 export class ApiFootballAdapter implements IFootballDataProvider {
   readonly name = 'API-Football (Live REST)';
   private apiKey: string;
+  private keys: string[] = [];
+  private keyIndex: number = 0;
   private baseUrl: string;
   private isRapidApi: boolean;
   private rateLimitRemaining: number = 100;
@@ -21,8 +23,9 @@ export class ApiFootballAdapter implements IFootballDataProvider {
   private cooldownUntil: number = 0;
   private lastError: string | null = null;
 
-  constructor(apiKey: string, isRapidApi: boolean = false, dailyLimit: number = 90, safetyMargin: number = 10) {
-    this.apiKey = apiKey;
+  constructor(apiKey: string | string[], isRapidApi: boolean = false, dailyLimit: number = 90, safetyMargin: number = 10) {
+    this.keys = Array.isArray(apiKey) ? apiKey.filter(Boolean) : [apiKey].filter(Boolean);
+    this.apiKey = this.keys[0] || '';
     this.isRapidApi = isRapidApi;
     this.dailyLimit = dailyLimit;
     this.safetyMargin = safetyMargin;
@@ -94,6 +97,26 @@ export class ApiFootballAdapter implements IFootballDataProvider {
     };
   }
 
+  /** Rotate to the next configured API-Football key. Returns false if none left. */
+  private rotateKey(): boolean {
+    if (this.keys.length <= 1) return false;
+    this.keyIndex = (this.keyIndex + 1) % this.keys.length;
+    this.apiKey = this.keys[this.keyIndex];
+    // reset per-key daily tracking so the new key has budget
+    this.madeToday = 0;
+    this.rateLimitRemaining = 100;
+    this.dailyQuotaExhausted = false;
+    this.cooldownUntil = 0;
+    console.warn(`[ApiFootballAdapter] Rotated to next configured API key (index ${this.keyIndex}).`);
+    return true;
+  }
+
+  private isQuotaError(status?: number, body?: any): boolean {
+    if (status === 429) return true;
+    const msg = JSON.stringify(body || '').toLowerCase();
+    return msg.includes('request limit') || msg.includes('quota') || msg.includes('too many requests') || msg.includes('rate limit');
+  }
+
   async getFixturesByDate(date: string, league: 'ALL' | 'EPL' | 'CHAMPIONSHIP' = 'ALL'): Promise<Fixture[]> {
     const targetLeagueIds = new Set<number>();
     if (league === 'ALL' || league === 'EPL') targetLeagueIds.add(39);
@@ -122,9 +145,21 @@ export class ApiFootballAdapter implements IFootballDataProvider {
           const errs = response.data.errors;
           const msg = JSON.stringify(errs);
           console.warn('[ApiFootballAdapter] Provider returned errors:', errs);
-          if (/quota|limit|plan/i.test(msg)) this.dailyQuotaExhausted = true;
-          if (/key|auth|token/i.test(msg)) this.authFailed = true;
           this.lastError = msg;
+          if (/key|auth|token/i.test(msg) && !this.isQuotaError(undefined, errs)) {
+            this.authFailed = true;
+            return [];
+          }
+          if (/quota|limit|plan|rate/i.test(msg)) {
+            this.dailyQuotaExhausted = true;
+            // Rotate to next key before declaring exhaustion
+            if (this.rotateKey()) {
+              console.warn('[ApiFootballAdapter] Quota error on current key; retrying with rotated key.');
+              attempt = 0; // reset attempt counter to retry with new key
+              continue;
+            }
+            return [];
+          }
           return [];
         }
 
@@ -143,6 +178,11 @@ export class ApiFootballAdapter implements IFootballDataProvider {
         if (status === 429) {
           this.cooldownUntil = Date.now() + 60000;
           this.lastError = 'rate_limit';
+          if (this.rotateKey()) {
+            console.warn('[ApiFootballAdapter] HTTP 429 on current key; retrying with rotated key.');
+            attempt = 0;
+            continue;
+          }
         } else if (status === 401 || status === 403) {
           this.authFailed = true;
           this.lastError = 'auth_failed';
@@ -182,7 +222,11 @@ export class ApiFootballAdapter implements IFootballDataProvider {
           break;
         } catch (e: any) {
           const status = e?.response?.status;
-          if (status === 429) { this.cooldownUntil = Date.now() + 60000; this.lastError='rate_limit'; }
+          if (status === 429) {
+            this.cooldownUntil = Date.now() + 60000;
+            this.lastError='rate_limit';
+            if (this.rotateKey()) { console.warn('[ApiFootballAdapter] HTTP 429 on details; retrying with rotated key.'); attempt = 0; continue; }
+          }
           if (status === 401 || status === 403) { this.authFailed = true; this.lastError='auth_failed'; }
           if (attempt >= 3) throw e;
           if (status !== 401 && status !== 403) await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 8000)));

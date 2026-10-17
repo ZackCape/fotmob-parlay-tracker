@@ -11,6 +11,7 @@ export interface AppConfig {
   sqliteDbPath: string;
   dataProvider: 'auto' | 'api-football' | 'football-data' | 'fotmob' | 'footballdatabase' | 'verified-archive' | 'openfootball';
   apiFootballKey?: string;
+  apiFootballKeys: string[];
   footballDataOrgKey?: string;
   theOddsApiKey?: string;
   theOddsApiRegions: string;
@@ -38,6 +39,18 @@ export const config: AppConfig = {
   sqliteDbPath: process.env.SQLITE_DB_PATH || path.resolve(process.cwd(), 'data', 'football_analytics.db'),
   dataProvider: (process.env.DATA_PROVIDER as AppConfig['dataProvider']) || 'auto',
   apiFootballKey: process.env.API_FOOTBALL_KEY || undefined,
+  apiFootballKeys: (() => {
+    const list: string[] = [];
+    if (process.env.API_FOOTBALL_KEYS) {
+      list.push(...process.env.API_FOOTBALL_KEYS.split(',').map(k => k.trim()).filter(Boolean));
+    }
+    if (process.env.API_FOOTBALL_KEY) list.push(process.env.API_FOOTBALL_KEY);
+    for (let i = 1; i <= 10; i++) {
+      const v = process.env[`API_FOOTBALL_KEY_${i}`];
+      if (v) list.push(v);
+    }
+    return [...new Set(list)];
+  })(),
   footballDataOrgKey: process.env.FOOTBALL_DATA_ORG_KEY || undefined,
   cacheTtlMinutes: parseInt(process.env.CACHE_TTL_MINUTES || '15', 10),
   syncCronSchedule: process.env.SYNC_CRON_SCHEDULE || '0 */4 * * *',

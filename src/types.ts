@@ -1,4 +1,4 @@
-export type League = 'EPL' | 'CHAMPIONSHIP' | 'LALIGA' | 'LIGUE1' | 'BUNDESLIGA' | 'BUNDESLIGA2' | 'CHAMPIONS_LEAGUE' | 'EUROPA_LEAGUE' | 'CONFERENCE_LEAGUE';
+export type League = 'EPL' | 'CHAMPIONSHIP' | 'LALIGA' | 'SERIE_A' | 'LIGUE1' | 'BUNDESLIGA' | 'BUNDESLIGA2' | 'CHAMPIONS_LEAGUE' | 'EUROPA_LEAGUE' | 'CONFERENCE_LEAGUE';
 
 export interface Team {
   id: string;

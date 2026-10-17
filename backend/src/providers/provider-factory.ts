@@ -6,6 +6,7 @@ import { FootballDataOrgAdapter } from './football-data-adapter.js';
 import { FotmobAdapter } from './fotmob-adapter.js';
 import { FootballDatabaseAdapter, FootballNewsArticle } from './footballdatabase-adapter.js';
 import { OpenFootballGitHubAdapter } from './openfootball-github-adapter.js';
+import { EspnAdapter } from './espn-adapter.js';
 import { TheOddsAdapter } from './theodds-adapter.js';
 import { TheSportsDBAdapter } from './thesportsdb-adapter.js';
 import { OpenLigaDBAdapter } from './openligadb-adapter.js';
@@ -33,6 +34,7 @@ export class DataProviderFactory {
   private openligadbProvider: OpenLigaDBAdapter;
   private footballDataUkProvider: FootballDataUkAdapter;
   private openfootballGitHubProvider: OpenFootballGitHubAdapter;
+  private espnProvider: EspnAdapter;
   private oddsAdapter: TheOddsAdapter | null;
   private config: AppConfig;
   private fallbackProvider: IFootballDataProvider;
@@ -52,6 +54,7 @@ export class DataProviderFactory {
     this.openligadbProvider = new OpenLigaDBAdapter();
     this.footballDataUkProvider = new FootballDataUkAdapter();
     this.openfootballGitHubProvider = new OpenFootballGitHubAdapter();
+    this.espnProvider = new EspnAdapter();
     this.oddsAdapter = config.theOddsApiKey ? new TheOddsAdapter(config.theOddsApiKey, config.theOddsApiRegions, config.theOddsApiMonthlyLimit, config.theOddsApiSafetyReserve) : null;
     this.backupProvider = config.footballDataOrgKey ? new FootballDataOrgAdapter(config.footballDataOrgKey) : null;
     this.defaultTtlMs = config.cacheTtlMinutes * 60 * 1000;
@@ -62,7 +65,7 @@ export class DataProviderFactory {
     });
 
     if (config.dataProvider === 'api-football' && config.apiFootballKey) {
-      this.primaryProvider = new ApiFootballAdapter(config.apiFootballKey, false, config.apiFootballDailyLimit, config.apiFootballSafetyMargin);
+      this.primaryProvider = new ApiFootballAdapter(config.apiFootballKeys && config.apiFootballKeys.length ? config.apiFootballKeys : config.apiFootballKey, false, config.apiFootballDailyLimit, config.apiFootballSafetyMargin);
     } else if (config.dataProvider === 'football-data' && config.footballDataOrgKey) {
       this.primaryProvider = new FootballDataOrgAdapter(config.footballDataOrgKey);
     } else if (config.dataProvider === 'footballdatabase') {
@@ -75,7 +78,7 @@ export class DataProviderFactory {
       this.primaryProvider = this.fallbackProvider;
     } else if (config.dataProvider === 'auto') {
       if (config.apiFootballKey) {
-        this.primaryProvider = new ApiFootballAdapter(config.apiFootballKey, false, config.apiFootballDailyLimit, config.apiFootballSafetyMargin);
+        this.primaryProvider = new ApiFootballAdapter(config.apiFootballKeys && config.apiFootballKeys.length ? config.apiFootballKeys : config.apiFootballKey, false, config.apiFootballDailyLimit, config.apiFootballSafetyMargin);
       } else if (config.footballDataOrgKey) {
         this.primaryProvider = new FootballDataOrgAdapter(config.footballDataOrgKey);
       } else {
@@ -187,23 +190,30 @@ export class DataProviderFactory {
       let fixtures: Fixture[] = [];
       const wantGerman = league === 'ALL' || league === 'BUNDESLIGA' || league === 'BUNDESLIGA2';
 
-      // b) OpenLigaDB for German fixtures
-      if (wantGerman) {
-        try {
-          const g = await this.openligadbProvider.getFixturesByDate(date, league);
-          if (g.length > 0) fixtures.push(...g);
-        } catch (e: any) { console.warn('[Factory] OpenLigaDB failed:', e.message); }
-      }
+      // b) ESPN public scoreboard - all major global leagues, live scores, no API key
+      try {
+        const espn = await this.espnProvider.getFixturesByDate(date, league);
+        if (espn.length > 0) fixtures.push(...espn);
+        console.info(`[Factory] ESPN returned ${espn.length} fixtures for ${date}`);
+      } catch (e: any) { console.warn('[Factory] ESPN failed:', e.message); }
 
       // c) Football-Data.org for main leagues
-      if (this.backupProvider && !(this.backupProvider.isQuotaExhausted?.() ?? false) && !(this.backupProvider.isInCooldown?.() ?? false)) {
+      if (fixtures.length === 0 && this.backupProvider && !(this.backupProvider.isQuotaExhausted?.() ?? false) && !(this.backupProvider.isInCooldown?.() ?? false)) {
         try {
           const fd = await this.backupProvider.getFixturesByDate(date, league);
           if (fd.length > 0) fixtures.push(...fd);
         } catch (e: any) { console.warn('[Factory] Football-Data failed:', e.message); }
       }
 
-      // d) TheSportsDB fallback if too few
+      // d) OpenLigaDB (German specialist)
+      if (fixtures.length === 0 && wantGerman) {
+        try {
+          const g = await this.openligadbProvider.getFixturesByDate(date, league);
+          if (g.length > 0) fixtures.push(...g);
+        } catch (e: any) { console.warn('[Factory] OpenLigaDB failed:', e.message); }
+      }
+
+      // e) TheSportsDB fallback if too few
       if (fixtures.length < 3) {
         try {
           const ts = await this.thesportsdbProvider.getFixturesByDate(date, league);
@@ -217,7 +227,7 @@ export class DataProviderFactory {
         } catch (e: any) { console.warn('[Factory] TheSportsDB failed:', e.message); }
       }
 
-      // e) Football-Data.co.uk free CSV fallback
+      // f) Football-Data.co.uk free CSV fallback
       if (fixtures.length === 0) {
         try {
           const fduk = await this.footballDataUkProvider.getFixturesByDate(date, league);
@@ -225,7 +235,7 @@ export class DataProviderFactory {
         } catch (e: any) { console.warn('[Factory] FootballDataUk failed:', e.message); }
       }
 
-      // f) OpenFootball static dataset fallback
+      // g) OpenFootball static dataset fallback
       if (fixtures.length === 0) {
         try {
           const of = await this.openfootballGitHubProvider.getFixturesByDate(date, league);
