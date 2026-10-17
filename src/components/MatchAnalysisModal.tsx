@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { MatchAnalysis, MarketPrediction } from '../types';
 import { computeOutcomeProbabilities } from '../utils/matchOutcome';
 import { computeOddsComparison } from '../utils/oddsMath';
-import { X, TrendingUp, AlertTriangle, Shield, Activity, Users, CheckCircle2, Trophy } from 'lucide-react';
+import { X, TrendingUp, AlertTriangle, Shield, Activity, Users, CheckCircle2, Trophy, BarChart3, AlertCircle } from 'lucide-react';
 
 interface MatchAnalysisModalProps {
   analysis: MatchAnalysis | null;
@@ -10,7 +10,7 @@ interface MatchAnalysisModalProps {
 }
 
 export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis, onClose }) => {
-  const [activeTab, setActiveTab] = useState<'markets' | 'matrix' | 'form' | 'lineups'>('markets');
+  const [activeTab, setActiveTab] = useState<'markets' | 'stats' | 'matrix' | 'form' | 'lineups'>('markets');
   const [oddsData, setOddsData] = useState<any>(null);
   const [oddsLoading, setOddsLoading] = useState<boolean>(false);
 
@@ -104,6 +104,16 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             <TrendingUp className="w-4 h-4 text-amber-400" />
             <span>Market Predictions ({marketPredictions.length})</span>
           </button>
+          <button
+            onClick={() => setActiveTab('stats')}
+            className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
+              activeTab === 'stats' ? 'border-blue-400 text-blue-300' : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Match Stats</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('matrix')}
             className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
@@ -341,6 +351,80 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* TAB: MATCH STATISTICS (actual provider data) */}
+          {activeTab === 'stats' && (
+            <div className="space-y-4">
+              {fixture.statistics ? (
+                <>
+                  {/* Possession */}
+                  <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4">
+                    <div className="text-sm font-bold text-white mb-3">Possession</div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-bold text-white text-sm w-12 text-right">
+                        {fixture.statistics.possessionHome ?? '-'}%
+                      </span>
+                      <div className="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden flex">
+                        <div
+                          className="bg-blue-500 h-full"
+                          style={{ width: `${fixture.statistics.possessionHome ?? 0}%` }}
+                        />
+                        <div
+                          className="bg-slate-500 h-full flex-1"
+                          style={{ width: `${100 - (fixture.statistics.possessionHome ?? 0)}%` }}
+                        />
+                      </div>
+                      <span className="font-mono font-bold text-white text-sm w-12">
+                        {fixture.statistics.possessionAway ?? '-'}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Stat rows */}
+                  <div className="bg-slate-950/70 border border-white/10 rounded-2xl overflow-hidden">
+                    {[
+                      { label: 'Total shots', home: fixture.statistics.shotsHome, away: fixture.statistics.shotsAway },
+                      { label: 'Shots on target', home: fixture.statistics.shotsOnTargetHome, away: fixture.statistics.shotsOnTargetAway },
+                      { label: 'xG', home: fixture.statistics.xgHome, away: fixture.statistics.xgAway },
+                      { label: 'Corners', home: fixture.statistics.cornersHome, away: fixture.statistics.cornersAway },
+                      { label: 'Fouls', home: fixture.statistics.foulsHome, away: fixture.statistics.foulsAway },
+                      { label: 'Yellow cards', home: fixture.statistics.yellowCardsHome, away: fixture.statistics.yellowCardsAway },
+                      { label: 'Red cards', home: fixture.statistics.redCardsHome, away: fixture.statistics.redCardsAway },
+                    ].map((row) => {
+                      const hv = row.home ?? 0;
+                      const av = row.away ?? 0;
+                      const total = hv + av;
+                      const hp = total > 0 ? (hv / total) * 100 : 50;
+                      return (
+                        <div key={row.label} className="px-4 py-2.5 border-b border-white/5 last:border-b-0">
+                          <div className="flex items-center justify-between text-xs mb-1.5">
+                            <span className="font-mono font-bold text-white w-10">{row.home ?? '-'}</span>
+                            <span className="text-slate-400">{row.label}</span>
+                            <span className="font-mono font-bold text-white w-10 text-right">{row.away ?? '-'}</span>
+                          </div>
+                          <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+                            <div className="bg-blue-500 h-full" style={{ width: `${hp}%` }} />
+                            <div className="bg-slate-600 h-full flex-1" style={{ width: `${100 - hp}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Actual match statistics from {fixture.dataSource}. Model probabilities are shown in Market Predictions.
+                  </p>
+                </>
+              ) : (
+                <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-6 text-center">
+                  <AlertCircle className="w-6 h-6 mx-auto mb-2 text-slate-500" />
+                  <p className="text-sm text-slate-300 font-semibold">Match statistics unavailable</p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    The provider has not published statistics for this match yet.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

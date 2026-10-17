@@ -276,6 +276,20 @@ export class DataProviderFactory {
       if (cached) return cached;
 
       let details: MatchAnalysis | null = null;
+
+      // ESPN fixtures: route directly to ESPN adapter (no API-Football quota consumed)
+      if (fixtureId.startsWith('espn-')) {
+        try {
+          details = await this.espnProvider.getMatchDetails(fixtureId);
+        } catch (e: any) {
+          console.warn(`[Factory] ESPN details failed for ${fixtureId}:`, e.message);
+        }
+        if (details) {
+          this.setCache(cacheKey, details);
+        }
+        return details;
+      }
+
       const primaryAvailable = !(this.primaryProvider.isQuotaExhausted?.() ?? false) && !(this.primaryProvider.isInCooldown?.() ?? false);
       if (primaryAvailable) {
         try {
