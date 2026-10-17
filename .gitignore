@@ -4,8 +4,7 @@ node_modules/
 !.env.example
 
 # Data / databases / caches
-data/*.db
-data/*.sqlite
+data/
 *.log
 
 # Build output
