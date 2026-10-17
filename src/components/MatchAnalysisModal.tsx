@@ -28,17 +28,25 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
   const [oddsData, setOddsData] = useState<any>(null);
   const [oddsLoading, setOddsLoading] = useState<boolean>(false);
 
+  // Declare only optional-safe values BEFORE any hook/effect uses them.
+  // Never reference `fixture` here: it is destructured below and would be in the TDZ.
+  const fixtureId: string | undefined = analysis?.fixture?.id;
+  const fixtureDate: string | undefined = analysis?.fixture?.date;
+  const fixtureLeague: string | undefined = analysis?.fixture?.league;
+  const outcomePredictions: MarketPrediction[] = analysis?.marketPredictions ?? EMPTY_PREDICTIONS;
+
   React.useEffect(() => {
+    if (!fixtureId || !fixtureDate || !fixtureLeague) return;
     let cancelled = false;
     setOddsLoading(true);
     const params = new URLSearchParams({
-      fixtureId: fixture.id,
-      date: fixture.date,
-      league: fixture.league,
+      fixtureId,
+      date: fixtureDate,
+      league: fixtureLeague,
     });
-    const homePred = analysis.marketPredictions?.find(p => p.market === 'HOME_WIN');
-    const drawPred = analysis.marketPredictions?.find(p => p.market === 'DRAW');
-    const awayPred = analysis.marketPredictions?.find(p => p.market === 'AWAY_WIN');
+    const homePred = outcomePredictions.find(p => p.market === 'HOME_WIN');
+    const drawPred = outcomePredictions.find(p => p.market === 'DRAW');
+    const awayPred = outcomePredictions.find(p => p.market === 'AWAY_WIN');
     if (homePred) params.set('modelHome', String(homePred.estimatedProbability));
     if (drawPred) params.set('modelDraw', String(drawPred.estimatedProbability));
     if (awayPred) params.set('modelAway', String(awayPred.estimatedProbability));
@@ -48,7 +56,8 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
       .catch(() => { if (!cancelled) setOddsData({ available: false, reason: 'error' }); })
       .finally(() => { if (!cancelled) setOddsLoading(false); });
     return () => { cancelled = true; };
-  }, [fixture.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixtureId, fixtureDate, fixtureLeague]);
 
   if (!analysis || !analysis.fixture) return null;
 
@@ -62,7 +71,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
     marketPredictions = EMPTY_PREDICTIONS,
     injuries = null,
     lineups = EMPTY_LINEUPS,
-  } = analysis ?? ({} as any);
+  } = analysis as any;
 
   // Adapter data may be partially populated; never trust missing collections.
   const dataQualityNotes: string[] = Array.isArray(analysis?.dataQualityNotes) ? analysis.dataQualityNotes : [];
@@ -182,9 +191,9 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
 
           {/* MATCH OUTCOME PROBABILITIES */}
           {(() => {
-            const homePred = marketPredictions.find(p => p.market === 'HOME_WIN');
-            const drawPred = marketPredictions.find(p => p.market === 'DRAW');
-            const awayPred = marketPredictions.find(p => p.market === 'AWAY_WIN');
+            const homePred = outcomePredictions.find(p => p.market === 'HOME_WIN');
+            const drawPred = outcomePredictions.find(p => p.market === 'DRAW');
+            const awayPred = outcomePredictions.find(p => p.market === 'AWAY_WIN');
             const res = computeOutcomeProbabilities(
               homePred?.estimatedProbability,
               drawPred?.estimatedProbability,
