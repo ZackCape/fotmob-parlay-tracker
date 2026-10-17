@@ -5,6 +5,7 @@ import { DataProviderFactory } from '../providers/provider-factory.js';
 import { buildStatisticalParlay } from '../parlays/parlay-builder.js';
 import { MarketPrediction, ParlayMode } from '../types/football.js';
 import { LiveParlayTrackerService } from '../parlays/live-tracker.js';
+import { isVerifiedFixture } from '../utils/fixtureValidation.js';
 
 export type UpdateInterval = '5m' | '15m' | '30m' | '45m' | '1h';
 
@@ -330,7 +331,7 @@ export class DiscordBotService {
   public async buildBroadcastPayload() {
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(fx => /api-football|football-data/i.test(fx.dataSource || ''));
+    const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
 
     // Collect predictions and injury bulletins
     const candidatePredictions: MarketPrediction[] = [];
@@ -592,7 +593,7 @@ export class DiscordBotService {
     const target = valid.includes(legsCount) ? (legsCount as any) : 5;
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(fx => /api-football|football-data/i.test(fx.dataSource || ''));
+    const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
     const preds: MarketPrediction[] = [];
 
     for (const fx of fixtures) {
@@ -622,7 +623,7 @@ export class DiscordBotService {
   public async generateSgpReply(): Promise<string> {
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(fx => /api-football|football-data/i.test(fx.dataSource || ''));
+    const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
     const preds: MarketPrediction[] = [];
 
     for (const fx of fixtures) {

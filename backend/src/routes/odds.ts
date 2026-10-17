@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { DataProviderFactory } from '../providers/provider-factory.js';
 import { computeOddsComparison } from '../utils/oddsMath.js';
+import { isVerifiedFixture } from '../utils/fixtureValidation.js';
 
 export function createOddsRouter(factory: DataProviderFactory): Router {
   const router = Router();
@@ -23,9 +24,8 @@ export function createOddsRouter(factory: DataProviderFactory): Router {
       }
 
       // Only real current fixtures may have odds.
-      const source = String(fixture.dataSource || '');
-      if (!/api-football|football-data/i.test(source)) {
-        console.info(`[OddsRoute] rejected non-live fixture ${fixtureId} source=${source}`);
+      if (!isVerifiedFixture(fixture)) {
+        console.info(`[OddsRoute] rejected non-verified fixture ${fixtureId} source=${fixture.dataSource}`);
         return res.json({ available: false, reason: 'non_live_fixture', odds: null });
       }
 
