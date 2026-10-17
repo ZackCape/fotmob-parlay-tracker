@@ -45,8 +45,8 @@ export const FotmobMatchRow: React.FC<FotmobMatchRowProps> = ({ fixture, onSelec
           </span>
         )}
         {/archive|calendar|historical|offline/i.test(fixture.dataSource || '') && (
-          <span className="text-[9px] text-slate-500 font-mono" title={fixture.dataSource}>
-            offline
+          <span className="text-[9px] text-amber-400/90 font-mono px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20" title={fixture.dataSource}>
+            OFFLINE DATA
           </span>
         )}
       </div>

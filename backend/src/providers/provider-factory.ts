@@ -122,7 +122,8 @@ export class DataProviderFactory {
 
     const promise = (async () => {
       const cached = this.getCached<Fixture[]>(cacheKey);
-      if (cached) return cached;
+      if (cached) { console.info(`[Factory] cache HIT fixtures ${date} ${league} count=${cached.length} source=${cached[0]?.dataSource}`); return cached; }
+      console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
       let fixtures: Fixture[] = [];
       let source = 'none';
       let fallbackReason: string | null = null;
