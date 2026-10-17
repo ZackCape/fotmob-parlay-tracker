@@ -4,6 +4,7 @@ import { FootballDataOrgAdapter } from './football-data-adapter.js';
 import { FotmobAdapter } from './fotmob-adapter.js';
 import { FootballDatabaseAdapter, FootballNewsArticle } from './footballdatabase-adapter.js';
 import { OpenFootballAdapter } from './openfootball-adapter.js';
+import { TheOddsAdapter } from './theodds-adapter.js';
 import { VerifiedArchiveAdapter } from './verified-archive-adapter.js';
 import { AppConfig } from '../config/env.js';
 import { Fixture, MatchAnalysis } from '../types/football.js';
@@ -22,6 +23,7 @@ export class DataProviderFactory {
   private fotmobProvider: IFootballDataProvider;
   private footballdatabaseProvider: FootballDatabaseAdapter;
   private openfootballProvider: OpenFootballAdapter;
+  private oddsAdapter: TheOddsAdapter | null;
   private config: AppConfig;
   private fallbackProvider: IFootballDataProvider;
   private adaptiveLearning: AdaptiveLearningEngine;
@@ -36,6 +38,7 @@ export class DataProviderFactory {
     this.fotmobProvider = new FotmobAdapter(this.adaptiveLearning);
     this.footballdatabaseProvider = new FootballDatabaseAdapter(this.adaptiveLearning);
     this.openfootballProvider = new OpenFootballAdapter(config.openfootballDataDir);
+    this.oddsAdapter = config.theOddsApiKey ? new TheOddsAdapter(config.theOddsApiKey, config.theOddsApiRegions, config.theOddsApiMonthlyLimit, config.theOddsApiSafetyReserve) : null;
     this.backupProvider = config.footballDataOrgKey ? new FootballDataOrgAdapter(config.footballDataOrgKey) : null;
     this.defaultTtlMs = config.cacheTtlMinutes * 60 * 1000;
 
@@ -76,6 +79,20 @@ export class DataProviderFactory {
 
   public async getLatestNews(): Promise<FootballNewsArticle[]> {
     return this.footballdatabaseProvider.getLatestNews();
+  }
+
+  public async getOddsForFixture(fixture: Fixture): Promise<any> {
+    if (!this.oddsAdapter) return null;
+    return this.oddsAdapter.getOddsForFixture(fixture);
+  }
+
+  public getOddsUsage() {
+    if (!this.oddsAdapter) return null;
+    return this.oddsAdapter.getUsage();
+  }
+
+  public isOddsConfigured(): boolean {
+    return Boolean(this.oddsAdapter);
   }
 
   private getCached<T>(key: string): T | null {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MatchAnalysis, MarketPrediction } from '../types';
 import { computeOutcomeProbabilities } from '../utils/matchOutcome';
+import { computeOddsComparison } from '../utils/oddsMath';
 import { X, TrendingUp, AlertTriangle, Shield, Activity, Users, CheckCircle2, Trophy } from 'lucide-react';
 
 interface MatchAnalysisModalProps {
@@ -10,6 +11,31 @@ interface MatchAnalysisModalProps {
 
 export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis, onClose }) => {
   const [activeTab, setActiveTab] = useState<'markets' | 'matrix' | 'form' | 'lineups'>('markets');
+  const [oddsData, setOddsData] = useState<any>(null);
+  const [oddsLoading, setOddsLoading] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setOddsLoading(true);
+    const params = new URLSearchParams({
+      home: fixture.homeTeam.name,
+      away: fixture.awayTeam.name,
+      kickoff: fixture.kickoffTime,
+      league: fixture.league,
+    });
+    const homePred = analysis.marketPredictions?.find(p => p.market === 'HOME_WIN');
+    const drawPred = analysis.marketPredictions?.find(p => p.market === 'DRAW');
+    const awayPred = analysis.marketPredictions?.find(p => p.market === 'AWAY_WIN');
+    if (homePred) params.set('modelHome', String(homePred.estimatedProbability));
+    if (drawPred) params.set('modelDraw', String(drawPred.estimatedProbability));
+    if (awayPred) params.set('modelAway', String(awayPred.estimatedProbability));
+    fetch(`/api/odds?${params.toString()}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setOddsData(d); })
+      .catch(() => { if (!cancelled) setOddsData({ available: false, reason: 'error' }); })
+      .finally(() => { if (!cancelled) setOddsLoading(false); });
+    return () => { cancelled = true; };
+  }, [fixture.id]);
 
   if (!analysis) return null;
 
@@ -164,6 +190,45 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               </div>
             );
           })()}
+
+          {/* ODDS & MARKET */}
+          {oddsLoading && (
+            <div className="text-xs text-slate-400">Loading odds...</div>
+          )}
+          {!oddsLoading && oddsData && oddsData.available && (
+            <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-white">Odds & Market (1X2)</span>
+                <span className="text-[10px] text-slate-400">
+                  {oddsData.bookmaker?.title || 'Bookmaker'} · {oddsData.odds?.preMatch ? 'Pre-match' : 'Live'} · Updated {oddsData.bookmaker?.lastUpdate ? new Date(oddsData.bookmaker.lastUpdate).toLocaleString() : 'n/a'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                {[
+                  { label: `${fixture.homeTeam.name}`, odds: oddsData.homeOdds, model: oddsData.comparison?.diffHome, fair: oddsData.comparison?.fairOddsHome },
+                  { label: 'Draw', odds: oddsData.drawOdds, model: oddsData.comparison?.diffDraw, fair: oddsData.comparison?.fairOddsDraw },
+                  { label: `${fixture.awayTeam.name}`, odds: oddsData.awayOdds, model: oddsData.comparison?.diffAway, fair: oddsData.comparison?.fairOddsAway },
+                ].map((r, i) => (
+                  <div key={i} className="bg-slate-900/60 rounded-xl p-3 space-y-1">
+                    <div className="text-[10px] text-slate-400 truncate">{r.label}</div>
+                    <div className="font-mono font-bold text-white">{r.odds != null ? Number(r.odds).toFixed(2) : 'n/a'}</div>
+                    <div className="text-[10px] text-slate-500">Fair: {r.fair != null ? Number(r.fair).toFixed(2) : 'n/a'}</div>
+                    <div className="text-[10px] text-slate-500">
+                      {r.model != null ? `${r.model > 0 ? '+' : ''}${r.model.toFixed(1)}pp` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-500">
+                Bookmaker odds are market data, not Cape Predictor predictions. Differences are model-vs-market signals, not guaranteed edges.
+              </p>
+            </div>
+          )}
+          {!oddsLoading && oddsData && !oddsData.available && (
+            <div className="text-xs text-slate-400 bg-slate-950/70 border border-white/10 rounded-2xl p-3">
+              Odds unavailable: {oddsData.reason || 'unknown'}.
+            </div>
+          )}
 
           {/* TAB 1: MARKET PREDICTIONS */}
           {activeTab === 'markets' && (

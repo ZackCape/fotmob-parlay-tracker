@@ -12,6 +12,10 @@ export interface AppConfig {
   dataProvider: 'auto' | 'api-football' | 'football-data' | 'fotmob' | 'footballdatabase' | 'verified-archive' | 'openfootball';
   apiFootballKey?: string;
   footballDataOrgKey?: string;
+  theOddsApiKey?: string;
+  theOddsApiRegions: string;
+  theOddsApiMonthlyLimit: number;
+  theOddsApiSafetyReserve: number;
   cacheTtlMinutes: number;
   syncCronSchedule: string;
   apiFootballDailyLimit: number;
@@ -39,6 +43,10 @@ export const config: AppConfig = {
   openfootballDataDir: process.env.OPENFOOTBALL_DATA_DIR || path.resolve(process.cwd(), 'data', 'openfootball'),
   apiFootballDailyLimit: parseInt(process.env.API_FOOTBALL_DAILY_LIMIT || '90', 10),
   apiFootballSafetyMargin: parseInt(process.env.API_FOOTBALL_SAFETY_MARGIN || '10', 10),
+  theOddsApiKey: process.env.THE_ODDS_API_KEY || undefined,
+  theOddsApiRegions: process.env.THE_ODDS_API_REGIONS || 'uk',
+  theOddsApiMonthlyLimit: parseInt(process.env.THE_ODDS_API_MONTHLY_LIMIT || '500', 10),
+  theOddsApiSafetyReserve: parseInt(process.env.THE_ODDS_API_SAFETY_RESERVE || '50', 10),
   discordBotToken: process.env.DISCORD_BOT_TOKEN || undefined,
   discordChannelId: process.env.DISCORD_CHANNEL_ID || undefined,
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || undefined,
