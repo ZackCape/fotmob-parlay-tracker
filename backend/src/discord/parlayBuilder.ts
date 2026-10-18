@@ -38,6 +38,17 @@ export interface CustomParlay {
   savedAt: number | null;
   /** Units staked, used for payout maths. */
   stake: number;
+  /* ---- Staged builder selections, persisted on the slip itself ---- *
+   * These stay put across every dropdown interaction, so selecting a
+   * league / match / market never resets the in-progress slip. */
+  pendingLeague: string;
+  pendingMatchId: string | null;
+  /** Human-readable label of the staged match, for the embed state line. */
+  pendingMatchLabel: string | null;
+  pendingMarket: MarketType | null;
+  /** Where the slip was saved, so live leg-hit alerts reach the channel. */
+  channelId: string | null;
+  guildId: string | null;
 }
 
 /** Base stake in currency units. Slips default to 1 unit = $10. */
@@ -48,47 +59,62 @@ const MAX_RECOMMENDED_UNITS = 10;
 
 const parlayStore = new Map<string, CustomParlay>();
 
-/** Which league the user is currently filtering matches by. */
-const parlayLeague = new Map<string, string>();
-/** Fixture selected in the match dropdown, pending a market choice. */
-const parlayPendingMatch = new Map<string, string>();
-/** Market selected in the market dropdown, pending an Add Leg press. */
-const parlayPendingMarket = new Map<string, MarketType>();
-
 export const MAX_LEGS = 10;
 
 export function getParlay(ownerId: string): CustomParlay {
   let p = parlayStore.get(ownerId);
   if (!p) {
-    p = { ownerId, legs: [], createdAt: Date.now(), saved: false, savedAt: null, stake: BASE_STAKE_USD };
+    p = {
+      ownerId, legs: [], createdAt: Date.now(), saved: false, savedAt: null,
+      stake: BASE_STAKE_USD, pendingLeague: 'ALL', pendingMatchId: null,
+      pendingMatchLabel: null, pendingMarket: null, channelId: null, guildId: null,
+    };
     parlayStore.set(ownerId, p);
   }
-  // A slip that has been saved and then edited is a draft again.
+  // Older slips created before staging moved on-object get sane defaults.
+  if (typeof p.pendingLeague !== 'string') p.pendingLeague = 'ALL';
+  if (p.pendingMatchId === undefined) p.pendingMatchId = null;
+  if (p.pendingMatchLabel === undefined) p.pendingMatchLabel = null;
+  if (p.pendingMarket === undefined) p.pendingMarket = null;
+  if (p.channelId === undefined) p.channelId = null;
+  if (p.guildId === undefined) p.guildId = null;
   return p;
 }
 
+/** League the user is currently filtering matches by (stored on the slip). */
 export function setParlayLeague(ownerId: string, league: string): void {
-  parlayLeague.set(ownerId, league);
+  getParlay(ownerId).pendingLeague = league;
 }
 
 export function getParlayLeague(ownerId: string): string {
-  return parlayLeague.get(ownerId) || 'ALL';
+  return getParlay(ownerId).pendingLeague || 'ALL';
 }
 
-export function setParlayPendingMatch(ownerId: string, fixtureId: string): void {
-  parlayPendingMatch.set(ownerId, fixtureId);
+/** Fixture staged in the match dropdown, awaiting a market choice. */
+export function setParlayPendingMatch(ownerId: string, fixtureId: string, label?: string): void {
+  const p = getParlay(ownerId);
+  p.pendingMatchId = fixtureId;
+  p.pendingMatchLabel = label ?? null;
 }
 
 export function getParlayPendingMatch(ownerId: string): string | undefined {
-  return parlayPendingMatch.get(ownerId);
+  return getParlay(ownerId).pendingMatchId ?? undefined;
 }
 
+/** Market staged in the market dropdown, awaiting an Add Leg press. */
 export function setParlayPendingMarket(ownerId: string, market: MarketType): void {
-  parlayPendingMarket.set(ownerId, market);
+  getParlay(ownerId).pendingMarket = market;
 }
 
 export function getParlayPendingMarket(ownerId: string): MarketType | undefined {
-  return parlayPendingMarket.get(ownerId);
+  return getParlay(ownerId).pendingMarket ?? undefined;
+}
+
+/** Remember where the slip should broadcast live leg-hit updates. */
+export function setParlayDestination(ownerId: string, channelId: string, guildId?: string | null): void {
+  const p = getParlay(ownerId);
+  p.channelId = channelId;
+  p.guildId = guildId ?? null;
 }
 
 /**
@@ -108,8 +134,10 @@ export function setParlayStake(parlay: CustomParlay, raw: unknown): { ok: boolea
 }
 
 export function clearParlayPending(ownerId: string): void {
-  parlayPendingMatch.delete(ownerId);
-  parlayPendingMarket.delete(ownerId);
+  const p = getParlay(ownerId);
+  p.pendingMatchId = null;
+  p.pendingMatchLabel = null;
+  p.pendingMarket = null;
 }
 
 /** Human-readable label for a staged or stored market value. */
@@ -121,10 +149,11 @@ export function clearParlay(ownerId: string): CustomParlay {
   const existing = getParlay(ownerId);
   const fresh: CustomParlay = {
     ownerId, legs: [], createdAt: Date.now(), saved: false, savedAt: null,
-    stake: existing.stake,
+    stake: existing.stake, pendingLeague: existing.pendingLeague,
+    pendingMatchId: null, pendingMatchLabel: null, pendingMarket: null,
+    channelId: existing.channelId, guildId: existing.guildId,
   };
   parlayStore.set(ownerId, fresh);
-  clearParlayPending(ownerId);
   return fresh;
 }
 
@@ -132,11 +161,16 @@ export const MARKET_OPTIONS: Array<{ value: MarketType; label: string; descripti
   { value: 'HOME_WIN', label: 'Home Win', description: '1 — home team to win' },
   { value: 'DRAW', label: 'Draw', description: 'X — level after 90 minutes' },
   { value: 'AWAY_WIN', label: 'Away Win', description: '2 — away team to win' },
+  { value: 'OVER_0_5', label: 'Over 0.5 Goals', description: 'At least one goal in the match' },
+  { value: 'OVER_1_5', label: 'Over 1.5 Goals', description: 'Two or more total goals' },
   { value: 'OVER_2_5', label: 'Over 2.5 Goals', description: 'More than 2.5 total goals' },
   { value: 'UNDER_2_5', label: 'Under 2.5 Goals', description: 'Fewer than 2.5 total goals' },
   { value: 'BTTS_YES', label: 'BTTS Yes', description: 'Both teams to score' },
   { value: 'BTTS_NO', label: 'BTTS No', description: 'Not both teams to score' },
   { value: 'DOUBLE_CHANCE_1X', label: 'Home or Draw', description: 'Double chance 1X' },
+  { value: 'DOUBLE_CHANCE_X2', label: 'Away or Draw', description: 'Double chance X2' },
+  { value: 'OVER_8_5_CORNERS', label: 'Over 8.5 Corners', description: 'Nine or more corners' },
+  { value: 'OVER_3_5_CARDS', label: 'Over 3.5 Cards', description: 'Four or more cards' },
 ];
 
 /* ------------------------------------------------------------------ *
@@ -394,14 +428,17 @@ export function buildParlayActionRows(parlay: CustomParlay): ActionRowBuilder<Bu
   const empty = parlay.legs.length === 0;
   // The manual "Set Stake" button was removed: slips now auto-default to a
   // 1-unit ($10) base stake and the model recommends an edge-scaled amount.
+  //
+  // Add Leg stays enabled on an empty slip: it is what commits the *staged*
+  // match + market, so disabling it made the first leg impossible to add.
+  const hasStaged = Boolean(parlay.pendingMatchId && parlay.pendingMarket);
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId('cp:parlay:add')
-        .setLabel('Add Leg')
+        .setLabel(hasStaged ? 'Add Staged Leg' : 'Add Leg')
         .setEmoji('➕')
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(empty),
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('cp:parlay:remove')
         .setLabel('Remove Leg')
@@ -470,6 +507,16 @@ function fairOdds(p: number): string {
   return p > 0 ? `${(1 / p).toFixed(2)}x` : 'N/A';
 }
 
+/** One-line summary of the staged builder selections (persisted on the slip). */
+function stagedStateLine(parlay: CustomParlay): string {
+  const league = getParlayLeague(parlay.ownerId);
+  const match = parlay.pendingMatchId
+    ? `\`${parlay.pendingMatchLabel ?? parlay.legs.find((l) => l.fixtureId === parlay.pendingMatchId)?.description ?? parlay.pendingMatchId}\``
+    : '`not selected`';
+  const market = parlay.pendingMarket ? `\`${marketLabel(parlay.pendingMarket)}\`` : '`not selected`';
+  return `League: \`${league}\` • Match: ${match} • Market: ${market}`;
+}
+
 export function buildParlayEmbed(parlay: CustomParlay, notice?: string): EmbedBuilder {
   const e = new EmbedBuilder()
     .setColor(BRAND.accent)
@@ -483,7 +530,10 @@ export function buildParlayEmbed(parlay: CustomParlay, notice?: string): EmbedBu
   if (!parlay.legs.length) {
     e.addFields({
       name: 'Your slip',
-      value: 'No legs yet.\nPick a **league**, then a **match**, then a **market**, then press **➕ Add Leg**.',
+      value:
+        'No legs yet.\n' +
+        'Pick a **league**, then a **match**, then a **market**, then press **➕ Add Leg**.\n\n' +
+        `> **Selections:** ${stagedStateLine(parlay)}`,
       inline: false,
     });
     e.setFooter({ text: BRAND.footer });
@@ -529,8 +579,12 @@ export function buildParlayEmbed(parlay: CustomParlay, notice?: string): EmbedBu
 
   const status = parlay.saved
     ? `💾 **Saved**${parlay.savedAt ? ` <t:${Math.floor(parlay.savedAt / 1000)}:R>` : ''}`
-    : 'Draft — press **💾 Save Parlay** to keep it';
-  e.addFields({ name: 'Status', value: `${status}\n\n*Model estimates only. Not bookmaker odds, not advice, never a guaranteed win.*`, inline: false });
+    : 'Draft — press **💾 Save & Share** to keep it and start live leg tracking';
+  e.addFields({
+    name: 'Status',
+    value: `${status}\n> **Selections:** ${stagedStateLine(parlay)}\n\n*Model estimates only. Not bookmaker odds, not advice, never a guaranteed win.*`,
+    inline: false,
+  });
 
   e.setFooter({ text: BRAND.footer });
   return e;
@@ -571,10 +625,11 @@ export function buildParlayPayload(
 ) {
   const league = options.league ?? getParlayLeague(parlay.ownerId);
   const pending = getParlayPendingMatch(parlay.ownerId);
+  const pendingMarket = getParlayPendingMarket(parlay.ownerId);
   const components: any[] = [
     buildParlayLeagueRow(league),
     buildParlayMatchRow(fixtures, pending),
-    buildParlayMarketRow(),
+    buildParlayMarketRow(pendingMarket),
     ...buildParlayActionRows(parlay),
   ];
   const removeRow = buildRemoveLegRow(parlay);

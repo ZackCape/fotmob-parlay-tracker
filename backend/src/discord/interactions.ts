@@ -26,6 +26,7 @@ export {
 } from './analysisEmbeds.js';
 export type { AnalysisTab } from './analysisEmbeds.js';
 export * from './parlayBuilder.js';
+export * from './savedParlays.js';
 export * from './liveTracker.js';
 export * from './liveEvents.js';
 export { buildStatisticalParlay } from '../parlays/parlay-builder.js';
@@ -348,7 +349,8 @@ export function buildHelpEmbed(): EmbedBuilder {
   e.addFields(
     { name: '⚽ Fixtures', value: '`/fixtures` — pick a league, see kickoff times and H/D/A model probabilities.', inline: false },
     { name: '📊 Match Analysis', value: '`/analysis` or press **📊 Analyze** — tabbed stats, model probabilities, score matrix and lineups.', inline: false },
-    { name: '🎟️ Custom Parlay', value: '`/customparlay` — pick your own matches and markets, save the slip.', inline: false },
+    { name: '🎟️ Custom Parlay', value: '`/customparlay` — pick your own matches and markets, save the slip and get live leg-hit updates.', inline: false },
+    { name: '⚡ Auto Parlay', value: '`/generateparlay` — automated statistical parlay: choose legs (5/10/15/20/25), min probability, league and mode.', inline: false },
     { name: '📡 Live Tracking', value: '`/livetracking` — select a match and get an auto-refreshing embed.', inline: false },
     { name: '🚀 Web App', value: '`/dashboard` — launch the full React dashboard, optionally embedded in Discord.', inline: false },
     { name: '⚙️ Settings', value: '`/interval` set broadcast cadence • `/channel` link a channel.', inline: false },

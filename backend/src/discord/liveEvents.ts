@@ -103,7 +103,9 @@ setInterval(saveSeenEvents, 60_000).unref?.();
 /** Register a user/channel pair for live alerts on a fixture. */
 export function subscribeLive(userId: string, channelId: string, fixtureId: string): boolean {
   const list = subscriptions.get(fixtureId) || [];
-  if (list.some((s) => s.userId === userId && s.fixtureId === fixtureId)) return false;
+  // De-duplicate per channel too, so a match tracked from two different
+  // channels still alerts in both of them.
+  if (list.some((s) => s.userId === userId && s.channelId === channelId && s.fixtureId === fixtureId)) return false;
   list.push({ userId, channelId, fixtureId, subscribedAt: Date.now() });
   subscriptions.set(fixtureId, list);
   saveSubscriptions();

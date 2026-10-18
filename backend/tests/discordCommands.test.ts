@@ -54,10 +54,15 @@ describe('Discord slash command definitions', () => {
   it('extracts the expected command set', () => {
     expect(names.length).toBeGreaterThan(5);
     expect(names).toContain('fixtures');
-    expect(names).toContain('parlay');
+    expect(names).toContain('generateparlay');
     expect(names).toContain('help');
     expect(names).toContain('customparlay');
     expect(names).toContain('livetracking');
+  });
+
+  it('consolidates the old overlapping parlay commands into generateparlay + customparlay', () => {
+    expect(names).not.toContain('parlay');
+    expect(names).not.toContain('sgp');
   });
 
   it('has NO duplicate command names', () => {

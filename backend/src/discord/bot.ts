@@ -3,7 +3,7 @@ import axios from 'axios';
 import cron from 'node-cron';
 import { DataProviderFactory } from '../providers/provider-factory.js';
 import { buildStatisticalParlay } from '../parlays/parlay-builder.js';
-import { MarketPrediction, ParlayMode } from '../types/football.js';
+import { MarketPrediction, ParlayLegCount, ParlayMode } from '../types/football.js';
 import { LiveParlayTrackerService } from '../parlays/live-tracker.js';
 import { isVerifiedFixture } from '../utils/fixtureValidation.js';
 import * as CP from './interactions.js';
@@ -183,8 +183,8 @@ export class DiscordBotService {
             .setName('fixtures')
             .setDescription("View today's top statistical football predictions and calibrated probabilities"),
           new SlashCommandBuilder()
-            .setName('parlay')
-            .setDescription('Build statistical parlays (Anti-Correlated, Same-Game, or Correlated)')
+            .setName('generateparlay')
+            .setDescription('Generate an automated statistical parlay from your conditions')
             .addIntegerOption(opt =>
               opt
                 .setName('legs')
@@ -198,6 +198,21 @@ export class DiscordBotService {
                   { name: '25 Legs (Max Multi-League)', value: 25 }
                 )
             )
+            .addIntegerOption(opt =>
+              opt
+                .setName('min_probability')
+                .setDescription('Minimum per-leg model probability (%, 50-95)')
+                .setRequired(false)
+                .setMinValue(50)
+                .setMaxValue(95)
+            )
+            .addStringOption(opt =>
+              opt
+                .setName('league')
+                .setDescription('Restrict legs to one competition')
+                .setRequired(false)
+                .addChoices(...CP.LEAGUE_OPTIONS.map((l) => ({ name: l.label, value: l.id })))
+            )
             .addStringOption(opt =>
               opt
                 .setName('mode')
@@ -209,9 +224,6 @@ export class DiscordBotService {
                   { name: 'Correlated Allowed (Mixed Venues)', value: 'correlated' }
                 )
             ),
-          new SlashCommandBuilder()
-            .setName('sgp')
-            .setDescription('Build a Same-Game Parlay stacking Over 0.5 Goals, Corners, Cards & Double Chance on 1 match'),
           new SlashCommandBuilder()
             .setName('track')
             .setDescription('View real-time movement and live progression of your active parlay'),
@@ -297,7 +309,7 @@ export class DiscordBotService {
         ];
 
         await this.client?.application?.commands.set(commands);
-        console.log('[DiscordBot] Slash commands (/info, /fixtures, /parlay, /sgp, /track, /channel, /interval, /broadcast) registered!');
+        console.log('[DiscordBot] Slash commands (/info, /fixtures, /generateparlay, /customparlay, /track, /channel, /interval, /broadcast) registered!');
       } catch (err: any) {
         console.warn(`[DiscordBot] Slash command registration notice: ${err.message}`);
       }
@@ -319,20 +331,23 @@ export class DiscordBotService {
             components: [CP.buildFixtureLeagueSelectRow('ALL')],
           });
           return;
-        } else if (interaction.commandName === 'parlay') {
+        } else if (interaction.commandName === 'generateparlay') {
           await interaction.deferReply();
           const legs = interaction.options.getInteger('legs') || 5;
-          const modeOpt = interaction.options.getString('mode') || 'anti_correlated';
-          const mode: ParlayMode = modeOpt === 'same_game'
+          const minPct = interaction.options.getInteger('min_probability');
+          const league = interaction.options.getString('league') || 'ALL';
+          const commandMode = interaction.options.getString('mode') || 'anti_correlated';
+          const mode: ParlayMode = commandMode === 'same_game'
             ? 'SAME_GAME_PARLAY'
-            : modeOpt === 'correlated'
+            : commandMode === 'correlated'
             ? 'CORRELATED_ALLOWED'
             : 'ANTI_CORRELATED';
-          const replyText = await this.generateParlayReply(legs, mode);
-          await interaction.editReply(replyText);
-        } else if (interaction.commandName === 'sgp') {
-          await interaction.deferReply();
-          const replyText = await this.generateSgpReply();
+          const replyText = await this.generateParlayReply({
+            legs,
+            mode,
+            league,
+            minProbability: minPct ? minPct / 100 : undefined,
+          });
           await interaction.editReply(replyText);
         } else if (interaction.commandName === 'track') {
           await interaction.deferReply();
@@ -466,9 +481,13 @@ export class DiscordBotService {
     const startLiveTracker = async (channel: any, fixtureId: string, userId: string) => {
       const found = await analysisFor(fixtureId);
       if (!found) {
-        await channel.send({ embeds: [CP.baseEmbed('Live Tracking', 'That match could not be verified against a live provider.')], ephemeral: true }).catch(() => {});
+        await channel.send({ embeds: [CP.baseEmbed('Live Tracking', 'That match could not be verified against a live provider.')] }).catch(() => {});
         return;
       }
+
+      // Register the channel + user for goal/card/HT alerts, so "Track Match"
+      // reaches the exact channel where tracking was initiated.
+      CP.subscribeLive(userId, channel.id, fixtureId);
 
       // Send first so we learn the message id, then rebuild the buttons with
       // that id embedded in their custom ids for the auto-refresh loop.
@@ -498,26 +517,24 @@ export class DiscordBotService {
 
     const renderParlay = async (interaction: any, notice?: string) => {
       const ownerId = interaction.user.id;
+      const payload = await buildParlayView(ownerId, notice);
+      await interaction.followUp({ ...payload, ephemeral: true });
+    };
+
+    /** Rebuild the parlay panel payload from the slip's persisted state. */
+    const buildParlayView = async (ownerId: string, notice?: string) => {
       const parlay = CP.getParlay(ownerId);
       const fixtures = await parlayFixtures(ownerId);
-      await interaction.followUp({
-        ...CP.buildParlayPayload(parlay, fixtures, {
-          league: CP.getParlayLeague(ownerId),
-          notice,
-        }),
-        ephemeral: true,
+      return CP.buildParlayPayload(parlay, fixtures, {
+        league: CP.getParlayLeague(ownerId),
+        notice,
       });
     };
 
     /** Rebuild the ephemeral parlay message in place (keeps one scrolling panel). */
     const rerenderParlayMessage = async (interaction: any, notice?: string) => {
       const ownerId = interaction.user.id;
-      const parlay = CP.getParlay(ownerId);
-      const fixtures = await parlayFixtures(ownerId);
-      const payload = CP.buildParlayPayload(parlay, fixtures, {
-        league: CP.getParlayLeague(ownerId),
-        notice,
-      });
+      const payload = await buildParlayView(ownerId, notice);
       await interaction.update({ ...payload }).catch(async (e: any) => {
         // Fall back to a fresh ephemeral message if the original expired.
         await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
@@ -642,7 +659,9 @@ export class DiscordBotService {
         }
 
         /* ---------- live matches: track / stats / refresh ---------- */
-        if (id.startsWith('cp:live:track:')) {
+        // Tracker-message buttons (cp:live:track:<messageId>) are handled by the
+        // tracker block below, so only genuine fixture ids subscribe here.
+        if (id.startsWith('cp:live:track:') && !CP.findTrackerByCustomId(id)) {
           const fixtureId = id.split(':').slice(3).join(':');
           await interaction.deferReply();
           const found = await analysisFor(fixtureId);
@@ -797,6 +816,21 @@ export class DiscordBotService {
         const live = CP.findTrackerByCustomId(id);
         if (live) {
           const { tracker, action } = live;
+
+          if (action === 'track') {
+            // Ensure the originating channel is registered for live alerts,
+            // even when tracking was started from this tracker message.
+            const added = CP.subscribeLive(tracker.userId, tracker.channelId, tracker.fixtureId);
+            await interaction.reply({
+              content: added
+                ? `⚡ Channel alerts enabled — goals, own goals, red cards and halftime reports will be posted in <#${tracker.channelId}>.`
+                : 'This match is already being tracked in this channel.',
+              ephemeral: true,
+              components: [CP.buildDmAlertsRow(tracker.userId, this.dmAlerts.has(tracker.userId))],
+            });
+            return;
+          }
+
           const found = await analysisFor(tracker.fixtureId);
 
           if (action === 'alerts') {
@@ -870,15 +904,14 @@ export class DiscordBotService {
 
         /* ---------- parlay: league ---------- */
         if (id === 'cp:parlay:league') {
-          CP.setParlayLeague(ownerId, interaction.values?.[0] ?? 'ALL');
+          const league = interaction.values?.[0] ?? 'ALL';
+          CP.setParlayLeague(ownerId, league);
+          // Changing league changes the fixture slate, so the staged match/market reset.
           CP.clearParlayPending(ownerId);
-          await interaction.deferUpdate();
-          const parlay = CP.getParlay(ownerId);
-          const fixtures = await parlayFixtures(ownerId);
-          await interaction.editReply(CP.buildParlayPayload(parlay, fixtures, {
-            league: CP.getParlayLeague(ownerId),
-            notice: `Filtering by **${CP.leagueLabel(CP.getParlayLeague(ownerId))}**.`,
-          }));
+          await interaction.update(await buildParlayView(
+            ownerId,
+            `Filtering by **${CP.leagueLabel(league)}**. Slip retained — ${CP.getParlay(ownerId).legs.length} leg(s).`,
+          ));
           return;
         }
 
@@ -889,30 +922,28 @@ export class DiscordBotService {
             await interaction.reply({ content: 'No verified matches available.', ephemeral: true });
             return;
           }
-          CP.setParlayPendingMatch(ownerId, fixtureId);
-          await interaction.deferUpdate();
-          const parlay = CP.getParlay(ownerId);
           const fixtures = await parlayFixtures(ownerId);
-          await interaction.editReply(CP.buildParlayPayload(parlay, fixtures, {
-            league: CP.getParlayLeague(ownerId),
-            notice: 'Match staged. Now pick a **market**, then press **➕ Add Leg**.',
-          }));
+          const fx = fixtures.find((f: any) => f.id === fixtureId);
+          const label = fx ? `${fx.homeTeam.name} v ${fx.awayTeam.name}` : undefined;
+          CP.setParlayPendingMatch(ownerId, fixtureId, label);
+          await interaction.update(await buildParlayView(
+            ownerId,
+            `Match staged: **${label ?? fixtureId}**. Now pick a **market**, then press **➕ Add Leg**.`,
+          ));
           return;
         }
 
         /* ---------- parlay: market (stage) ---------- */
         if (id === 'cp:parlay:market') {
-          CP.setParlayPendingMarket(ownerId, interaction.values?.[0] as any);
-          await interaction.deferUpdate();
-          const parlay = CP.getParlay(ownerId);
-          const fixtures = await parlayFixtures(ownerId);
+          const market = interaction.values?.[0] as any;
+          CP.setParlayPendingMarket(ownerId, market);
           const staged = CP.getParlayPendingMatch(ownerId);
-          await interaction.editReply(CP.buildParlayPayload(parlay, fixtures, {
-            league: CP.getParlayLeague(ownerId),
-            notice: staged
-              ? `Market staged. Press **➕ Add Leg** to add it to your slip.`
+          await interaction.update(await buildParlayView(
+            ownerId,
+            staged
+              ? `Market staged: **${CP.marketLabel(market)}**. Press **➕ Add Leg** to add it to your slip.`
               : 'Pick a **match** first, then a market.',
-          }));
+          ));
           return;
         }
 
@@ -958,8 +989,18 @@ export class DiscordBotService {
             marketOdds,
           });
 
-          if (res.ok) CP.clearParlayPending(ownerId);
-          await rerenderParlayMessage(interaction, res.ok ? `Leg added — ${CP.marketLabel(market as any)}.` : res.reason);
+          if (res.ok) {
+            CP.clearParlayPending(ownerId);
+            const updated = CP.getParlay(ownerId);
+            const odds = CP.parlayMarketOdds(updated) ?? CP.parlayImpliedOdds(updated);
+            const combined = CP.parlayCombinedProbability(updated);
+            await rerenderParlayMessage(
+              interaction,
+              `Leg added — **${CP.marketLabel(market as any)}**. ${updated.legs.length} leg(s) • combined ${odds ? `${odds.toFixed(2)}x` : 'N/A'} • model win ${(combined * 100).toFixed(2)}%.`,
+            );
+            return;
+          }
+          await rerenderParlayMessage(interaction, res.reason);
           return;
         }
 
@@ -991,7 +1032,24 @@ export class DiscordBotService {
           const parlay = CP.getParlay(ownerId);
           const res = CP.saveParlay(parlay);
           if (res.ok) {
-            await interaction.reply({ embeds: [CP.buildSavedParlayEmbed(parlay)], ephemeral: true });
+            // Persist the slip tied to this channel + user, and subscribe the
+            // channel to every leg's fixture so live leg-hit updates land here.
+            const saved = CP.saveParlayToDisk(parlay, {
+              userId: ownerId,
+              channelId: interaction.channelId,
+              guildId: interaction.guildId ?? null,
+            });
+            CP.setParlayDestination(ownerId, interaction.channelId, interaction.guildId ?? null);
+            for (const leg of parlay.legs) {
+              try { CP.subscribeLive(ownerId, interaction.channelId, leg.fixtureId); } catch { /* best effort */ }
+            }
+            await interaction.reply({
+              content:
+                `💾 Saved **${parlay.legs.length}-leg slip** to your account and linked it to <#${interaction.channelId}> for live leg-hit updates.`,
+              embeds: [CP.buildSavedParlayEmbed(parlay)],
+              ephemeral: true,
+            });
+            console.log(`[DiscordBot] Saved parlay ${saved.id} (${parlay.legs.length} legs) for user ${ownerId} in channel ${interaction.channelId}`);
           } else {
             await rerenderParlayMessage(interaction, res.reason);
           }
@@ -1095,6 +1153,10 @@ export class DiscordBotService {
           const prevStatus = this.liveEventLastStatus.get(fx.id);
           this.liveEventLastStatus.set(fx.id, fx.status);
 
+          // Live parlay leg tracking: settle any saved slip legs on this match
+          // and broadcast a PARLAY UPDATE to the channel that saved the slip.
+          await this.processSavedParlayLegs(fx, stats);
+
           const subs = CP.getSubscriptionsForFixture(fx.id);
           if (!subs.length && !newEvents.some((ev) => ev.type === 'halftime')) continue;
 
@@ -1162,6 +1224,15 @@ export class DiscordBotService {
           }
         }
 
+        // Settle saved-parlay legs on matches that have now finished.
+        for (const fx of fixtures) {
+          if (fx.status !== 'FINISHED') continue;
+          if (!CP.getSavedParlaysForFixture(fx.id).length) continue;
+          let stats: any = null;
+          try { stats = await this.factory.getEspnMatchStats(fx.id.replace(/^espn-/, '')); } catch { /* stats optional */ }
+          await this.processSavedParlayLegs(fx, stats);
+        }
+
         // Keep subscribed channels' topics in sync during match windows.
         await this.syncLiveChannelTopics(liveFixtures);
       } catch (e: any) {
@@ -1200,7 +1271,7 @@ export class DiscordBotService {
         const replyText = await this.generateFixturesReply();
         await message.reply(replyText);
       } else if (content.startsWith('!sgp') || content.startsWith('/sgp')) {
-        const replyText = await this.generateSgpReply();
+        const replyText = await this.generateParlayReply({ legs: 5, mode: 'SAME_GAME_PARLAY', minProbability: 0.58 });
         await message.reply(replyText);
       } else if (content === '!track' || content === '/track') {
         const reply = await this.generateLiveTrackerReply();
@@ -1219,7 +1290,8 @@ export class DiscordBotService {
         const interval: UpdateInterval = (['5m', '15m', '30m', '45m', '1h'].includes(parts[1]) ? parts[1] : '1h') as any;
         this.setBroadcastConfig(undefined, interval);
         await message.reply(`⏱️ **Broadcast interval updated to \`${interval}\`!**`);
-      } else if (content.startsWith('!parlay') || content.startsWith('/parlay')) {
+      } else if (content.startsWith('!parlay') || content.startsWith('/parlay') ||
+                 content.startsWith('!generateparlay') || content.startsWith('/generateparlay')) {
         const parts = content.split(' ');
         const legs = parseInt(parts[1] || '5', 10);
         const mode: ParlayMode = content.includes('sgp') || content.includes('same')
@@ -1227,7 +1299,7 @@ export class DiscordBotService {
           : content.includes('corr')
           ? 'CORRELATED_ALLOWED'
           : 'ANTI_CORRELATED';
-        const replyText = await this.generateParlayReply(legs, mode);
+        const replyText = await this.generateParlayReply({ legs, mode });
         await message.reply(replyText);
       } else if (content === '!broadcast' || content === '/broadcast') {
         const res = await this.sendHourlyUpdate();
@@ -1516,6 +1588,80 @@ export class DiscordBotService {
   }
 
   /**
+   * Settle saved-parlay legs for one fixture and broadcast each settled leg
+   * into the channel the slip was saved from.
+   *
+   * A leg only settles when the live score, corner or card count actually
+   * satisfies the market — otherwise it stays PENDING. `markSavedLegSettled`
+   * de-duplicates, so a leg is announced exactly once.
+   */
+  private async processSavedParlayLegs(fx: any, stats: any): Promise<void> {
+    if (!this.client) return;
+
+    let savedList: any[] = [];
+    try { savedList = CP.getSavedParlaysForFixture(fx.id); } catch { return; }
+    if (!savedList.length) return;
+
+    const statistics = stats?.statistics ?? fx.statistics ?? null;
+    const latestGoal = this.latestGoalEvent(stats);
+    const ctx = {
+      homeTeam: fx.homeTeam?.name ?? 'Home',
+      awayTeam: fx.awayTeam?.name ?? 'Away',
+      homeScore: fx.homeScore ?? null,
+      awayScore: fx.awayScore ?? null,
+      status: fx.status,
+      statistics,
+    };
+
+    for (const saved of savedList) {
+      const legsForFixture = (saved.legs as any[]).filter((l) => l.fixtureId === fx.id);
+      for (const leg of legsForFixture) {
+        if (CP.isSavedLegSettled(saved.id, leg)) continue;
+        const progress = CP.evaluateSavedLeg(leg, ctx, latestGoal);
+        if (progress.status === 'PENDING') continue;
+
+        CP.markSavedLegSettled(saved.id, leg, progress.status);
+        const settledCount = CP.countSettledLegs(saved);
+        const embed = CP.buildParlayUpdateEmbed({
+          saved,
+          leg,
+          progress,
+          settledCount,
+          totalLegs: saved.legs.length,
+        });
+
+        try {
+          const ch: any = await this.client.channels.fetch(saved.channelId);
+          if (ch?.isTextBased()) {
+            await ch.send({ content: `<@${saved.userId}>`, embeds: [embed] });
+          }
+        } catch (e: any) {
+          console.warn(`[ParlayTracking] broadcast failed for ${saved.channelId}: ${e.message}`);
+        }
+
+        if (this.dmAlerts.has(saved.userId)) {
+          try {
+            const user = await this.client.users.fetch(saved.userId);
+            await user.send({ embeds: [embed] });
+          } catch { /* DMs closed or user unavailable */ }
+        }
+      }
+    }
+  }
+
+  /** Latest scoring event, used only to enrich a leg-hit note (never invented). */
+  private latestGoalEvent(stats: any): { minute: string | null; team: string | null; player: string | null } | null {
+    const events: any[] = Array.isArray(stats?.events) ? stats.events : [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev?.type === 'goal' || ev?.type === 'own-goal' || ev?.scoring) {
+        return { minute: ev.minute ?? null, team: ev.team ?? null, player: ev.player ?? null };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Builds rich World Cup styled embed payload for Discord
    */
   public async buildBroadcastPayload() {
@@ -1708,11 +1854,13 @@ export class DiscordBotService {
           value:
             '• `/info` (or `!info`) — Show this complete command guide & statistical principles\n' +
             '• `/fixtures` (or `!fixtures`, `!odds`) — View today\'s top statistical value picks\n' +
-            '• `/parlay [legs] [mode]` — Build multi-leg parlays (anti-correlated, same-game, or correlated)\n' +
-            '• `/sgp` (or `!sgp`) — Build a Same-Game Parlay (Over 0.5 Goals, Corners, Cards & 1X on 1 match)\n' +
+            '• `/generateparlay [legs] [min_probability] [league] [mode]` — Automated statistical parlay (anti-correlated, same-game, or correlated)\n' +
+            '• `/customparlay` — Interactive slip builder: league → match → market → Add Leg, with live leg tracking\n' +
             '• `/track` (or `!track`) — View real-time movement and live progression of your active parlay\n' +
+            '• `/live` • `/livetracking` — Live scores and one-click match tracking\n' +
+            '• `/value` • `/h2h` • `/team` • `/poll` • `/setbrief` — Value picks, head-to-head, team form, polls and briefings\n' +
             '• `/broadcast` (or `!broadcast`) — Instantly dispatch the latest hourly odds briefing\n' +
-            '• `/help` (or `!help`) — Quick help manual and status summary',
+            '• `/help` (or `!help`) — Interactive command directory',
           inline: false,
         },
         {
@@ -1811,12 +1959,31 @@ export class DiscordBotService {
     const formatted = data.topPicks
       .map(p => `• **${p.fixtureDescription}** (${p.league}): \`${p.selection}\` — **${(p.estimatedProbability * 100).toFixed(1)}%** prob (est ${(1 / Math.max(0.01, p.estimatedProbability)).toFixed(2)}x)`)
       .join('\n');
-    return `⚽ **Today's Top Statistical Picks** (${data.today}):\n\n${formatted}\n\n*Type \`/parlay 5\` or \`/sgp\` or \`/info\` for more commands.*`;
+    return `⚽ **Today's Top Statistical Picks** (${data.today}):\n\n${formatted}\n\n*Type \`/generateparlay\` or \`/customparlay\` or \`/info\` for more commands.*`;
   }
 
-  public async generateParlayReply(legsCount: number, mode: ParlayMode = 'ANTI_CORRELATED'): Promise<string> {
+  /**
+   * Automated statistical parlay generator (backing /generateparlay).
+   *
+   * One command, three modes: strict anti-correlated (default), same-game
+   * (SGP) and correlated-allowed, with a user-set leg count, minimum per-leg
+   * model probability and optional league restriction.
+   */
+  public async generateParlayReply(opts: {
+    legs?: number;
+    mode?: ParlayMode;
+    league?: string;
+    minProbability?: number;
+  } = {}): Promise<string> {
     const valid = [5, 10, 15, 20, 25];
-    const target = valid.includes(legsCount) ? (legsCount as any) : 5;
+    const requested = typeof opts.legs === 'number' && Number.isFinite(opts.legs) ? opts.legs : 5;
+    const target = (valid.includes(requested) ? requested : 5) as ParlayLegCount;
+    const mode: ParlayMode = opts.mode ?? 'ANTI_CORRELATED';
+    const leagueFilter = opts.league || 'ALL';
+    const minProbability = typeof opts.minProbability === 'number' && Number.isFinite(opts.minProbability)
+      ? Math.min(0.95, Math.max(0.5, opts.minProbability))
+      : 0.58;
+
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
     const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
@@ -1830,58 +1997,42 @@ export class DiscordBotService {
     if (preds.length === 0) {
       return 'No verified live fixtures are available from the configured providers. Please try again later or check the web dashboard.';
     }
-    const parlay = buildStatisticalParlay(preds, { targetLegsCount: target, minProbability: 0.58, mode });
+
+    const parlay = buildStatisticalParlay(preds, {
+      targetLegsCount: target,
+      minProbability,
+      leagueFilter,
+      mode,
+    });
     if (this.trackerService) {
       await this.trackerService.trackParlay(parlay);
     }
 
-    const legsList = parlay.legs.map((l, i) => `${i + 1}. **${l.fixtureDescription}**: \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}% | ${l.league})`).join('\n');
+    const isSgp = mode === 'SAME_GAME_PARLAY';
+    const modeLabel = isSgp
+      ? 'Same-Game Parlay (SGP)'
+      : mode === 'CORRELATED_ALLOWED' ? 'Correlated Parlay' : 'Statistical Parlay';
+
+    const legsList = parlay.legs.map((l, i) =>
+      isSgp
+        ? `${i + 1}. \`${l.marketLabel}\`: **${l.selection}** — **${(l.estimatedProbability * 100).toFixed(1)}%** prob`
+        : `${i + 1}. **${l.fixtureDescription}**: \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}% | ${l.league})`,
+    ).join('\n');
+
+    const insufficient = parlay.status === 'INSUFFICIENT_SELECTIONS'
+      ? `\n\n> ⚠️ ${parlay.message}`
+      : '';
+
+    const header = isSgp
+      ? `🔥 **Same-Game Parlay (SGP) — Single Match Stacking**\n🏟️ Match: **${parlay.legs[0]?.fixtureDescription || 'Featured Fixture'}**\n\n`
+      : `⚡ **${parlay.actualLegsCount}-Leg ${modeLabel}** — ${leagueFilter === 'ALL' ? 'all leagues' : leagueFilter}, min leg probability ${(minProbability * 100).toFixed(0)}%:\n\n`;
 
     return (
-      `⚡ **${parlay.actualLegsCount}-Leg ${parlay.mode === 'SAME_GAME_PARLAY' ? 'Same-Game Parlay (SGP)' : 'Statistical Parlay'}**:\n\n${legsList}\n\n` +
+      `${header}${legsList}${insufficient}\n\n` +
       `• **Combined Probability**: \`${(parlay.combinedProbability * 100).toFixed(2)}%\`\n` +
       `• **Fair Compound Odds**: \`${parlay.compoundOddsDecimal}x\`\n` +
-      `• **Mode**: \`${parlay.mode}\`\n\n` +
-      `*Type \`/track\` to follow live match motion!*`
-    );
-  }
-
-  public async generateSgpReply(): Promise<string> {
-    const today = new Date().toISOString().substring(0, 10);
-    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
-    const preds: MarketPrediction[] = [];
-
-    for (const fx of fixtures) {
-      const details = await this.factory.getMatchDetails(fx.id);
-      if (details?.marketPredictions) preds.push(...details.marketPredictions);
-    }
-
-    if (preds.length === 0) {
-      return 'No verified live fixtures are available from the configured providers. Please try again later or check the web dashboard.';
-    }
-    const parlay = buildStatisticalParlay(preds, {
-      targetLegsCount: 5,
-      minProbability: 0.58,
-      mode: 'SAME_GAME_PARLAY',
-    });
-
-    if (this.trackerService) {
-      await this.trackerService.trackParlay(parlay);
-    }
-
-    const legsList = parlay.legs
-      .map((l, i) => `${i + 1}. \`${l.marketLabel}\`: **${l.selection}** — **${(l.estimatedProbability * 100).toFixed(1)}%** prob`)
-      .join('\n');
-
-    return (
-      `🔥 **Same-Game Parlay (SGP) — Single Match Stacking**:\n` +
-      `🏟️ Match: **${parlay.legs[0]?.fixtureDescription || 'Featured Fixture'}**\n\n` +
-      `${legsList}\n\n` +
-      `• **Correlated Joint Probability**: \`${(parlay.combinedProbability * 100).toFixed(2)}%\`\n` +
-      `• **Fair Compound Odds**: \`${parlay.compoundOddsDecimal}x\`\n` +
-      `• **Correlation Mechanism**: Over 0.5 Goals + Over 5.5 Corners + Cards calibrated via copula adjustment.\n\n` +
-      `*Type \`/track\` to follow live in-game movement!*`
+      `• **Conditions**: \`legs=${target}\` • \`min=${(minProbability * 100).toFixed(0)}%\` • \`league=${leagueFilter}\` • \`mode=${mode}\`\n\n` +
+      `*Type \`/track\` to follow live match motion, or build your own slip with \`/customparlay\`!*`
     );
   }
 
@@ -1892,7 +2043,7 @@ export class DiscordBotService {
 
     const trackedList = this.trackerService.getTrackedParlays();
     if (trackedList.length === 0) {
-      return 'No parlays are currently tracked! Generate one first using /parlay or /sgp, or track one in the web dashboard at ' + DASHBOARD_URL + '.';
+      return 'No parlays are currently tracked! Generate one first using /generateparlay or /customparlay, or track one in the web dashboard at ' + DASHBOARD_URL + '.';
     }
 
     const active = trackedList[0];
