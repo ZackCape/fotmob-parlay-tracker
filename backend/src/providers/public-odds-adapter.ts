@@ -10,6 +10,13 @@
  * odds, so it self-populates during periods when the API is reachable. It never
  * synthesises prices: if the file is missing or a fixture is absent, the caller
  * falls through to Tier 3 (calibrated fair odds).
+ *
+ * This tier is deliberately **league-agnostic**: it matches on normalised team
+ * names plus a kick-off tolerance, not on a sport key, so every competition the
+ * pipeline supports is cached automatically as soon as Tier 1 publishes odds
+ * for it. Adding a league to `ODDS_SPORT_KEYS` (see `theodds-adapter.ts`) is
+ * therefore all that is needed for its odds to start flowing into this cache —
+ * there is no per-league allowlist here to keep in step.
  */
 
 import fs from 'node:fs';

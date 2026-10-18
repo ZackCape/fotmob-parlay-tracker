@@ -1,6 +1,8 @@
 import React from 'react';
 import { Fixture } from '../types';
 import { Clock, TrendingUp, AlertTriangle, ArrowRight, Shield } from 'lucide-react';
+import { LeagueFlag } from './LeagueFlag';
+import { leagueDisplayName } from '../utils/leagueFlags';
 
 interface FixtureCardProps {
   fixture: Fixture;
@@ -16,29 +18,33 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({ fixture, onSelect }) =
     ? new Date(fixture.kickoffTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : '15:00';
 
-  // League badge configuration with World Cup & European colors
+  // League badge styling. The flag and label come from the shared catalogue so
+  // every supported competition (19 of them) renders its national flag.
   const getLeagueBadge = () => {
     switch (fixture.league) {
       case 'EPL':
-        return { label: 'Premier League', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', style: 'bg-purple-500/20 text-purple-300 border-purple-500/30' };
+        return { style: 'bg-purple-500/20 text-purple-300 border-purple-500/30' };
       case 'CHAMPIONSHIP':
-        return { label: 'Championship', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', style: 'bg-sky-500/20 text-sky-300 border-sky-500/30' };
+        return { style: 'bg-sky-500/20 text-sky-300 border-sky-500/30' };
       case 'LALIGA':
-        return { label: 'La Liga', flag: '🇪🇸', style: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+        return { style: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
       case 'LIGUE1':
-        return { label: 'Ligue 1', flag: '🇫🇷', style: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
+        return { style: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
       case 'CHAMPIONS_LEAGUE':
-        return { label: 'Champions League', flag: '🏆', style: 'bg-gradient-to-r from-blue-600/30 to-indigo-600/30 text-indigo-200 border-indigo-400/40' };
+        return { style: 'bg-gradient-to-r from-blue-600/30 to-indigo-600/30 text-indigo-200 border-indigo-400/40' };
       case 'EUROPA_LEAGUE':
-        return { label: 'Europa League', flag: '🏆', style: 'bg-orange-500/20 text-orange-300 border-orange-500/30' };
+        return { style: 'bg-orange-500/20 text-orange-300 border-orange-500/30' };
       case 'CONFERENCE_LEAGUE':
-        return { label: 'Conference League', flag: '🏆', style: 'bg-teal-500/20 text-teal-300 border-teal-500/30' };
+        return { style: 'bg-teal-500/20 text-teal-300 border-teal-500/30' };
       default:
-        return { label: fixture.league, flag: '⚽', style: 'bg-slate-800 text-slate-300 border-slate-700' };
+        return { style: 'bg-slate-800 text-slate-300 border-slate-700' };
     }
   };
 
-  const badge = getLeagueBadge();
+  const badge = {
+    ...getLeagueBadge(),
+    label: leagueDisplayName(fixture.league),
+  };
 
   return (
     <div
@@ -58,7 +64,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({ fixture, onSelect }) =
             <span
               className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full font-bold text-[11px] tracking-wide border shadow-sm ${badge.style}`}
             >
-              <span>{badge.flag}</span>
+              <LeagueFlag league={fixture.league} className="w-4 h-3" />
               <span>{badge.label}</span>
             </span>
           </div>

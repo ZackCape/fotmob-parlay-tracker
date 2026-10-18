@@ -49,6 +49,17 @@ export class FootballDatabaseAdapter implements IFootballDataProvider {
     if (lower.includes('europa league') || lower.includes('uel')) return 'EUROPA_LEAGUE';
     if (lower.includes('conference league') || lower.includes('uecl')) return 'CONFERENCE_LEAGUE';
 
+    // Expanded European coverage. Specific names come before generic ones.
+    if (lower.includes('austrian bundesliga')) return 'AUSTRIAN_BUNDESLIGA';
+    if (lower.includes('eredivisie')) return 'EREDIVISIE';
+    if (lower.includes('ekstraklasa')) return 'EKSTRAKLASA';
+    if (lower.includes('primeira liga') || lower.includes('liga portugal')) return 'PRIMEIRA_LIGA';
+    if (lower.includes('jupiler') || lower.includes('belgian')) return 'PRO_LEAGUE';
+    if (lower.includes('scottish premiership') || lower.includes('scottish prem')) return 'SCOTTISH_PREM';
+    if (lower.includes('süper lig') || lower.includes('super lig')) return 'SUPER_LIG';
+    if (lower.includes('swiss super league')) return 'SWISS_SUPER';
+    if (lower.includes('danish superliga') || lower.includes('superligaen')) return 'DANISH_SUPERLIGA';
+
     // Fall back to team league if known
     if (homeTeam && homeTeam.league) return homeTeam.league;
     if (awayTeam && awayTeam.league) return awayTeam.league;

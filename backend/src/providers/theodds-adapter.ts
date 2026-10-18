@@ -4,10 +4,38 @@ import path from 'path';
 import { OddsSnapshot, BookmakerOdds, OddsMarket, OddsOutcome } from '../types/odds.js';
 import { Fixture } from '../types/football.js';
 
-const SPORT_KEYS: Record<string, string> = {
+/**
+ * The Odds API sport keys per Cape Predictor league.
+ *
+ * Keys must be exact — the endpoint is `/sports/{key}/odds/` and an unknown key
+ * returns HTTP 404, which would silently look like "no odds published".
+ * Competitions absent from this map yield no Tier-1 odds and fall through to
+ * Tier 2 (public cache) and Tier 3 (calibrated fair odds) instead.
+ */
+export const ODDS_SPORT_KEYS: Record<string, string> = {
   EPL: 'soccer_epl',
   CHAMPIONSHIP: 'soccer_efl_champ',
+  EREDIVISIE: 'soccer_netherlands_eredivisie',
+  EKSTRAKLASA: 'soccer_poland_ekstraklasa',
+  PRIMEIRA_LIGA: 'soccer_portugal_primeira_liga',
+  PRO_LEAGUE: 'soccer_belgium_first_div',
+  SCOTTISH_PREM: 'soccer_spl',
+  SUPER_LIG: 'soccer_turkey_super_league',
+  SWISS_SUPER: 'soccer_switzerland_superleague',
+  AUSTRIAN_BUNDESLIGA: 'soccer_austria_bundesliga',
+  DANISH_SUPERLIGA: 'soccer_denmark_superliga',
 };
+
+/** Leagues with a Tier-1 bookmaker feed wired up. */
+export function oddsLeagues(): string[] {
+  return Object.keys(ODDS_SPORT_KEYS);
+}
+
+/** The Odds API sport key for a Cape Predictor league, or null when unmapped. */
+export function sportKeyForLeague(league: string): string | null {
+  return ODDS_SPORT_KEYS[String(league || '').toUpperCase()] ?? null;
+}
+
 
 const DEFAULT_REGIONS = 'uk';
 const DEFAULT_MARKETS = 'h2h';
@@ -148,7 +176,7 @@ export class TheOddsAdapter {
   }
 
   async getOddsForFixture(fixture: Fixture): Promise<OddsSnapshot | null> {
-    const sportKey = SPORT_KEYS[fixture.league];
+    const sportKey = sportKeyForLeague(fixture.league);
     if (!sportKey) return null;
     const snapshots = await this.fetchOddsForSport(sportKey);
     if (!snapshots.length) return null;

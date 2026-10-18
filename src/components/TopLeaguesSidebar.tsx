@@ -1,8 +1,7 @@
 import React from 'react';
-import { League } from '../types';
 import { Trophy, Flame, Zap, Shield } from 'lucide-react';
 import { LeagueFlag } from './LeagueFlag';
-import { leagueCountryLabel } from '../utils/leagueFlags';
+import { LEAGUE_META, SUPPORTED_LEAGUE_COUNT } from '../utils/leagueFlags';
 
 interface TopLeaguesSidebarProps {
   selectedLeague: string;
@@ -21,19 +20,8 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
   onFilterLiveOnly,
   filterLiveOnly,
 }) => {
-  const topLeagues: Array<{ id: string; name: string }> = [
-    { id: 'ALL', name: 'All Matches' },
-    { id: 'EPL', name: 'Premier League' },
-    { id: 'CHAMPIONS_LEAGUE', name: 'Champions League' },
-    { id: 'LALIGA', name: 'LaLiga' },
-    { id: 'LIGUE1', name: 'Ligue 1' },
-    { id: 'SERIE_A', name: 'Serie A' },
-    { id: 'BUNDESLIGA', name: 'Bundesliga' },
-    { id: 'BUNDESLIGA2', name: 'Bundesliga 2' },
-    { id: 'EUROPA_LEAGUE', name: 'Europa League' },
-    { id: 'CONFERENCE_LEAGUE', name: 'Conference League' },
-    { id: 'CHAMPIONSHIP', name: 'Championship' },
-  ];
+  // Shared catalogue: sidebar order is the LEAGUE_META order (ALL first).
+  const topLeagues = LEAGUE_META;
 
   return (
     <aside className="w-full lg:w-64 shrink-0 space-y-4">
@@ -68,7 +56,7 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
                       {league.name}
                     </div>
                     {league.id !== 'ALL' && (
-                      <div className="text-[10px] text-[#8c92a4]">{leagueCountryLabel(league.id)}</div>
+                      <div className="text-[10px] text-[#8c92a4]">{league.country}</div>
                     )}
                   </div>
                 </div>
@@ -128,7 +116,7 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
           <span>Fast Sync</span>
         </div>
         <p className="text-[11px] leading-relaxed">
-          Poisson & Dixon-Coles model recalibrated across 7 top leagues with live match state tracking.
+          Poisson & Dixon-Coles model recalibrated across {SUPPORTED_LEAGUE_COUNT} competitions with live match state tracking.
         </p>
       </div>
     </aside>

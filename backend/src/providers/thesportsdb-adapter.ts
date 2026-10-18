@@ -21,6 +21,17 @@ function toLeague(leagueStr: string): League | null {
   if (l.includes('champions league')) return 'CHAMPIONS_LEAGUE';
   if (l.includes('europa league')) return 'EUROPA_LEAGUE';
   if (l.includes('conference')) return 'CONFERENCE_LEAGUE';
+  // Expanded European coverage. Specific names come before generic ones so
+  // "Austrian Bundesliga" is not swallowed by the German `bundesliga` check.
+  if (l.includes('austrian bundesliga')) return 'AUSTRIAN_BUNDESLIGA';
+  if (l.includes('eredivisie')) return 'EREDIVISIE';
+  if (l.includes('ekstraklasa')) return 'EKSTRAKLASA';
+  if (l.includes('primeira liga') || l.includes('liga portugal')) return 'PRIMEIRA_LIGA';
+  if (l.includes('jupiler') || l.includes('belgian')) return 'PRO_LEAGUE';
+  if (l.includes('scottish premiership') || l.includes('scottish prem')) return 'SCOTTISH_PREM';
+  if (l.includes('süper lig') || l.includes('super lig')) return 'SUPER_LIG';
+  if (l.includes('swiss super league')) return 'SWISS_SUPER';
+  if (l.includes('danish superliga') || l.includes('superligaen')) return 'DANISH_SUPERLIGA';
   if (l.includes('bundesliga')) return 'BUNDESLIGA';
   return null;
 }

@@ -13,13 +13,21 @@
  * When the key is absent, or the monthly budget is exhausted, or the API
  * returns HTTP 429, the adapter yields no data and the pipeline falls through
  * to Tier 2 (public cache) and Tier 3 (calibrated fair odds).
+ *
+ * League coverage lives in `ODDS_SPORT_KEYS` on the base adapter: the eleven
+ * competitions with a Tier-1 feed are EPL, EFL Championship, Eredivisie,
+ * Ekstraklasa, Primeira Liga, Belgian Pro League, Scottish Premiership, Süper
+ * Lig, Swiss Super League, Austrian Bundesliga and Danish Superliga.
  */
 
-import { TheOddsAdapter } from './theodds-adapter.js';
+import { TheOddsAdapter, ODDS_SPORT_KEYS, oddsLeagues, sportKeyForLeague } from './theodds-adapter.js';
 
 export const ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4';
 export const DEFAULT_ODDS_REGIONS = 'eu,uk,us';
 export const DEFAULT_ODDS_MARKETS = 'h2h,totals,spreads';
+
+/** Re-exported so callers can ask which competitions have bookmaker coverage. */
+export { ODDS_SPORT_KEYS, oddsLeagues, sportKeyForLeague };
 
 export class OddsApiAdapter extends TheOddsAdapter {
   constructor(

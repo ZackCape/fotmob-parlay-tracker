@@ -29,14 +29,23 @@ export class FootballDataOrgAdapter implements IFootballDataProvider {
     return headers;
   }
 
-  async getFixturesByDate(date: string, league: 'ALL' | 'EPL' | 'CHAMPIONSHIP' = 'ALL'): Promise<Fixture[]> {
+  async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
+    // Football-Data.org's free tier only carries the English top two divisions.
+    // For any other competition we return nothing so the pipeline falls through
+    // to a provider that can actually serve it, rather than answering an
+    // Eredivisie request with Premier League fixtures.
+    const COMPETITION_CODES: Record<string, string> = { EPL: 'PL', CHAMPIONSHIP: 'ELC' };
+    const requestedCode = COMPETITION_CODES[league];
+    if (league !== 'ALL' && !requestedCode) return [];
+    const competitions = league === 'ALL' ? 'PL,ELC' : requestedCode;
+
     const fixtures: Fixture[] = [];
     try {
       const response = await axios.get(`${this.baseUrl}/matches`, {
         params: {
           dateFrom: date,
           dateTo: date,
-          competitions: league === 'CHAMPIONSHIP' ? 'ELC' : league === 'EPL' ? 'PL' : 'PL,ELC',
+          competitions,
         },
         headers: this.getHeaders(),
         timeout: 6000,
@@ -45,6 +54,7 @@ export class FootballDataOrgAdapter implements IFootballDataProvider {
       const matches = response.data?.matches || [];
       for (const m of matches) {
         const leagueName: League = m.competition.code === 'PL' ? 'EPL' : 'CHAMPIONSHIP';
+        if (league !== 'ALL' && leagueName !== league) continue;
         const homeTeam: Team = {
           id: `fd-${m.homeTeam.id}`,
           name: m.homeTeam.name,

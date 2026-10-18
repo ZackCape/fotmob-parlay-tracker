@@ -1827,7 +1827,7 @@ export class DiscordBotService {
 
       const embedPayload = {
         title: `🏆 Cape Predictor Briefing • ${data.today}`,
-        description: `*Football Intelligence. Smarter Predictions.* Live statistical projections across **Premier League, Championship, La Liga, Serie A, Ligue 1, Bundesliga & UEFA Competitions**.\n*Pure mathematical models • Real-time stats from ESPN & API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
+        description: `*Football Intelligence. Smarter Predictions.* Live statistical projections across **19 European competitions** — Premier League, EFL Championship, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira Liga, Belgian Pro League, Scottish Premiership, Süper Lig, Swiss Super League, Austrian Bundesliga, Danish Superliga, Ekstraklasa & UEFA Competitions.\n*Pure mathematical models • Real-time stats from ESPN & API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
         color: 0x2563EB, // Restrained blue primary
         fields: [
           {

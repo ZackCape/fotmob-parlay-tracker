@@ -7,15 +7,27 @@ import { estimateTeamStrengths, sampleFromResults } from '../utils/teamStrength.
 
 /**
  * ESPN public scoreboard + summary adapter.
- * Scoreboard: https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=YYYYMMDD
+ * Scoreboard: https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates=YYYYMMDD
  * Summary:    https://site.api.espn.com/apis/site/v2/sports/soccer/all/summary?event={id}
  * No API key required. Covers all major global league schedules, live scores and match statistics.
  */
-const BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer/all';
+const SPORT_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
+const BASE = `${SPORT_BASE}/all`;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-/** ESPN league slug/code -> Cape Predictor League */
-const LEAGUE_MAP: Record<string, League> = {
+/**
+ * ESPN league code -> Cape Predictor League.
+ *
+ * Every code here is verified against ESPN's own league directory and
+ * per-league scoreboard endpoint, and `getFixturesByDate` fetches each of them
+ * directly, so a competition missing from this map can never be served.
+ * Keep it in step with `src/utils/leagueFlags.ts`.
+ *
+ * Poland is deliberately absent. ESPN's 220-league soccer directory carries no
+ * Polish top flight and `pol.1` answers HTTP 400, so Ekstraklasa comes from a
+ * fallback provider (or not at all) rather than being pointed at a guessed slug.
+ */
+export const LEAGUE_MAP: Record<string, League> = {
   'eng.1': 'EPL',
   'eng.2': 'CHAMPIONSHIP',
   'esp.1': 'LALIGA',
@@ -26,19 +38,100 @@ const LEAGUE_MAP: Record<string, League> = {
   'uefa.champions': 'CHAMPIONS_LEAGUE',
   'uefa.europa': 'EUROPA_LEAGUE',
   'uefa.europa.conf': 'CONFERENCE_LEAGUE',
+  // Expanded European coverage.
+  'ned.1': 'EREDIVISIE',
+  'por.1': 'PRIMEIRA_LIGA',
+  'bel.1': 'PRO_LEAGUE',
+  'sco.1': 'SCOTTISH_PREM',
+  'tur.1': 'SUPER_LIG',
+  'sui.1': 'SWISS_SUPER',
+  'aut.1': 'AUSTRIAN_BUNDESLIGA',
+  'den.1': 'DANISH_SUPERLIGA',
 };
 
-const SLUG_MAP: Array<[RegExp, League]> = [
+/**
+ * ESPN numeric league id -> Cape Predictor League.
+ *
+ * ESPN stamps every event's `uid` with its competition, e.g.
+ * `s:600~l:3914~e:401880205` is an English Championship match and `l:775` is
+ * the Champions League. That is the most dependable attribution available, and
+ * it matters: the season slugs of the English and Scottish second tiers are
+ * both unhelpful ("regular-season" / "…-championship"), so slug matching alone
+ * files Scottish matches under the English division.
+ */
+export const ESPN_LEAGUE_IDS: Record<number, League> = {
+  700: 'EPL',
+  3914: 'CHAMPIONSHIP',
+  740: 'LALIGA',
+  730: 'SERIE_A',
+  720: 'BUNDESLIGA',
+  3927: 'BUNDESLIGA2',
+  710: 'LIGUE1',
+  775: 'CHAMPIONS_LEAGUE',
+  776: 'EUROPA_LEAGUE',
+  20296: 'CONFERENCE_LEAGUE',
+  725: 'EREDIVISIE',
+  715: 'PRIMEIRA_LIGA',
+  3901: 'PRO_LEAGUE',
+  735: 'SCOTTISH_PREM',
+  3946: 'SUPER_LIG',
+  3944: 'SWISS_SUPER',
+  3907: 'AUSTRIAN_BUNDESLIGA',
+  3913: 'DANISH_SUPERLIGA',
+};
+
+/** Cape Predictor league -> ESPN code, derived so the two maps cannot drift. */
+export const ESPN_CODE_BY_LEAGUE: Record<string, string> = Object.fromEntries(
+  Object.entries(LEAGUE_MAP).map(([code, league]) => [league, code]),
+);
+
+/** The numeric league id ESPN embeds in an event's `uid` (`s:600~l:<id>~e:<id>`). */
+function espnLeagueId(event: any): number | null {
+  const m = String(event?.uid || '').match(/~l:(\d+)~/);
+  if (!m) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) ? id : null;
+}
+
+/**
+ * Fallback matcher for events whose links do not carry a `league/{code}` path.
+ * Tested against both the season slug and the event name, in order, so the more
+ * specific patterns must come first.
+ *
+ * These patterns are deliberately narrow. ESPN's `all` scoreboard carries every
+ * competition on the planet, and a loose pattern silently files foreign matches
+ * under the wrong competition — verified live: a bare `championship` matched
+ * `2026-27-scottish-championship`, a bare `serie-a` matched
+ * `2026-brasileiro-serie-a`, and `pro-league` matched
+ * `2026-27-saudi-pro-league`. Each is now pinned to its own country.
+ */
+export const SLUG_MAP: Array<[RegExp, League]> = [
   [/english-premier-league/i, 'EPL'],
-  [/championship/i, 'CHAMPIONSHIP'],
-  [/laliga/i, 'LALIGA'],
-  [/italian-serie-a|serie-a/i, 'SERIE_A'],
+  // English second tier only — not the Scottish Championship or USL Championship.
+  [/english[-\s]?championship|efl[-\s]?championship/i, 'CHAMPIONSHIP'],
+  // Spanish top flight only — not LaLiga 2 (the second division).
+  [/laliga(?!2)|la-liga(?!2)/i, 'LALIGA'],
+  // Italian top flight only — not the Brazilian Série A.
+  [/italian-serie-a|italy-serie-a/i, 'SERIE_A'],
   [/german-bundesliga/i, 'BUNDESLIGA'],
   [/bundesliga-2|2-bundesliga/i, 'BUNDESLIGA2'],
   [/ligue-1/i, 'LIGUE1'],
   [/uefa-champions|champions-league/i, 'CHAMPIONS_LEAGUE'],
   [/europa-league/i, 'EUROPA_LEAGUE'],
   [/conference-league/i, 'CONFERENCE_LEAGUE'],
+  // Expanded European coverage.
+  [/dutch-eredivisie|eredivisie/i, 'EREDIVISIE'],
+  [/polish-ekstraklasa|ekstraklasa/i, 'EKSTRAKLASA'],
+  [/portuguese-primeira-liga|primeira[-\s]?liga/i, 'PRIMEIRA_LIGA'],
+  // Belgian top flight only — not the Saudi Pro League.
+  [/belgian[-\s]?pro[-\s]?league|belgian[-\s]?first[-\s]?division|jupiler[-\s]?pro[-\s]?league/i, 'PRO_LEAGUE'],
+  [/scottish[-\s]?premiership|scottish[-\s]?prem(?!iership)/i, 'SCOTTISH_PREM'],
+  [/swiss[-\s]?super[-\s]?league/i, 'SWISS_SUPER'],
+  [/austrian[-\s]?bundesliga/i, 'AUSTRIAN_BUNDESLIGA'],
+  [/danish[-\s]?superliga/i, 'DANISH_SUPERLIGA'],
+  // Last of the expanded set on purpose: `\b` stops "Superliga"/"Super League"
+  // being read as the Turkish Süper Lig, and the named leagues above win first.
+  [/turkish[-\s]?super[-\s]?lig|s[uü]per[-\s]?lig\b/i, 'SUPER_LIG'],
 ];
 
 function mapState(state?: string): Fixture['status'] {
@@ -48,11 +141,23 @@ function mapState(state?: string): Fixture['status'] {
   return 'TIMED';
 }
 
-function detectLeague(event: any): League | null {
+/**
+ * Attribute a raw ESPN event to a Cape Predictor league.
+ *
+ * Exported so the attribution rules can be unit-tested directly: the ordering
+ * (provider league id, then link code, then slug) is what keeps the English and
+ * Scottish second tiers apart.
+ */
+export function detectLeague(event: any): League | null {
+  // 1. The provider's own league id, straight off the event's `uid`.
+  const numeric = espnLeagueId(event);
+  if (numeric !== null && ESPN_LEAGUE_IDS[numeric]) return ESPN_LEAGUE_IDS[numeric];
+  // 2. A `league/{code}` link path, when ESPN includes one.
   for (const l of event?.links || []) {
     const m = (l?.href || '').match(/league\/([^?\/]+)/);
     if (m && LEAGUE_MAP[m[1]]) return LEAGUE_MAP[m[1]];
   }
+  // 3. Last resort: the season slug / event name.
   const slug = event?.season?.slug || '';
   for (const [re, lg] of SLUG_MAP) if (re.test(slug)) return lg;
   const name = event?.name || '';
@@ -158,60 +263,129 @@ export class EspnAdapter implements IFootballDataProvider {
     return { 'User-Agent': UA, Accept: 'application/json' };
   }
 
-  async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
-    const fixtures: Fixture[] = [];
+  /**
+   * One competition's scoreboard.
+   *
+   * Returns null instead of throwing when ESPN rejects a code, so a single bad
+   * league cannot take down a whole date's fetch.
+   */
+  private async fetchLeagueScoreboard(code: string, compact: string): Promise<any[] | null> {
     try {
-      const compact = date.replace(/-/g, '');
+      const res = await axios.get(`${SPORT_BASE}/${code}/scoreboard`, {
+        params: { dates: compact },
+        headers: this.headers(),
+        timeout: 12000,
+      });
+      return res.data?.events || [];
+    } catch (err: any) {
+      console.warn(`[EspnAdapter] ${code} scoreboard unavailable: ${err.response?.status ?? err.message}`);
+      return null;
+    }
+  }
+
+  /** The broad `all` scoreboard: one request covering whatever ESPN lists today. */
+  private async fetchAllScoreboard(compact: string): Promise<any[] | null> {
+    try {
       const res = await axios.get(`${BASE}/scoreboard`, {
         params: { dates: compact },
         headers: this.headers(),
         timeout: 12000,
       });
-      const events: any[] = res.data?.events || [];
-      for (const ev of events) {
-        const lg = detectLeague(ev);
-        if (!lg) continue;
-        if (league !== 'ALL' && lg !== league) continue;
-        const comp = ev.competitions?.[0];
-        if (!comp) continue;
-        const competitors = comp.competitors || [];
-        const home = competitors.find((c: any) => c.homeAway === 'home');
-        const away = competitors.find((c: any) => c.homeAway === 'away');
-        if (!home || !away) continue;
-
-        const state = comp.status?.type?.state || ev.status?.type?.state;
-        const statusBlock = comp.status || ev.status || {};
-        const hs = num(home.score);
-        const as = num(away.score);
-        const kickoff = comp.date || ev.date || `${date}T00:00:00Z`;
-
-        fixtures.push({
-          id: `espn-${ev.id}`,
-          externalId: String(ev.id),
-          league: lg,
-          season: String(ev.season?.year || date.substring(0, 4)),
-          round: ev.season?.type?.description || 'Regular Season',
-          date: (kickoff || '').substring(0, 10) || date,
-          kickoffTime: kickoff,
-          status: mapState(state),
-          homeTeam: makeTeam(home.team?.displayName, lg, home.team?.logo, home.team?.id),
-          awayTeam: makeTeam(away.team?.displayName, lg, away.team?.logo, away.team?.id),
-          homeScore: hs,
-          awayScore: as,
-          htHomeScore: null,
-          htAwayScore: null,
-          venue: comp.venue?.fullName || ev.venue?.fullName || '',
-          statistics: null,
-          // Real live clock straight from ESPN's status block (never inferred).
-          liveClock: statusBlock?.displayClock ? String(statusBlock.displayClock).trim() : null,
-          livePeriod: Number.isFinite(statusBlock?.period) ? Number(statusBlock.period) : null,
-          providerStatus: statusBlock?.type?.name ? String(statusBlock.type.name) : null,
-          dataSource: 'ESPN Public Scoreboard (Free)',
-        });
-      }
+      return res.data?.events || [];
     } catch (err: any) {
-      console.warn('[EspnAdapter] Error:', err.message);
+      console.warn('[EspnAdapter] all scoreboard unavailable:', err.message);
+      return null;
     }
+  }
+
+  /** Map one raw ESPN event onto the domain model. */
+  private mapEvent(ev: any, lg: League, date: string): Fixture | null {
+    const comp = ev?.competitions?.[0];
+    if (!comp) return null;
+    const competitors = comp.competitors || [];
+    const home = competitors.find((c: any) => c.homeAway === 'home');
+    const away = competitors.find((c: any) => c.homeAway === 'away');
+    if (!home || !away) return null;
+
+    const state = comp.status?.type?.state || ev.status?.type?.state;
+    const statusBlock = comp.status || ev.status || {};
+    const kickoff = comp.date || ev.date || `${date}T00:00:00Z`;
+
+    return {
+      id: `espn-${ev.id}`,
+      externalId: String(ev.id),
+      league: lg,
+      season: String(ev.season?.year || date.substring(0, 4)),
+      round: ev.season?.type?.description || 'Regular Season',
+      date: (kickoff || '').substring(0, 10) || date,
+      kickoffTime: kickoff,
+      status: mapState(state),
+      homeTeam: makeTeam(home.team?.displayName, lg, home.team?.logo, home.team?.id),
+      awayTeam: makeTeam(away.team?.displayName, lg, away.team?.logo, away.team?.id),
+      homeScore: num(home.score),
+      awayScore: num(away.score),
+      htHomeScore: null,
+      htAwayScore: null,
+      venue: comp.venue?.fullName || ev.venue?.fullName || '',
+      statistics: null,
+      // Real live clock straight from ESPN's status block (never inferred).
+      liveClock: statusBlock?.displayClock ? String(statusBlock.displayClock).trim() : null,
+      livePeriod: Number.isFinite(statusBlock?.period) ? Number(statusBlock.period) : null,
+      providerStatus: statusBlock?.type?.name ? String(statusBlock.type.name) : null,
+      dataSource: 'ESPN Public Scoreboard (Free)',
+    };
+  }
+
+  /**
+   * Fixtures for a date, for one league or for every supported competition.
+   *
+   * ESPN's combined `all` scoreboard is capped at 100 events per day, so on a
+   * busy Saturday it silently truncates supported matches (measured live: the
+   * English Championship's 11 fixtures and the Champions League's 9 were both
+   * dropped, while `eng.2`/`uefa.champions` returned them in full). We therefore
+   * sweep each competition's own endpoint, which is authoritative and complete.
+   *
+   * With `league === 'ALL'` the broad feed is also queried as a safety net, in
+   * case ESPN moves a competition to a code we do not have yet.
+   */
+  async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
+    const compact = date.replace(/-/g, '');
+
+    const codes: Array<[string, League]> = league === 'ALL'
+      ? Object.entries(LEAGUE_MAP)
+      : (ESPN_CODE_BY_LEAGUE[league] ? [[ESPN_CODE_BY_LEAGUE[league], league as League]] : []);
+    if (codes.length === 0) return [];
+
+    const fixtures: Fixture[] = [];
+    const seen = new Set<string>();
+    const push = (mapped: Fixture | null) => {
+      if (!mapped || seen.has(mapped.id)) return;
+      seen.add(mapped.id);
+      fixtures.push(mapped);
+    };
+
+    // Small batches: polite fan-out without serialising the whole sweep.
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < codes.length; i += BATCH_SIZE) {
+      const batch = codes.slice(i, i + BATCH_SIZE);
+      const settled = await Promise.allSettled(
+        batch.map(([code]) => this.fetchLeagueScoreboard(code, compact)),
+      );
+      settled.forEach((result, index) => {
+        if (result.status !== 'fulfilled' || !result.value) return;
+        const expected = batch[index][1];
+        for (const ev of result.value) push(this.mapEvent(ev, expected, date));
+      });
+    }
+
+    if (league === 'ALL') {
+      const all = await this.fetchAllScoreboard(compact);
+      for (const ev of all || []) {
+        const detected = detectLeague(ev);
+        if (detected) push(this.mapEvent(ev, detected, date));
+      }
+    }
+
     return fixtures;
   }
 

@@ -3,7 +3,7 @@ import { Fixture, League } from '../types';
 import { CapeMatchRow } from './CapeMatchRow';
 import { ChevronDown, ChevronRight, Trophy } from 'lucide-react';
 import { LeagueFlag } from './LeagueFlag';
-import { leagueCountryLabel } from '../utils/leagueFlags';
+import { LEAGUE_DISPLAY_ORDER, LEAGUE_META as LEAGUE_CATALOGUE } from '../utils/leagueFlags';
 
 interface LeagueAccordionGroupProps {
   fixtures: Fixture[];
@@ -16,31 +16,15 @@ interface LeagueMeta {
   country: string;
 }
 
-const LEAGUE_META: Record<League, LeagueMeta> = {
-  EPL: { name: 'Premier League', country: 'England' },
-  CHAMPIONS_LEAGUE: { name: 'Champions League', country: 'Europe' },
-  LALIGA: { name: 'LaLiga', country: 'Spain' },
-  SERIE_A: { name: 'Serie A', country: 'Italy' },
-  LIGUE1: { name: 'Ligue 1', country: 'France' },
-  EUROPA_LEAGUE: { name: 'Europa League', country: 'Europe' },
-  CONFERENCE_LEAGUE: { name: 'Conference League', country: 'Europe' },
-  CHAMPIONSHIP: { name: 'Championship', country: 'England' },
-  BUNDESLIGA: { name: 'Bundesliga', country: 'Germany' },
-  BUNDESLIGA2: { name: 'Bundesliga 2', country: 'Germany' },
-};
+/**
+ * League identity for the accordion headers, derived from the shared catalogue
+ * so the sidebar and the accordion can never disagree about a competition.
+ */
+const LEAGUE_META: Record<League, LeagueMeta> = Object.fromEntries(
+  LEAGUE_CATALOGUE.filter((m) => m.id !== 'ALL').map((m) => [m.id, { name: m.name, country: m.country }]),
+) as Record<League, LeagueMeta>;
 
-const LEAGUE_ORDER: League[] = [
-  'SERIE_A',
-  'BUNDESLIGA',
-  'BUNDESLIGA2',
-  'EPL',
-  'CHAMPIONS_LEAGUE',
-  'LALIGA',
-  'LIGUE1',
-  'EUROPA_LEAGUE',
-  'CONFERENCE_LEAGUE',
-  'CHAMPIONSHIP',
-];
+const LEAGUE_ORDER: League[] = LEAGUE_DISPLAY_ORDER;
 
 export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
   fixtures,
@@ -81,7 +65,7 @@ export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
     <div className="space-y-4">
       {visibleLeagues.map(league => {
         const leagueFixtures = grouped[league] || [];
-        const meta = LEAGUE_META[league] || { name: league, country: leagueCountryLabel(league) };
+        const meta = LEAGUE_META[league] || { name: league, country: 'Europe' };
         const isCollapsed = !!collapsed[league];
 
         return (

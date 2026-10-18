@@ -5,6 +5,37 @@ import { AUTHENTIC_EPL_TEAMS, AUTHENTIC_CHAMPIONSHIP_TEAMS } from '../data/authe
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 
+/**
+ * API-Football (api-sports.io) league ids per Cape Predictor league.
+ *
+ * The free plan cannot fetch by league+season for current dates, so the adapter
+ * pulls every fixture for the date and then keeps the ones whose `league.id`
+ * appears here — an unmapped competition would be dropped on the floor.
+ */
+export const API_FOOTBALL_LEAGUE_IDS: Record<string, number> = {
+  EPL: 39,
+  CHAMPIONSHIP: 40,
+  EREDIVISIE: 88,
+  PRIMEIRA_LIGA: 94,
+  EKSTRAKLASA: 106,
+  DANISH_SUPERLIGA: 119,
+  PRO_LEAGUE: 144,
+  SCOTTISH_PREM: 179,
+  SUPER_LIG: 203,
+  SWISS_SUPER: 207,
+  AUSTRIAN_BUNDESLIGA: 218,
+};
+
+/** Cape Predictor league for an API-Football league id, or null when unmapped. */
+export function leagueFromApiFootballId(id: number | string): League | null {
+  const numeric = Number(id);
+  if (!Number.isFinite(numeric)) return null;
+  for (const [league, candidate] of Object.entries(API_FOOTBALL_LEAGUE_IDS)) {
+    if (candidate === numeric) return league as League;
+  }
+  return null;
+}
+
 export class ApiFootballAdapter implements IFootballDataProvider {
   readonly name = 'API-Football (Live REST)';
   private apiKey: string;
@@ -117,10 +148,12 @@ export class ApiFootballAdapter implements IFootballDataProvider {
     return msg.includes('request limit') || msg.includes('quota') || msg.includes('too many requests') || msg.includes('rate limit');
   }
 
-  async getFixturesByDate(date: string, league: 'ALL' | 'EPL' | 'CHAMPIONSHIP' = 'ALL'): Promise<Fixture[]> {
+  async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
     const targetLeagueIds = new Set<number>();
-    if (league === 'ALL' || league === 'EPL') targetLeagueIds.add(39);
-    if (league === 'ALL' || league === 'CHAMPIONSHIP') targetLeagueIds.add(40);
+    for (const [id, leagueId] of Object.entries(API_FOOTBALL_LEAGUE_IDS)) {
+      if (league === 'ALL' || league === id) targetLeagueIds.add(leagueId);
+    }
+    if (targetLeagueIds.size === 0) return [];
 
     if (!this.canSpend(1)) {
       console.warn('[ApiFootballAdapter] Daily budget exhausted; skipping fixtures fetch.');
@@ -168,7 +201,8 @@ export class ApiFootballAdapter implements IFootballDataProvider {
         for (const item of rawList) {
           const lid = item?.league?.id;
           if (!targetLeagueIds.has(lid)) continue;
-          const leagueName: League = lid === 39 ? 'EPL' : 'CHAMPIONSHIP';
+          const leagueName = leagueFromApiFootballId(lid);
+          if (!leagueName) continue;
           fixtures.push(this.mapRawFixtureToDomain(item, leagueName));
         }
         return fixtures;
@@ -237,7 +271,7 @@ export class ApiFootballAdapter implements IFootballDataProvider {
       const fixtureData = response.data?.response?.[0];
       if (!fixtureData) return null;
 
-      const leagueName: League = fixtureData.league.id === 39 ? 'EPL' : 'CHAMPIONSHIP';
+      const leagueName = leagueFromApiFootballId(fixtureData.league.id) ?? 'EPL';
       const fixture = this.mapRawFixtureToDomain(fixtureData, leagueName);
 
       // Fetch injuries

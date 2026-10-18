@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar } from './components/Navbar';
 import { TopLeaguesSidebar } from './components/TopLeaguesSidebar';
+import { SUPPORTED_LEAGUE_COUNT } from './utils/leagueFlags';
 import { DatePickerBar } from './components/DatePickerBar';
 import { LeagueAccordionGroup } from './components/LeagueAccordionGroup';
 import { MatchAnalysisModal } from './components/MatchAnalysisModal';
@@ -262,7 +263,7 @@ export const App: React.FC = () => {
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-2">
             <span className="w-2 h-2 rounded-full bg-[#00d66c]" />
-            <span>Cape Predictor • 7 Top European Leagues • Zero Bookmaker Odds Biases</span>
+            <span>Cape Predictor • {SUPPORTED_LEAGUE_COUNT} Top European Competitions • Zero Bookmaker Odds Biases</span>
           </div>
           <div className="flex items-center space-x-4">
             <span>24/7 Discord Uptime</span>
