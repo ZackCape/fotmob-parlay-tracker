@@ -27,6 +27,7 @@ export {
 export type { AnalysisTab } from './analysisEmbeds.js';
 export * from './parlayBuilder.js';
 export * from './liveTracker.js';
+export * from './liveEvents.js';
 export { buildStatisticalParlay } from '../parlays/parlay-builder.js';
 
 export function baseEmbed(title: string, description?: string): EmbedBuilder {
@@ -41,21 +42,26 @@ export function baseEmbed(title: string, description?: string): EmbedBuilder {
 }
 
 /* ------------------------------------------------------------------ *
- * /fixtures : full schedule with multi-market best picks, pagination
- * and per-match selection
+ * /fixtures : full schedule with multi-market GUI, league selection
+ * and per-match live tracking
  * ------------------------------------------------------------------ */
 
 /**
- * Markets eligible for the per-fixture "best pick".
- * OVER_0_5 is deliberately excluded because it is near-certain on almost
- * every match and would crowd out more informative picks.
+ * Markets shown for every fixture in the /fixtures GUI.
+ * OVER_0_5 is deliberately excluded (near-certain on almost every match).
  */
-const BEST_PICK_MARKETS: MarketType[] = [
-  'HOME_WIN', 'DRAW', 'AWAY_WIN',
-  'OVER_1_5', 'OVER_2_5', 'OVER_3_5',
-  'OVER_8_5_CORNERS', 'OVER_7_5_CORNERS', 'OVER_5_5_CORNERS',
-  'OVER_3_5_CARDS', 'OVER_2_5_CARDS',
-  'BTTS_YES',
+const FIXTURE_MARKETS: Array<{
+  market: MarketType;
+  label: string;
+  emoji: string;
+}> = [
+  { market: 'HOME_WIN', label: 'H', emoji: '🏠' },
+  { market: 'DRAW', label: 'D', emoji: '🤝' },
+  { market: 'AWAY_WIN', label: 'A', emoji: '✈️' },
+  { market: 'OVER_1_5', label: 'O1.5', emoji: '⚽' },
+  { market: 'OVER_2_5', label: 'O2.5', emoji: '⚽' },
+  { market: 'OVER_8_5_CORNERS', label: 'Corners', emoji: '🟨' },
+  { market: 'OVER_3_5_CARDS', label: 'Cards', emoji: '🟥' },
 ];
 
 const FIXTURES_PER_PAGE = 10;
@@ -64,7 +70,6 @@ const FIXTURES_PER_PAGE = 10;
 export interface FixturesBrowserState {
   league: string;
   page: number;
-  selectedMatchId: string | null;
 }
 
 const fixturesState = new Map<string, FixturesBrowserState>();
@@ -72,7 +77,7 @@ const fixturesState = new Map<string, FixturesBrowserState>();
 export function getFixturesState(userId: string): FixturesBrowserState {
   let s = fixturesState.get(userId);
   if (!s) {
-    s = { league: 'ALL', page: 1, selectedMatchId: null };
+    s = { league: 'ALL', page: 1 };
     fixturesState.set(userId, s);
   }
   return s;
@@ -82,53 +87,26 @@ export function setFixturesLeague(userId: string, league: string): void {
   const s = getFixturesState(userId);
   s.league = league;
   s.page = 1;
-  s.selectedMatchId = null;
 }
 
 export function setFixturesPage(userId: string, page: number): void {
   getFixturesState(userId).page = page;
 }
 
-export function setFixturesSelectedMatch(userId: string, matchId: string | null): void {
-  getFixturesState(userId).selectedMatchId = matchId;
-}
-
 export function clearFixturesState(userId: string): void {
   fixturesState.delete(userId);
 }
 
-/** Pick the highest-confidence, most informative market for a fixture. */
-export function bestPickForFixture(preds: MarketPrediction[] | null | undefined): {
-  market: MarketType;
-  label: string;
-  probability: number;
-} | null {
-  const list = (preds || []).filter((p): p is MarketPrediction =>
-    !!p && BEST_PICK_MARKETS.includes(p.market as MarketType),
-  );
-  if (list.length === 0) return null;
-  list.sort((a, b) => b.estimatedProbability - a.estimatedProbability);
-  const best = list[0];
-  return {
-    market: best.market as MarketType,
-    label: best.marketLabel || best.selection || String(best.market),
-    probability: best.estimatedProbability,
-  };
-}
-
-function pickEmoji(market: MarketType): string {
-  if (market.includes('CORNERS')) return '🟨';
-  if (market.includes('CARDS')) return '🟥';
-  if (market.startsWith('OVER_')) return '⚽';
-  if (market === 'HOME_WIN') return '🏠';
-  if (market === 'AWAY_WIN') return '✈️';
-  if (market === 'DRAW') return '🤝';
-  if (market === 'BTTS_YES') return '🥅';
-  return '🎯';
-}
-
-function formatPick(pick: { market: MarketType; label: string; probability: number }): string {
-  return `${pickEmoji(pick.market)} ${pick.label} ${(pick.probability * 100).toFixed(1)}%`;
+/** Format the multi-market probability line for a single fixture row. */
+export function formatFixtureMarkets(
+  preds: MarketPrediction[] | null | undefined,
+): string {
+  const list = (preds || []).filter((p): p is MarketPrediction => !!p);
+  const parts = FIXTURE_MARKETS.map(({ market, label, emoji }) => {
+    const p = list.find((x) => x.market === market);
+    return p ? `${emoji}${label} ${(p.estimatedProbability * 100).toFixed(0)}%` : '';
+  }).filter(Boolean);
+  return parts.length ? parts.join(' • ') : 'markets N/A';
 }
 
 /** Fetch verified fixtures for a league. Never returns unverified rows. */
@@ -151,7 +129,7 @@ function formatKickoff(iso: string): string {
   return `<t:${Math.floor(d.getTime() / 1000)}:t>`;
 }
 
-/** Rich embed listing fixtures with multi-market best picks. */
+/** Rich embed listing fixtures with multi-market model picks. */
 export function buildFixturesEmbed(
   fixturesPage: any[],
   predictionsByFixture: Map<string, MarketPrediction[]>,
@@ -162,7 +140,11 @@ export function buildFixturesEmbed(
   const e = baseEmbed('Cape Predictor — Today\'s Full Match Schedule');
 
   if (!fixturesPage.length) {
-    e.setDescription('**Football Intelligence • High Probability & Market Analytics** • No verified fixtures are available for this league today. Providers may be rate-limited or the league may be out of season.');
+    e.setDescription(
+      '**Football Intelligence • High Probability & Market Analytics** • ' +
+      'No verified fixtures are available for this league today. ' +
+      'Providers may be rate-limited or the league may be out of season.',
+    );
     e.setFooter({ text: `Cape Predictor Engine • Dixon-Coles & Multi-Market Analytics • ${page}/${totalPages}` });
     return e;
   }
@@ -170,10 +152,10 @@ export function buildFixturesEmbed(
   const lines = fixturesPage.map((f, i) => {
     const globalIndex = (page - 1) * FIXTURES_PER_PAGE + i + 1;
     const preds = predictionsByFixture.get(f.id) || [];
-    const pick = bestPickForFixture(preds);
+    const markets = formatFixtureMarkets(preds);
     const score = f.status === 'FINISHED' ? ` **${f.homeScore}-${f.awayScore}**` : '';
-    const pickText = pick ? ` • ${formatPick(pick)}` : ' • pick N/A';
-    return `\`${String(globalIndex).padStart(2, '0')}\` ${statusEmoji(f.status)} **${f.homeTeam.name}** vs **${f.awayTeam.name}**${score}\n     ${f.league} • ${formatKickoff(f.kickoffTime)}${pickText}`;
+    const elapsed = f.status === 'LIVE' ? ` • ${f.status}` : '';
+    return `\`${String(globalIndex).padStart(2, '0')}\` ${statusEmoji(f.status)} **${f.homeTeam.name}** vs **${f.awayTeam.name}**${score}\n     ${f.league} • ${formatKickoff(f.kickoffTime)}${elapsed} • ${markets}`;
   });
 
   const header = `**Football Intelligence • High Probability & Market Analytics** • ${fixturesPage.length} match${fixturesPage.length === 1 ? '' : 'es'} (page ${page}/${totalPages})`;
@@ -182,7 +164,7 @@ export function buildFixturesEmbed(
   return e;
 }
 
-/** League filter select menu. */
+/** League filter select menu shown on the /fixtures league prompt and fixtures view. */
 export function buildFixtureLeagueSelectRow(current = 'ALL'): ActionRowBuilder<StringSelectMenuBuilder> {
   const menu = new StringSelectMenuBuilder()
     .setCustomId('cp:fixtures:league')
@@ -198,49 +180,28 @@ export function buildFixtureLeagueSelectRow(current = 'ALL'): ActionRowBuilder<S
   return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 }
 
-/** Match selection dropdown for the currently visible page. */
-export function buildFixtureMatchSelectRow(fixturesPage: any[]): ActionRowBuilder<StringSelectMenuBuilder> {
-  const options = fixturesPage.slice(0, 25).map((f) =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(`${f.homeTeam.name} v ${f.awayTeam.name}`.slice(0, 100))
-      .setValue(f.id)
-      .setDescription(`${f.league} • ${formatKickoff(f.kickoffTime)}`),
-  );
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId('cp:fixtures:match')
-    .setPlaceholder(options.length ? 'Select a match…' : 'No matches available')
-    .addOptions(options.length ? options : [
-      new StringSelectMenuOptionBuilder().setLabel('No matches').setValue('none').setDescription('—'),
-    ])
-    .setDisabled(options.length === 0);
-  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+/** Track button for a single match row. */
+function buildTrackButton(fixtureId: string, label: string): ButtonBuilder {
+  return new ButtonBuilder()
+    .setCustomId(`cp:fixtures:track:${fixtureId}`)
+    .setLabel(label)
+    .setEmoji('⚡')
+    .setStyle(ButtonStyle.Secondary);
 }
 
-/** Action buttons tied to the currently selected match. */
-export function buildFixtureActionRows(selectedMatchId: string | null): ActionRowBuilder<ButtonBuilder>[] {
-  const hasSelection = !!selectedMatchId;
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId('cp:fixtures:analyze')
-        .setLabel('Analyze Selected')
-        .setEmoji('📊')
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(!hasSelection),
-      new ButtonBuilder()
-        .setCustomId('cp:fixtures:parlay')
-        .setLabel('Add to Custom Parlay')
-        .setEmoji('🎟️')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!hasSelection),
-      new ButtonBuilder()
-        .setCustomId('cp:fixtures:track')
-        .setLabel('Track Live')
-        .setEmoji('⚡')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!hasSelection),
-    ),
-  ];
+/** Action rows: one track button per match row on the page (max 5 per row). */
+export function buildFixtureTrackRows(fixturesPage: any[]): ActionRowBuilder<ButtonBuilder>[] {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  const chunk = 5;
+  for (let i = 0; i < fixturesPage.length; i += chunk) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    for (const f of fixturesPage.slice(i, i + chunk)) {
+      const label = `${f.homeTeam.name.slice(0, 12)} v ${f.awayTeam.name.slice(0, 12)}`.slice(0, 80);
+      row.addComponents(buildTrackButton(f.id, label));
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 
 /** Pagination buttons. */
@@ -262,33 +223,33 @@ export function buildFixturePaginationRow(page: number, totalPages: number): Act
   ];
 }
 
-/** Full /fixtures payload: embed + league select + match select + actions + pagination. */
+/** Full /fixtures payload: embed + league select + track buttons + pagination. */
 export function buildFixturesPayload(
   fixtures: any[],
   predictionsByFixture: Map<string, MarketPrediction[]>,
   league: string,
   page: number,
-  selectedMatchId: string | null,
 ) {
   const totalPages = Math.max(1, Math.ceil(fixtures.length / FIXTURES_PER_PAGE));
   const clampedPage = Math.min(Math.max(1, page), totalPages);
   const start = (clampedPage - 1) * FIXTURES_PER_PAGE;
   const fixturesPage = fixtures.slice(start, start + FIXTURES_PER_PAGE);
 
+  const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [
+    buildFixtureLeagueSelectRow(league),
+    ...buildFixtureTrackRows(fixturesPage),
+    ...buildFixturePaginationRow(clampedPage, totalPages),
+  ];
+
   return {
     embeds: [buildFixturesEmbed(fixturesPage, predictionsByFixture, league, clampedPage, totalPages)],
-    components: [
-      buildFixtureLeagueSelectRow(league),
-      buildFixtureMatchSelectRow(fixturesPage),
-      ...buildFixtureActionRows(selectedMatchId),
-      ...buildFixturePaginationRow(clampedPage, totalPages),
-    ],
+    components,
   };
 }
 
-/** Standalone "pick a league" entry point (used by the help nav). */
+/** Standalone "pick a league" entry point (used by the /fixtures command + help nav). */
 export function leaguePickerEmbed(): EmbedBuilder {
-  return baseEmbed('Cape Predictor — Select a League',
+  return baseEmbed('Cape Predictor — Select League or Competition',
     `*${BRAND.tagline}*\nChoose a competition below to see today's verified fixtures with multi-market model picks.`);
 }
 

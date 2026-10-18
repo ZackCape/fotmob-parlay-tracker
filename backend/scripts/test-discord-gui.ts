@@ -72,33 +72,25 @@ async function main() {
     check(`market ${m} computed somewhere on slate`, seenMarkets.has(m));
   }
 
-  section('BEST PICK PER FIXTURE (diverse markets, OVER_0_5 excluded)');
-  let fixturesWithPick = 0;
+  section('MULTI-MARKET PICK PER FIXTURE (diverse markets, OVER_0_5 excluded)');
+  let fixturesWithMarkets = 0;
   for (const fx of fixtures) {
     const p = preds.get(fx.id) || [];
-    const pick = CP.bestPickForFixture(p);
-    if (pick) {
-      fixturesWithPick++;
-      // Confirm the pick is NOT Over 0.5 (the trivial near-certain market).
-      check(`pick for ${fx.homeTeam.name} v ${fx.awayTeam.name} is not OVER_0_5`,
-        pick.market !== 'OVER_0_5', `got ${pick.market}`);
-      break; // just verify one in detail; the rest are checked below
-    }
+    if (p.length === 0) continue;
+    const markets = CP.formatFixtureMarkets(p);
+    // Confirm no OVER_0_5 leak and at least one market is shown.
+    check(`markets for ${fx.homeTeam.name} v ${fx.awayTeam.name} exclude OVER_0_5`,
+      !markets.includes('OVER_0_5'), `got: ${markets}`);
+    check(`markets for ${fx.homeTeam.name} v ${fx.awayTeam.name} are non-empty`,
+      markets !== 'markets N/A');
+    fixturesWithMarkets++;
   }
-  // Re-scan: every fixture with predictions should have a pick among diverse markets.
-  let allHavePick = true;
-  for (const fx of fixtures) {
-    const p = preds.get(fx.id) || [];
-    if (p.length > 0 && !CP.bestPickForFixture(p)) {
-      allHavePick = false;
-      break;
-    }
-  }
-  check('every fixture with predictions has a diverse-market pick', allHavePick);
-  console.log(`  fixtures with a best pick: ${fixturesWithPick}/${fixtures.length}`);
+  check('every fixture with predictions renders diverse markets',
+    fixturesWithMarkets === fixtures.filter((f) => preds.has(f.id)).length,
+    `${fixturesWithMarkets}/${fixtures.filter((f) => preds.has(f.id)).length}`);
 
   section('BUILD FULL /fixtures PAYLOAD (page 1, ALL leagues)');
-  const payload = CP.buildFixturesPayload(fixtures, preds, 'ALL', 1, null);
+  const payload = CP.buildFixturesPayload(fixtures, preds, 'ALL', 1);
   const embed = payload.embeds[0];
   const embedText = JSON.stringify(embed.toJSON());
   check('embed title is the rebranded header',
@@ -115,7 +107,7 @@ async function main() {
   const m = /(\d+)\/(\d+)/.exec(page1Footer);
   if (m) totalPages = parseInt(m[2], 10);
   for (let pg = 1; pg <= totalPages; pg++) {
-    const pgPayload = CP.buildFixturesPayload(fixtures, preds, 'ALL', pg, null);
+    const pgPayload = CP.buildFixturesPayload(fixtures, preds, 'ALL', pg);
     const pgText = JSON.stringify(pgPayload.embeds[0].toJSON());
     for (const f of fixtures) {
       if (pgText.includes(f.homeTeam.name) && pgText.includes(f.awayTeam.name)) {
@@ -150,35 +142,41 @@ async function main() {
   }
   check('league select options <= 25', leagueMenu.options.length <= 25);
 
-  // Row 1: match select menu (current page).
-  const matchRow: any = payload.components[1].toJSON();
-  const matchMenu: any = matchRow.components[0];
-  check('match select customId', matchMenu.custom_id === 'cp:fixtures:match');
-  check('match select lists fixtures on page', matchMenu.options.length > 0);
-  check('match select options <= 25', matchMenu.options.length <= 25);
-
-  // Rows for action buttons + pagination.
-  const allButtons = payload.components.flatMap((r: any) => r.toJSON().components);
-  const buttonCustomIds = allButtons.map((c: any) => c.custom_id).filter(Boolean);
-  check('Analyze Selected button present', buttonCustomIds.includes('cp:fixtures:analyze'));
-  check('Add to Custom Parlay button present', buttonCustomIds.includes('cp:fixtures:parlay'));
-  check('Track Live button present', buttonCustomIds.includes('cp:fixtures:track'));
-  check('no link button carries a custom id (Discord rule)',
-    allButtons.every((c: any) => c.style !== 5 || !c.custom_id));
-  check('every custom id <= 100 chars',
-    allButtons.every((c: any) => !c.custom_id || c.custom_id.length <= 100));
+  // Track buttons: one ⚡ Track button per match row (max 5 per action row),
+  // sitting between the league select and the pagination row.
+  const paginationRow = totalPages > 1 ? 1 : 0;
+  const trackRows = payload.components.slice(1, payload.components.length - paginationRow);
+  const trackButtons = trackRows.flatMap((r: any) => r.toJSON().components);
+  check('track buttons present (one per match)', trackButtons.length > 0);
+  check('track button count matches page-1 fixtures',
+    trackButtons.length === Math.min(fixtures.length, 10),
+    `got ${trackButtons.length} for ${Math.min(fixtures.length, 10)} fixtures`);
+  check('every track button is a ⚡ Track action',
+    trackButtons.every((c: any) => c.custom_id && String(c.custom_id).startsWith('cp:fixtures:track:')));
+  check('no more than 5 buttons per track row',
+    trackRows.every((r: any) => r.toJSON().components.length <= 5));
+  check('track button custom ids <= 100 chars',
+    trackButtons.every((c: any) => c.custom_id.length <= 100));
 
   // Pagination present when multiple pages.
-  totalPages = Math.max(1, Math.ceil(fixtures.length / 10));
   if (totalPages > 1) {
-    check('Prev button present', buttonCustomIds.includes('cp:fixtures:prev'));
-    check('Next button present', buttonCustomIds.includes('cp:fixtures:next'));
+    const lastRow = payload.components[payload.components.length - 1].toJSON().components;
+    const lastIds = lastRow.map((c: any) => c.custom_id);
+    check('Prev button present', lastIds.includes('cp:fixtures:prev'));
+    check('Next button present', lastIds.includes('cp:fixtures:next'));
   }
+
+  check('no link button carries a custom id (Discord rule)',
+    payload.components.every((r: any) =>
+      r.toJSON().components.every((c: any) => c.style !== 5 || !c.custom_id)));
+  check('every custom id <= 100 chars',
+    payload.components.every((r: any) =>
+      r.toJSON().components.every((c: any) => !c.custom_id || c.custom_id.length <= 100)));
 
   section('PAGINATION');
   totalPages = Math.max(1, Math.ceil(fixtures.length / 10));
   check('totalPages computed', totalPages >= 1);
-  const page2 = CP.buildFixturesPayload(fixtures, preds, 'ALL', 2, null);
+  const page2 = CP.buildFixturesPayload(fixtures, preds, 'ALL', 2);
   const embed2 = page2.embeds[0];
   const page2Footer = String(embed2.toJSON().footer?.text || '');
   check('page 2 footer shows page/total', page2Footer.includes(`${2}/${totalPages}`), page2Footer);

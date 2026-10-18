@@ -96,6 +96,15 @@ export class DataProviderFactory {
     return this.adaptiveLearning;
   }
 
+  /**
+   * Fetch raw ESPN match statistics (incl. key events) for a live event by raw
+   * ESPN event id (no `espn-` prefix). Used by the live-event alert worker so
+   * it can poll goals/cards without running the full Dixon-Coles analysis.
+   */
+  public async getEspnMatchStats(eventId: string) {
+    return this.espnProvider.getMatchStats(eventId);
+  }
+
   public async getLatestNews(): Promise<FootballNewsArticle[]> {
     return this.footballdatabaseProvider.getLatestNews();
   }

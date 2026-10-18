@@ -32,6 +32,14 @@ export class DiscordBotService {
   private currentInterval: UpdateInterval = '1h';
   /** Interval handle for the live-tracker auto-refresh loop. */
   private liveRefreshTimer?: NodeJS.Timeout;
+  /** Interval handle for the live-event alert worker (goals, cards, halftime). */
+  private liveEventTimer?: NodeJS.Timeout;
+  /** Previous poll's ESPN stats per fixture, used to detect new events. */
+  private liveEventPrevStats: Map<string, any> = new Map();
+  /** Fixture ids already seeded with seen events (avoid alerting history at startup). */
+  private liveEventFirstPolled: Set<string> = new Set();
+  /** Last observed status per fixture, used to detect halftime transitions. */
+  private liveEventLastStatus: Map<string, string> = new Map();
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
     this.config = config;
@@ -155,6 +163,9 @@ export class DiscordBotService {
             .setName('livetracking')
             .setDescription('Track a live or upcoming match of your choice (no manual IDs)'),
           new SlashCommandBuilder()
+            .setName('live')
+            .setDescription('Show all matches currently being played in real time with track buttons'),
+          new SlashCommandBuilder()
             .setName('info')
             .setDescription('View all available bot commands, leagues, and statistical engine details'),
           new SlashCommandBuilder()
@@ -255,7 +266,10 @@ export class DiscordBotService {
           await interaction.reply({ embeds: [embed] });
         } else if (interaction.commandName === 'fixtures') {
           await interaction.deferReply();
-          await renderFixturesPage(interaction, 'ALL', 1);
+          await interaction.editReply({
+            embeds: [CP.leaguePickerEmbed()],
+            components: [CP.buildFixtureLeagueSelectRow('ALL')],
+          });
           return;
         } else if (interaction.commandName === 'parlay') {
           await interaction.deferReply();
@@ -350,9 +364,8 @@ export class DiscordBotService {
       }
       CP.setFixturesLeague(interaction.user.id, league);
       CP.setFixturesPage(interaction.user.id, page);
-      const state = CP.getFixturesState(interaction.user.id);
       await interaction.editReply({
-        ...CP.buildFixturesPayload(fixtures, preds, league, page, state.selectedMatchId),
+        ...CP.buildFixturesPayload(fixtures, preds, league, page),
       });
     };
 
@@ -466,6 +479,18 @@ export class DiscordBotService {
           });
           return;
         }
+
+        if (name === 'live') {
+          await interaction.deferReply();
+          const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
+          const live = fixtures.filter((f: any) => f.status === 'LIVE');
+          await interaction.followUp({
+            embeds: [CP.buildLiveMatchesEmbed(live)],
+            components: [...CP.buildLiveTrackRows(live)],
+            ephemeral: true,
+          });
+          return;
+        }
       } catch (err: any) {
         console.warn(`[DiscordBot] command ${name} failed: ${err.message}`);
         const body = 'Something went wrong handling that command.';
@@ -527,80 +552,21 @@ export class DiscordBotService {
           return;
         }
 
-        if (id === 'cp:fixtures:match') {
-          const matchId = interaction.values?.[0];
-          const state = CP.getFixturesState(interaction.user.id);
-          CP.setFixturesSelectedMatch(interaction.user.id, matchId && matchId !== 'none' ? matchId : null);
-          await interaction.deferUpdate();
-          await renderFixturesPage(interaction, state.league, state.page);
-          return;
-        }
-
-        if (id === 'cp:fixtures:analyze') {
-          const state = CP.getFixturesState(interaction.user.id);
-          const fixtureId = state.selectedMatchId;
-          if (!fixtureId) {
-            await interaction.reply({ content: 'Please select a match first.', ephemeral: true });
-            return;
-          }
+        if (id.startsWith('cp:fixtures:track:')) {
+          const fixtureId = id.split(':').slice(3).join(':');
           await interaction.deferReply();
-          await showAnalysis(interaction, fixtureId, 'stats');
-          return;
-        }
-
-        if (id === 'cp:fixtures:parlay') {
-          const state = CP.getFixturesState(interaction.user.id);
-          const fixtureId = state.selectedMatchId;
-          if (!fixtureId) {
-            await interaction.reply({ content: 'Please select a match first.', ephemeral: true });
-            return;
-          }
-          await interaction.deferUpdate();
           const found = await analysisFor(fixtureId);
           if (!found) {
             await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
             return;
           }
-          const pick = CP.bestPickForFixture(found.details.marketPredictions);
-          if (!pick) {
-            await interaction.followUp({ content: 'No market pick available for this match.', ephemeral: true });
-            return;
-          }
-          const parlay = CP.getParlay(interaction.user.id);
-          const res = CP.addLeg(parlay, {
-            fixtureId,
-            description: `${found.fixture.homeTeam.name} v ${found.fixture.awayTeam.name}`,
-            league: found.fixture.league,
-            market: pick.market,
-            selection: pick.label,
-            probability: pick.probability,
+          const subscribed = CP.subscribeLive(interaction.user.id, interaction.channelId, fixtureId);
+          await interaction.followUp({
+            content: subscribed
+              ? `⚡ You are now tracking **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**! You will receive direct alerts for Goals, Own Goals, Red Cards, and Halftime Reports.`
+              : 'You are already tracking this match.',
+            ephemeral: true,
           });
-          if (!res.ok) {
-            await interaction.followUp({ content: res.reason, ephemeral: true });
-            return;
-          }
-          CP.setFixturesSelectedMatch(interaction.user.id, null);
-          await renderFixturesPage(interaction, state.league, state.page);
-          return;
-        }
-
-        if (id === 'cp:fixtures:track') {
-          const state = CP.getFixturesState(interaction.user.id);
-          const fixtureId = state.selectedMatchId;
-          if (!fixtureId) {
-            await interaction.reply({ content: 'Please select a match first.', ephemeral: true });
-            return;
-          }
-          await interaction.deferUpdate();
-          const found = await analysisFor(fixtureId);
-          if (!found) {
-            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
-            return;
-          }
-          const channel: any = interaction.channel;
-          if (channel?.send) await startLiveTracker(channel, fixtureId, interaction.user.id);
-          CP.setFixturesSelectedMatch(interaction.user.id, null);
-          await renderFixturesPage(interaction, state.league, state.page);
           return;
         }
 
@@ -738,6 +704,24 @@ export class DiscordBotService {
           await interaction.reply({ content: 'Starting live tracker…', ephemeral: true });
           const channel: any = interaction.channel;
           if (channel?.send) await startLiveTracker(channel, fixtureId, ownerId);
+          return;
+        }
+
+        if (id.startsWith('cp:live:track:')) {
+          const fixtureId = id.split(':').slice(3).join(':');
+          await interaction.deferReply();
+          const found = await analysisFor(fixtureId);
+          if (!found) {
+            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
+            return;
+          }
+          const subscribed = CP.subscribeLive(interaction.user.id, interaction.channelId, fixtureId);
+          await interaction.followUp({
+            content: subscribed
+              ? `⚡ You are now tracking **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**! You will receive direct alerts for Goals, Own Goals, Red Cards, and Halftime Reports.`
+              : 'You are already tracking this match.',
+            ephemeral: true,
+          });
           return;
         }
 
@@ -917,6 +901,103 @@ export class DiscordBotService {
 
     // Never keep the process alive just for the refresh loop.
     (this.liveRefreshTimer as any)?.unref?.();
+
+    /* ================================================================ *
+     * Live-event alert worker (every 60s)
+     *
+     * Polls all live fixtures via ESPN, detects newly-published goals,
+     * own goals, red cards and halftime whistles, and broadcasts targeted
+     * alert embeds to every subscribed user/channel.
+     * ================================================================ */
+    this.liveEventTimer = setInterval(async () => {
+      if (!this.client?.isReady()) return;
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+        const liveFixtures = fixtures.filter((f: any) => f.status === 'LIVE');
+
+        for (const fx of liveFixtures) {
+          const eventId = fx.id.replace(/^espn-/, '');
+          const stats = await this.factory.getEspnMatchStats(eventId);
+          if (!stats) continue;
+
+          const prevStats = this.liveEventPrevStats.get(fx.id);
+          this.liveEventPrevStats.set(fx.id, stats);
+
+          const newEvents = CP.detectNewEvents(prevStats ?? null, stats);
+          const firstPoll = !this.liveEventFirstPolled.has(fx.id);
+          this.liveEventFirstPolled.add(fx.id);
+
+          // Halftime transition detection (status-based, for non-ESPN providers).
+          const prevStatus = this.liveEventLastStatus.get(fx.id);
+          this.liveEventLastStatus.set(fx.id, fx.status);
+
+          const subs = CP.getSubscriptionsForFixture(fx.id);
+          if (!subs.length && !newEvents.some((ev) => ev.type === 'halftime')) continue;
+
+          const mentions = subs.map((s) => `<@${s.userId}>`).join(' ');
+
+          for (const ev of newEvents) {
+            // On the very first poll for a fixture, seed seen events without
+            // alerting, so historical events don't trigger alert storms.
+            if (firstPoll) {
+              CP.markEventSeen(ev.id);
+              continue;
+            }
+            if (CP.isSeenEvent(ev.id)) continue;
+            CP.markEventSeen(ev.id);
+
+            let embed: any = null;
+            if (ev.type === 'goal' || ev.type === 'own-goal') {
+              embed = CP.buildGoalAlert(ev, fx);
+            } else if (ev.type === 'red-card') {
+              embed = CP.buildRedCardAlert(ev, fx);
+            } else if (ev.type === 'halftime') {
+              // Build a full halftime analysis report via getMatchDetails.
+              try {
+                const analysis = await this.factory.getMatchDetails(fx.id);
+                if (analysis) embed = CP.buildHalftimeReport(analysis);
+              } catch { /* analysis unavailable - skip halftime report */ }
+            }
+            if (!embed) continue;
+
+            for (const sub of subs) {
+              try {
+                const ch = await this.client.channels.fetch(sub.channelId);
+                if (ch?.isTextBased()) {
+                  await (ch as any).send({ content: mentions, embeds: [embed] });
+                }
+              } catch (e: any) {
+                console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e.message}`);
+              }
+            }
+          }
+
+          // Status-based halftime fallback (non-ESPN providers reporting HT).
+          if (prevStatus === 'LIVE' && fx.status !== 'LIVE' && fx.status !== 'FINISHED' && subs.length) {
+            try {
+              const analysis = await this.factory.getMatchDetails(fx.id);
+              if (analysis) {
+                const embed = CP.buildHalftimeReport(analysis);
+                for (const sub of subs) {
+                  try {
+                    const ch = await this.client.channels.fetch(sub.channelId);
+                    if (ch?.isTextBased()) {
+                      await (ch as any).send({ content: mentions, embeds: [embed] });
+                    }
+                  } catch { /* send failed */ }
+                }
+              }
+            } catch { /* analysis unavailable */ }
+          }
+        }
+      } catch (e: any) {
+        console.warn('[LiveEvents] alert worker tick failed:', e.message);
+      }
+    }, 60_000);
+
+    // Never keep the process alive just for the alert loop.
+    (this.liveEventTimer as any)?.unref?.();
 
     // Handle Standard Chat Message Commands (e.g. /info or !info or !parlay)
     this.client.on('messageCreate', async message => {

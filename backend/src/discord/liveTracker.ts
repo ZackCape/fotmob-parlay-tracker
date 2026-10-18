@@ -130,6 +130,57 @@ export function buildLivePickerEmbed(fixtureCount: number): EmbedBuilder {
     .setTimestamp(new Date());
 }
 
+/** Embed listing all matches currently being played in real time. */
+export function buildLiveMatchesEmbed(fixtures: any[]): EmbedBuilder {
+  const e = new EmbedBuilder()
+    .setColor(BRAND.accent)
+    .setAuthor({ name: BRAND.author })
+    .setTitle('🔴 Cape Predictor — Live Matches')
+    .setFooter({ text: BRAND.footer })
+    .setTimestamp(new Date());
+
+  if (!fixtures.length) {
+    e.setDescription(
+      `*${BRAND.tagline}*\n` +
+      'No matches are currently in progress. Use `/fixtures` to view upcoming scheduled matches.',
+    );
+    return e;
+  }
+
+  const lines = fixtures.map((f) => {
+    const score = `${f.homeScore ?? '-'} - ${f.awayScore ?? '-'}`;
+    return `**${f.homeTeam.name}** ${score} **${f.awayTeam.name}**\n     ${f.league} • Live`;
+  });
+
+  e.setDescription(
+    `*${BRAND.tagline}*\n` +
+    `All matches currently in progress. Press **[ ⚡ Track Match ]** next to any fixture to receive direct live alerts.\n\n` +
+    lines.join('\n'),
+  );
+  return e;
+}
+
+/** Track-button rows: one `[ ⚡ Track Match ]` button per live match (max 5 per row). */
+export function buildLiveTrackRows(fixtures: any[]): ActionRowBuilder<ButtonBuilder>[] {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  const chunk = 5;
+  for (let i = 0; i < fixtures.length; i += chunk) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    for (const f of fixtures.slice(i, i + chunk)) {
+      const label = `${f.homeTeam.name.slice(0, 10)} v ${f.awayTeam.name.slice(0, 10)}`.slice(0, 80);
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cp:live:track:${f.id}`)
+          .setLabel(label)
+          .setEmoji('⚡')
+          .setStyle(ButtonStyle.Secondary),
+      );
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
 /** The auto-refreshing live match embed. */
 export function buildLiveMatchEmbed(analysis: MatchAnalysis, alertsEnabled: boolean): EmbedBuilder {
   const f = analysis.fixture;
