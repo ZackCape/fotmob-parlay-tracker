@@ -6,6 +6,11 @@ import { buildStatisticalParlay } from '../parlays/parlay-builder.js';
 import { MarketPrediction, ParlayLegCount, ParlayMode } from '../types/football.js';
 import { LiveParlayTrackerService } from '../parlays/live-tracker.js';
 import { isVerifiedFixture } from '../utils/fixtureValidation.js';
+import {
+  orderFixturesByPriority,
+  orderByCompetitionPriorityThenScore,
+  PRIORITY_LEAGUE_LABEL,
+} from '../utils/competitionPriority.js';
 import * as CP from './interactions.js';
 import { BRAND } from './brand.js';
 
@@ -51,6 +56,12 @@ export class DiscordBotService {
   private briefingTimer?: NodeJS.Timeout;
   /** ISO date of the last morning briefing sent, to avoid duplicates. */
   private lastBriefingDate: string | null = null;
+  /**
+   * Fixtures restored from disk at boot that the 60s live worker must keep
+   * polling even when a fixture sweep does not list them (a match that kicked
+   * off before UTC midnight, or a sweep that came back short).
+   */
+  private liveEventPinnedFixtureIds: Set<string> = new Set();
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
     this.config = config;
@@ -104,6 +115,24 @@ export class DiscordBotService {
   }
 
   public async start(): Promise<void> {
+    // 0. Restore persisted state before anything can act on it.
+    //
+    // A Render redeploy, a crash restart or a free-tier scale-to-zero wake all
+    // start a brand-new process. Without this the in-memory stores would come up
+    // empty and every saved slip and tracked match would silently stop receiving
+    // live updates until the user saved/tracked it again.
+    try {
+      const slips = CP.initSavedParlays();
+      const subs = CP.initLiveSubscriptions();
+      for (const fixtureId of subs.fixtureIds) this.liveEventPinnedFixtureIds.add(fixtureId);
+      console.log(
+        `[DiscordBot] State restored — ${slips.total} saved slip(s) (${slips.active} tracking), ` +
+        `${subs.total} live subscription(s) across ${subs.fixtureIds.length} fixture(s).`,
+      );
+    } catch (e: any) {
+      console.warn(`[DiscordBot] State restore failed: ${e.message}`);
+    }
+
     // 1. Initialize Discord Bot Client if bot token provided
     if (this.config.botToken) {
       try {
@@ -126,6 +155,13 @@ export class DiscordBotService {
     // 2. Schedule recurring updates (5m, 15m, 30m, 45m, or 1h)
     if (this.config.enableHourlyUpdates !== false) {
       this.setBroadcastConfig(this.config.channelId, this.currentInterval);
+    }
+
+    // 3. Re-arm the live worker for anything restored from disk instead of
+    //    waiting up to a minute for the next tick.
+    if (this.liveEventPinnedFixtureIds.size > 0) {
+      console.log(`[DiscordBot] Re-arming live tracking for ${this.liveEventPinnedFixtureIds.size} restored fixture(s).`);
+      void this.runLiveEventTick();
     }
   }
 
@@ -538,14 +574,18 @@ export class DiscordBotService {
       });
     };
 
-    /** Rebuild the ephemeral parlay message in place (keeps one scrolling panel). */
+    /**
+     * Rebuild the ephemeral parlay message in place (keeps one scrolling panel).
+     *
+     * Acknowledges the click before building the view: the rebuild fetches the
+     * fixture slate for the selected league, which can exceed Discord's
+     * 3-second interaction window on a cold cache.
+     */
     const rerenderParlayMessage = async (interaction: any, notice?: string) => {
       const ownerId = interaction.user.id;
+      await CP.ackInteraction(interaction);
       const payload = await buildParlayView(ownerId, notice);
-      await interaction.update({ ...payload }).catch(async (e: any) => {
-        // Fall back to a fresh ephemeral message if the original expired.
-        await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
-      });
+      await CP.editOrFollowUp(interaction, { ...payload });
     };
 
     /* ================================================================ *
@@ -739,10 +779,13 @@ export class DiscordBotService {
           }
           const enabled = !this.dmAlerts.has(userId);
           if (enabled) this.dmAlerts.add(userId); else this.dmAlerts.delete(userId);
+          // Acknowledge first, like every other button in this file, so the row
+          // swap is applied to an already-open interaction.
+          await CP.ackInteraction(interaction);
           try {
-            await interaction.update({ components: [CP.buildDmAlertsRow(userId, enabled)] });
+            await interaction.editReply({ components: [CP.buildDmAlertsRow(userId, enabled)] });
           } catch {
-            await interaction.reply({
+            await interaction.followUp({
               content: `DM alerts ${enabled ? 'enabled' : 'disabled'}. You will ${enabled ? '' : 'no longer '}receive direct messages for your tracked matches.`,
               ephemeral: true,
             }).catch(() => {});
@@ -836,21 +879,27 @@ export class DiscordBotService {
             return;
           }
 
+          // Acknowledge the click before any provider work. `analysisFor` does a
+          // fixture sweep plus a match-details lookup, either of which can outlive
+          // Discord's 3-second interaction window; deferring first keeps the
+          // button instant and lets the tracker message be edited in place.
+          await CP.ackInteraction(interaction);
+
           const found = await analysisFor(tracker.fixtureId);
 
           if (action === 'alerts') {
             tracker.alertsEnabled = !tracker.alertsEnabled;
             if (!found) {
-              await interaction.reply({ content: 'Match data is currently unavailable.', ephemeral: true });
+              await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true }).catch(() => {});
               return;
             }
             tracker.fingerprint = CP.liveFingerprint(found.details);
-            await interaction.update({ components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any] });
+            await CP.editOrFollowUp(interaction, { components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any] });
             return;
           }
 
           if (!found) {
-            await interaction.reply({ content: 'Match data is currently unavailable for that fixture.', ephemeral: true });
+            await interaction.followUp({ content: 'Match data is currently unavailable for that fixture.', ephemeral: true }).catch(() => {});
             return;
           }
 
@@ -859,7 +908,7 @@ export class DiscordBotService {
           tracker.updatedAt = Date.now();
 
           if (action === 'refresh') {
-            await interaction.update({
+            await CP.editOrFollowUp(interaction, {
               embeds: [CP.buildLiveMatchEmbed(found.details, tracker.alertsEnabled)],
               components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any],
             });
@@ -867,7 +916,7 @@ export class DiscordBotService {
           }
 
           if (action === 'stats') {
-            await interaction.update({
+            await CP.editOrFollowUp(interaction, {
               embeds: [CP.buildStatsTab(found.details)],
               components: [CP.buildLiveActionRow(tracker.messageId, tracker.alertsEnabled) as any],
             });
@@ -913,7 +962,9 @@ export class DiscordBotService {
           CP.setParlayLeague(ownerId, league);
           // Changing league changes the fixture slate, so the staged match/market reset.
           CP.clearParlayPending(ownerId);
-          await interaction.update(await buildParlayView(
+          // Acknowledge before the slate fetch so the panel never times out.
+          await CP.ackInteraction(interaction);
+          await CP.editOrFollowUp(interaction, await buildParlayView(
             ownerId,
             `Filtering by **${CP.leagueLabel(league)}**. Slip retained — ${CP.getParlay(ownerId).legs.length} leg(s).`,
           ));
@@ -927,11 +978,13 @@ export class DiscordBotService {
             await interaction.reply({ content: 'No upcoming matches available — every fixture today has already kicked off.', ephemeral: true });
             return;
           }
+          // Acknowledge before the slate fetch so the panel never times out.
+          await CP.ackInteraction(interaction);
           const fixtures = await parlayFixtures(ownerId);
           const fx = fixtures.find((f: any) => f.id === fixtureId);
           const label = fx ? `${fx.homeTeam.name} v ${fx.awayTeam.name}` : undefined;
           CP.setParlayPendingMatch(ownerId, fixtureId, label);
-          await interaction.update(await buildParlayView(
+          await CP.editOrFollowUp(interaction, await buildParlayView(
             ownerId,
             `Match staged: **${label ?? fixtureId}**. Now pick a **market**, then press **➕ Add Leg**.`,
           ));
@@ -943,7 +996,9 @@ export class DiscordBotService {
           const market = interaction.values?.[0] as any;
           CP.setParlayPendingMarket(ownerId, market);
           const staged = CP.getParlayPendingMatch(ownerId);
-          await interaction.update(await buildParlayView(
+          // Acknowledge before the slate fetch so the panel never times out.
+          await CP.ackInteraction(interaction);
+          await CP.editOrFollowUp(interaction, await buildParlayView(
             ownerId,
             staged
               ? `Market staged: **${CP.marketLabel(market)}**. Press **➕ Add Leg** to add it to your slip.`
@@ -960,6 +1015,10 @@ export class DiscordBotService {
 
           if (!fixtureId) { await rerenderParlayMessage(interaction, 'Choose a **match** first.'); return; }
           if (!market) { await rerenderParlayMessage(interaction, 'Choose a **market** first.'); return; }
+
+          // Acknowledge before the match analysis and odds lookups: both are
+          // network calls and can outlive Discord's 3-second window.
+          await CP.ackInteraction(interaction);
 
           const found = await analysisFor(fixtureId);
           if (!found) { await rerenderParlayMessage(interaction, 'That match is no longer available.'); return; }
@@ -1133,117 +1192,11 @@ export class DiscordBotService {
      *
      * Polls all live fixtures via ESPN, detects newly-published goals,
      * own goals, red cards and halftime whistles, and broadcasts targeted
-     * alert embeds to every subscribed user/channel.
+     * alert embeds to every subscribed user/channel. The tick body lives in
+     * `runLiveEventTick()` so boot can fire it once immediately for fixtures
+     * that were restored from disk.
      * ================================================================ */
-    this.liveEventTimer = setInterval(async () => {
-      if (!this.client?.isReady()) return;
-      try {
-        const today = new Date().toISOString().slice(0, 10);
-        const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
-        const liveFixtures = fixtures.filter((f: any) => f.status === 'LIVE');
-
-        for (const fx of liveFixtures) {
-          const eventId = fx.id.replace(/^espn-/, '');
-          const stats = await this.factory.getEspnMatchStats(eventId);
-          if (!stats) continue;
-
-          const prevStats = this.liveEventPrevStats.get(fx.id);
-          this.liveEventPrevStats.set(fx.id, stats);
-
-          const newEvents = CP.detectNewEvents(prevStats ?? null, stats);
-          const firstPoll = !this.liveEventFirstPolled.has(fx.id);
-          this.liveEventFirstPolled.add(fx.id);
-
-          // Halftime transition detection (status-based, for non-ESPN providers).
-          const prevStatus = this.liveEventLastStatus.get(fx.id);
-          this.liveEventLastStatus.set(fx.id, fx.status);
-
-          // Live parlay leg tracking: settle any saved slip legs on this match
-          // and broadcast a PARLAY UPDATE to the channel that saved the slip.
-          await this.processSavedParlayLegs(fx, stats);
-
-          const subs = CP.getSubscriptionsForFixture(fx.id);
-          if (!subs.length && !newEvents.some((ev) => ev.type === 'halftime')) continue;
-
-          const mentions = subs.map((s) => `<@${s.userId}>`).join(' ');
-
-          for (const ev of newEvents) {
-            // On the very first poll for a fixture, seed seen events without
-            // alerting, so historical events don't trigger alert storms.
-            if (firstPoll) {
-              CP.markEventSeen(ev.id);
-              continue;
-            }
-            if (CP.isSeenEvent(ev.id)) continue;
-            CP.markEventSeen(ev.id);
-
-            let embed: any = null;
-            if (ev.type === 'goal' || ev.type === 'own-goal') {
-              embed = CP.buildGoalAlert(ev, fx);
-            } else if (ev.type === 'red-card') {
-              embed = CP.buildRedCardAlert(ev, fx);
-            } else if (ev.type === 'halftime') {
-              // Build a full halftime analysis report via getMatchDetails.
-              try {
-                const analysis = await this.factory.getMatchDetails(fx.id);
-                if (analysis) embed = CP.buildHalftimeReport(analysis);
-              } catch { /* analysis unavailable - skip halftime report */ }
-            }
-            if (!embed) continue;
-
-            for (const sub of subs) {
-              try {
-                const ch = await this.client.channels.fetch(sub.channelId);
-                if (ch?.isTextBased()) {
-                  await (ch as any).send({ content: mentions, embeds: [embed] });
-                }
-              } catch (e: any) {
-                console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e.message}`);
-              }
-              // Honoured DM alerts: users who opted in receive the alert privately.
-              if (this.dmAlerts.has(sub.userId)) {
-                try {
-                  const user = await this.client.users.fetch(sub.userId);
-                  await user.send({ embeds: [embed] });
-                } catch { /* DMs closed or user unavailable */ }
-              }
-            }
-          }
-
-          // Status-based halftime fallback (non-ESPN providers reporting HT).
-          if (prevStatus === 'LIVE' && fx.status !== 'LIVE' && fx.status !== 'FINISHED' && subs.length) {
-            try {
-              const analysis = await this.factory.getMatchDetails(fx.id);
-              if (analysis) {
-                const embed = CP.buildHalftimeReport(analysis);
-                for (const sub of subs) {
-                  try {
-                    const ch = await this.client.channels.fetch(sub.channelId);
-                    if (ch?.isTextBased()) {
-                      await (ch as any).send({ content: mentions, embeds: [embed] });
-                    }
-                  } catch { /* send failed */ }
-                }
-              }
-            } catch { /* analysis unavailable */ }
-          }
-        }
-
-        // Settle saved-parlay legs on matches that have now finished.
-        for (const fx of fixtures) {
-          if (fx.status !== 'FINISHED') continue;
-          if (!CP.getSavedParlaysForFixture(fx.id).length) continue;
-          let stats: any = null;
-          try { stats = await this.factory.getEspnMatchStats(fx.id.replace(/^espn-/, '')); } catch { /* stats optional */ }
-          await this.processSavedParlayLegs(fx, stats);
-        }
-
-        // Keep subscribed channels' topics in sync during match windows.
-        await this.syncLiveChannelTopics(liveFixtures);
-      } catch (e: any) {
-        console.warn('[LiveEvents] alert worker tick failed:', e.message);
-      }
-    }, 60_000);
+    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 60_000);
 
     // Never keep the process alive just for the alert loop.
     (this.liveEventTimer as any)?.unref?.();
@@ -1316,6 +1269,167 @@ export class DiscordBotService {
     });
 
     await this.client.login(this.config.botToken);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Live-event worker
+   * ------------------------------------------------------------------ */
+
+  /**
+   * One pass of the 60-second live-event worker.
+   *
+   * Also fired once from `start()` when subscriptions were restored from disk,
+   * so a restarted process resumes goal/card/halftime alerting and saved-slip
+   * leg settlement immediately instead of waiting up to a minute.
+   */
+  private async runLiveEventTick(): Promise<void> {
+    if (!this.client?.isReady()) return;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+      const sweptLive = fixtures.filter((f: any) => f.status === 'LIVE');
+      // Restored subscriptions can point at a match the sweep does not list
+      // (kick-off before UTC midnight, or a short sweep). Those are resolved
+      // directly so tracking never goes quiet after a restart.
+      const liveFixtures = [...sweptLive, ...(await this.pinnedLiveFixtures(sweptLive))];
+
+      for (const fx of liveFixtures) {
+        const eventId = fx.id.replace(/^espn-/, '');
+        const stats = await this.factory.getEspnMatchStats(eventId);
+        if (!stats) continue;
+
+        const prevStats = this.liveEventPrevStats.get(fx.id);
+        this.liveEventPrevStats.set(fx.id, stats);
+
+        const newEvents = CP.detectNewEvents(prevStats ?? null, stats);
+        const firstPoll = !this.liveEventFirstPolled.has(fx.id);
+        this.liveEventFirstPolled.add(fx.id);
+
+        // Halftime transition detection (status-based, for non-ESPN providers).
+        const prevStatus = this.liveEventLastStatus.get(fx.id);
+        this.liveEventLastStatus.set(fx.id, fx.status);
+
+        // Live parlay leg tracking: settle any saved slip legs on this match
+        // and broadcast a PARLAY UPDATE to the channel that saved the slip.
+        await this.processSavedParlayLegs(fx, stats);
+
+        const subs = CP.getSubscriptionsForFixture(fx.id);
+        if (!subs.length && !newEvents.some((ev) => ev.type === 'halftime')) continue;
+
+        const mentions = subs.map((s) => `<@${s.userId}>`).join(' ');
+
+        for (const ev of newEvents) {
+          // On the very first poll for a fixture, seed seen events without
+          // alerting, so historical events don't trigger alert storms.
+          if (firstPoll) {
+            CP.markEventSeen(ev.id);
+            continue;
+          }
+          if (CP.isSeenEvent(ev.id)) continue;
+          CP.markEventSeen(ev.id);
+
+          let embed: any = null;
+          if (ev.type === 'goal' || ev.type === 'own-goal') {
+            embed = CP.buildGoalAlert(ev, fx);
+          } else if (ev.type === 'red-card') {
+            embed = CP.buildRedCardAlert(ev, fx);
+          } else if (ev.type === 'halftime') {
+            // Build a full halftime analysis report via getMatchDetails.
+            try {
+              const analysis = await this.factory.getMatchDetails(fx.id);
+              if (analysis) embed = CP.buildHalftimeReport(analysis);
+            } catch { /* analysis unavailable - skip halftime report */ }
+          }
+          if (!embed) continue;
+
+          for (const sub of subs) {
+            try {
+              const ch = await this.client.channels.fetch(sub.channelId);
+              if (ch?.isTextBased()) {
+                await (ch as any).send({ content: mentions, embeds: [embed] });
+              }
+            } catch (e: any) {
+              console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e.message}`);
+            }
+            // Honoured DM alerts: users who opted in receive the alert privately.
+            if (this.dmAlerts.has(sub.userId)) {
+              try {
+                const user = await this.client.users.fetch(sub.userId);
+                await user.send({ embeds: [embed] });
+              } catch { /* DMs closed or user unavailable */ }
+            }
+          }
+        }
+
+        // Status-based halftime fallback (non-ESPN providers reporting HT).
+        if (prevStatus === 'LIVE' && fx.status !== 'LIVE' && fx.status !== 'FINISHED' && subs.length) {
+          try {
+            const analysis = await this.factory.getMatchDetails(fx.id);
+            if (analysis) {
+              const embed = CP.buildHalftimeReport(analysis);
+              for (const sub of subs) {
+                try {
+                  const ch = await this.client.channels.fetch(sub.channelId);
+                  if (ch?.isTextBased()) {
+                    await (ch as any).send({ content: mentions, embeds: [embed] });
+                  }
+                } catch { /* send failed */ }
+              }
+            }
+          } catch { /* analysis unavailable */ }
+        }
+      }
+
+      // Settle saved-parlay legs on matches that have now finished.
+      for (const fx of fixtures) {
+        if (fx.status !== 'FINISHED') continue;
+        if (!CP.getSavedParlaysForFixture(fx.id).length) continue;
+        let stats: any = null;
+        try { stats = await this.factory.getEspnMatchStats(fx.id.replace(/^espn-/, '')); } catch { /* stats optional */ }
+        await this.processSavedParlayLegs(fx, stats);
+      }
+
+      // Keep subscribed channels' topics in sync during match windows.
+      await this.syncLiveChannelTopics(liveFixtures);
+    } catch (e: any) {
+      console.warn('[LiveEvents] alert worker tick failed:', e.message);
+    }
+  }
+
+  /**
+   * Resolve fixtures restored from disk that the day's sweep did not return.
+   *
+   * Each pinned id is looked up once per tick. A finished match gets its saved
+   * parlay legs settled and is then unpinned, so the set stays bounded by the
+   * number of matches users are actually tracking — it never grows forever.
+   */
+  private async pinnedLiveFixtures(existing: any[]): Promise<any[]> {
+    if (!this.liveEventPinnedFixtureIds.size) return [];
+    const seen = new Set(existing.map((f) => f.id));
+    const extra: any[] = [];
+
+    for (const fixtureId of [...this.liveEventPinnedFixtureIds]) {
+      if (seen.has(fixtureId)) continue;
+      try {
+        const details: any = await this.factory.getMatchDetails(fixtureId);
+        const fixture = details?.fixture;
+        if (!fixture) continue; // provider has nothing yet — keep it pinned
+
+        if (fixture.status === 'FINISHED' || fixture.status === 'POSTPONED') {
+          if (fixture.status === 'FINISHED' && CP.getSavedParlaysForFixture(fixtureId).length) {
+            let stats: any = null;
+            try { stats = await this.factory.getEspnMatchStats(String(fixtureId).replace(/^espn-/, '')); } catch { /* stats optional */ }
+            await this.processSavedParlayLegs(fixture, stats);
+          }
+          this.liveEventPinnedFixtureIds.delete(fixtureId);
+          continue;
+        }
+
+        if (CP.isActiveLiveFixture(fixture)) extra.push(fixture);
+      } catch { /* provider unavailable — try again next tick */ }
+    }
+
+    return extra;
   }
 
   /* ---------------- QoL command helpers ---------------- */
@@ -1417,7 +1531,7 @@ export class DiscordBotService {
       .setTimestamp(new Date());
     const today = new Date().toISOString().slice(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(isVerifiedFixture);
+    const fixtures = orderFixturesByPriority(allFixtures.filter(isVerifiedFixture));
     const ranked: Array<{ fx: any; model: number; label: string }> = [];
     for (const fx of fixtures) {
       try {
@@ -1433,8 +1547,12 @@ export class DiscordBotService {
         ranked.push({ fx, model: max, label });
       } catch { /* skip fixture */ }
     }
-    ranked.sort((a, b) => b.model - a.model);
-    const top = ranked.slice(0, 6);
+    // Competition priority first (EPL • UCL), then the strongest model price.
+    const top = orderByCompetitionPriorityThenScore(
+      ranked,
+      (r) => r.fx.league,
+      (r) => r.model,
+    ).slice(0, 6);
     if (!top.length) {
       e.setDescription('No value picks found today. Model predictions unavailable.');
       return e;
@@ -1506,13 +1624,17 @@ export class DiscordBotService {
   /**
    * Builds the daily morning briefing embed (8:00 default) for broadcast/DM.
    *
-   * Layout — no prose padding:
-   *   1. Top Calibrated Value Picks (3–5 upcoming selections, one per fixture)
-   *   2. Featured 5-Leg High-Probability Parlay (probability, odds, $10 return)
-   *   3. Team News & Key Absences (provider-reported injuries/suspensions)
+   * Layout — no prose padding, no repeated fixtures:
+   *   1. Top Value Picks (EPL & Champions League Priority) — 3–5 upcoming
+   *      selections, one per fixture
+   *   2. Featured 5-Leg High-Probability Slip — built from a different set of
+   *      fixtures than section 1
+   *   3. Team News & Key Absences — provider-reported injuries/suspensions
    *
    * Only fixtures that have not kicked off are considered, so the briefing can
-   * never advertise a match that is already live or finished.
+   * never advertise a match that is already live or finished. The slate is
+   * ranked Premier League and UEFA Champions League first, so the priority
+   * fixtures lead both the value picks and the featured parlay.
    */
   public async buildMorningBriefing(): Promise<EmbedBuilder> {
     const today = new Date().toISOString().slice(0, 10);
@@ -1520,15 +1642,21 @@ export class DiscordBotService {
     let upcoming: any[] = [];
     try {
       const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-      upcoming = CP.filterUpcomingFixtures((allFixtures ?? []).filter(isVerifiedFixture));
+      // EPL/UCL first: the top of this list feeds both the prediction sweep
+      // (the first 8 fixtures) and the featured parlay's candidate pool.
+      upcoming = orderFixturesByPriority(
+        CP.filterUpcomingFixtures((allFixtures ?? []).filter(isVerifiedFixture)),
+      );
     } catch {
       upcoming = [];
     }
 
     // Gather model predictions and provider-reported team news for the slate.
+    // A wider slice than the 5 shown in section 1, so the featured slip still has
+    // a full pool to draw from once the picked matches are set aside.
     const candidatePredictions: MarketPrediction[] = [];
     const injuryBulletins: string[] = [];
-    for (const fx of upcoming.slice(0, 8)) {
+    for (const fx of upcoming.slice(0, 14)) {
       try {
         const details = await this.factory.getMatchDetails(fx.id);
         if (!details) continue;
@@ -1549,9 +1677,13 @@ export class DiscordBotService {
       const current = bestByFixture.get(p.fixtureId);
       if (!current || p.estimatedProbability > current.estimatedProbability) bestByFixture.set(p.fixtureId, p);
     }
-    const valuePicks = [...bestByFixture.values()]
-      .sort((a, b) => b.estimatedProbability - a.estimatedProbability)
-      .slice(0, 5);
+    // Competition priority first (EPL • UCL), then the best calibrated price
+    // inside each tier.
+    const valuePicks = orderByCompetitionPriorityThenScore(
+      [...bestByFixture.values()],
+      (p) => p.league,
+      (p) => p.estimatedProbability,
+    ).slice(0, 5);
 
     const oddsConfigured = this.factory.isOddsConfigured();
     const fixturesById = new Map<string, any>(upcoming.map((fx) => [fx.id, fx]));
@@ -1572,8 +1704,17 @@ export class DiscordBotService {
       pickLines.push(`**${i + 1}. ${p.fixtureDescription}** [${p.league}]\n> \`${p.selection}\` • Calibrated \`${(p.estimatedProbability * 100).toFixed(1)}%\` • ${extra}`);
     }
 
-    // ---- Section 2: Featured 5-Leg High-Probability Parlay ----
-    const parlay5 = buildStatisticalParlay(candidatePredictions, { targetLegsCount: 5, minProbability: 0.60 });
+    // ---- Section 2: Featured 5-Leg High-Probability Slip ----
+    //
+    // Deliberately built from a DIFFERENT set of fixtures than section 1: the
+    // picked matches are set aside so the slip is a second, independent angle on
+    // the same slate rather than the same five games re-listed. If setting them
+    // aside leaves too few matches (a very small slate), the full pool is used
+    // so the briefing still carries a slip.
+    const pickedFixtureIds = new Set(valuePicks.map((p) => p.fixtureId));
+    const slipCandidates = candidatePredictions.filter((p) => !pickedFixtureIds.has(p.fixtureId));
+    const slipPool = slipCandidates.length >= 5 ? slipCandidates : candidatePredictions;
+    const parlay5 = buildStatisticalParlay(slipPool, { targetLegsCount: 5, minProbability: 0.60 });
     const legLines = parlay5.legs
       .map((l, i) => `**Leg ${i + 1}**: ${l.fixtureDescription} ➔ \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`)
       .join('\n');
@@ -1589,12 +1730,12 @@ export class DiscordBotService {
       .setTitle(`🏆 Cape Predictor Briefing • ${today}`)
       .addFields(
         {
-          name: '📊 Top Calibrated Value Picks',
+          name: '📊 Top Value Picks (EPL & Champions League Priority)',
           value: pickLines.join('\n\n') || 'No qualifying upcoming fixtures on today\'s slate.',
           inline: false,
         },
         {
-          name: '⚡ Featured 5-Leg High-Probability Parlay',
+          name: '⚡ Featured 5-Leg High-Probability Slip',
           value: parlayBody,
           inline: false,
         },
@@ -1605,7 +1746,7 @@ export class DiscordBotService {
           inline: false,
         },
       )
-      .setFooter({ text: `${BRAND.footer} • Upcoming fixtures only • Model estimates, not guarantees` })
+      .setFooter({ text: `${BRAND.footer} • ${PRIORITY_LEAGUE_LABEL} • Upcoming fixtures only` })
       .setTimestamp(new Date());
 
     return e;
@@ -1756,7 +1897,9 @@ export class DiscordBotService {
   public async buildBroadcastPayload() {
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
+    // EPL/UCL first: the priority fixtures lead the analysis sweep and therefore
+    // lead the candidate pool for the featured parlay and the value picks.
+    const fixtures = orderFixturesByPriority(allFixtures.filter(fx => isVerifiedFixture(fx)));
 
     // Collect predictions and injury bulletins
     const candidatePredictions: MarketPrediction[] = [];
@@ -1782,9 +1925,11 @@ export class DiscordBotService {
       minProbability: 0.60,
     });
 
-    const topPicks = candidatePredictions
-      .sort((a, b) => b.estimatedProbability - a.estimatedProbability)
-      .slice(0, 5);
+    const topPicks = orderByCompetitionPriorityThenScore(
+      candidatePredictions,
+      (p) => p.league,
+      (p) => p.estimatedProbability,
+    ).slice(0, 5);
 
     // Fetch verified real news
     let topNews: string[] = [];
@@ -2075,8 +2220,12 @@ export class DiscordBotService {
 
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    // Never build a leg on a match that has already kicked off or finished.
-    const fixtures = CP.filterPreKickoffFixtures(allFixtures.filter(fx => isVerifiedFixture(fx)));
+    // Never build a leg on a match that has already kicked off or finished, and
+    // rank the Premier League and Champions League fixtures at the top of the
+    // pool so the priority competitions lead the slip.
+    const fixtures = orderFixturesByPriority(
+      CP.filterPreKickoffFixtures(allFixtures.filter(fx => isVerifiedFixture(fx))),
+    );
     const preds: MarketPrediction[] = [];
 
     for (const fx of fixtures) {
@@ -2093,6 +2242,7 @@ export class DiscordBotService {
       minProbability,
       leagueFilter,
       mode,
+      prioritizePriorityLeagues: true,
     });
     if (this.trackerService) {
       await this.trackerService.trackParlay(parlay);
@@ -2117,10 +2267,16 @@ export class DiscordBotService {
       ? `🔥 **Same-Game Parlay (SGP) — Single Match Stacking**\n🏟️ Match: **${parlay.legs[0]?.fixtureDescription || 'Featured Fixture'}**\n\n`
       : `⚡ **${parlay.actualLegsCount}-Leg ${modeLabel}** — ${leagueFilter === 'ALL' ? 'all leagues' : leagueFilter}, min leg probability ${(minProbability * 100).toFixed(0)}%:\n\n`;
 
+    // Priority only bites when the pool is drawn from every league.
+    const priorityLine = !isSgp && leagueFilter === 'ALL'
+      ? `• **Priority**: \`${PRIORITY_LEAGUE_LABEL}\` — ranked ahead of the secondary leagues\n`
+      : '';
+
     return (
       `${header}${legsList}${insufficient}\n\n` +
       `• **Combined Probability**: \`${(parlay.combinedProbability * 100).toFixed(2)}%\`\n` +
       `• **Fair Compound Odds**: \`${parlay.compoundOddsDecimal}x\`\n` +
+      priorityLine +
       `• **Conditions**: \`legs=${target}\` • \`min=${(minProbability * 100).toFixed(0)}%\` • \`league=${leagueFilter}\` • \`mode=${mode}\`\n\n` +
       `*Type \`/track\` to follow live match motion, or build your own slip with \`/customparlay\`!*`
     );

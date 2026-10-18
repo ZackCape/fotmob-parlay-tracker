@@ -44,6 +44,55 @@ export function baseEmbed(title: string, description?: string): EmbedBuilder {
 }
 
 /* ------------------------------------------------------------------ *
+ * Interaction acknowledgement
+ *
+ * Discord gives a component interaction three seconds to acknowledge before it
+ * renders "This interaction failed" to the user. Every button and select handler
+ * in the bot does at least one provider call (a fixture sweep, a match analysis,
+ * an odds lookup) before it can produce a payload, and any of those can take
+ * longer than three seconds on a cold cache. Acknowledging first and editing
+ * afterwards makes the click instant regardless of provider latency.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Acknowledge a button/select interaction immediately, before any provider work.
+ *
+ * `ephemeral` selects the acknowledgement that matches what the handler will
+ * send:
+ *   - `false` (default) — `deferUpdate()`, then edit the component's own message
+ *     with `editReply()`. For panels, tabs and in-place menus.
+ *   - `true` — `deferReply({ ephemeral: true })`, then answer with
+ *     `editReply(...)`. For handlers that post a private reply.
+ *
+ * Already-acknowledged interactions return untouched: a second acknowledgement
+ * is rejected by Discord and would replace the real error with a silent failure.
+ */
+export async function ackInteraction(interaction: any, options: { ephemeral?: boolean } = {}): Promise<void> {
+  if (!interaction || interaction.deferred || interaction.replied) return;
+  try {
+    if (options.ephemeral) {
+      await interaction.deferReply({ ephemeral: true });
+    } else {
+      await interaction.deferUpdate();
+    }
+  } catch { /* already acknowledged, or the token expired before we got here */ }
+}
+
+/**
+ * Send the payload for an acknowledged interaction by editing the message it
+ * points at, falling back to an ephemeral follow-up when that message can no
+ * longer be edited (deleted, or the interaction token has moved on).
+ */
+export async function editOrFollowUp(interaction: any, payload: any): Promise<void> {
+  if (!interaction) return;
+  try {
+    await interaction.editReply(payload);
+  } catch {
+    await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * /fixtures : full schedule with multi-market GUI, league selection
  * and per-match live tracking
  *

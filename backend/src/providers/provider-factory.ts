@@ -29,6 +29,47 @@ interface CacheEntry<T> {
 }
 
 /**
+ * Short cache window for fixtures that are still moving.
+ *
+ * A fixture list for today carries live scores, live clocks and kick-off times
+ * that can change minute by minute, and the Discord buttons re-request it on
+ * every click. Caching it for the full analysis TTL (15 minutes by default)
+ * would both serve stale scores and re-hit the providers on each cold click;
+ * 30 seconds collapses a burst of clicks into a single upstream request while
+ * still refreshing fast enough for a live scorecard.
+ */
+export const ACTIVE_FIXTURE_TTL_MS = 30_000;
+
+/** How far either side of UTC midnight a date still counts as "today". */
+const ACTIVE_DATE_WINDOW_MS = 36 * 60 * 60 * 1000;
+
+/**
+ * True when a fixture date can still change — i.e. it is today (within a
+ * timezone-safe day either side) rather than a settled date in the past or a
+ * distant date in the future.
+ *
+ * `date` is a provider `YYYY-MM-DD` string; anchors at midday UTC so a
+ * timezone-shifted kick-off on the neighbouring day is still treated as active.
+ * An unparseable date is treated as active, because caching volatile data for
+ * longer than intended is the harmful failure mode.
+ */
+export function isActiveFixtureDate(date: string, now: number = Date.now()): boolean {
+  const target = Date.parse(`${date}T12:00:00Z`);
+  if (!Number.isFinite(target)) return true;
+  return Math.abs(target - now) <= ACTIVE_DATE_WINDOW_MS;
+}
+
+/** Cache TTL for a fixture date: the short window when active, else the default. */
+export function fixtureCacheTtlMs(
+  date: string,
+  defaultTtlMs: number,
+  activeTtlMs: number = ACTIVE_FIXTURE_TTL_MS,
+  now: number = Date.now(),
+): number {
+  return isActiveFixtureDate(date, now) ? activeTtlMs : defaultTtlMs;
+}
+
+/**
  * Extract h2h (moneyline) decimal prices from a The Odds API snapshot.
  * Returns nulls for any outcome the snapshot did not price.
  */
@@ -67,6 +108,8 @@ export class DataProviderFactory {
   private cache = new Map<string, CacheEntry<any>>();
   private inFlight = new Map<string, Promise<any>>();
   private defaultTtlMs: number;
+  /** Short TTL used for fixture data that is still live (see ACTIVE_FIXTURE_TTL_MS). */
+  private activeTtlMs: number = ACTIVE_FIXTURE_TTL_MS;
 
   constructor(config: AppConfig, learningEngine?: AdaptiveLearningEngine) {
     this.config = config;
@@ -271,6 +314,37 @@ export class DataProviderFactory {
     });
   }
 
+  /** Cache TTL for a fixture date: 30s while the date's fixtures can still change. */
+  private ttlForFixtureDate(date: string): number {
+    return fixtureCacheTtlMs(date, this.defaultTtlMs, this.activeTtlMs);
+  }
+
+  /**
+   * Look a fixture up in the in-memory fixture lists only (no network, no file
+   * reads). Used to decide whether a match analysis should be cached for the
+   * short active window because the match is in play.
+   */
+  private cachedFixtureById(fixtureId: string): Fixture | null {
+    for (const [key, entry] of this.cache.entries()) {
+      if (!key.startsWith('fixtures:')) continue;
+      const list = entry.data as Fixture[];
+      if (!Array.isArray(list)) continue;
+      const hit = list.find(f => f && f.id === fixtureId);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /**
+   * Cache TTL for a match analysis. A live match is re-analysed on the short
+   * active window so its scorecard, clock and statistics keep moving; anything
+   * else keeps the configured analysis TTL.
+   */
+  private matchTtlMs(fixtureId: string): number {
+    const fixture = this.cachedFixtureById(fixtureId);
+    return fixture?.status === 'LIVE' ? this.activeTtlMs : this.defaultTtlMs;
+  }
+
   private readonly FILE_CACHE = nodePath.resolve(process.cwd(), 'data', 'fixtures_cache.json');
   private readJsonCache(): { data: any; cachedAt: number } | null {
     if (process.env.NODE_ENV !== 'production') return null;
@@ -298,17 +372,26 @@ export class DataProviderFactory {
     }
 
     const promise = (async () => {
+      const ttlMs = this.ttlForFixtureDate(date);
+
       if (this.config.dataProvider === 'verified-archive') {
         const fx = await this.fallbackProvider.getFixturesByDate(date, league);
-        if (fx.length > 0) this.setCache(cacheKey, fx);
+        if (fx.length > 0) this.setCache(cacheKey, fx, ttlMs);
         return fx;
       }
       if (this.config.dataProvider === 'openfootball') {
         const fx = await this.openfootballProvider.getFixturesByDate(date, league);
-        if (fx.length > 0) this.setCache(cacheKey, fx);
+        if (fx.length > 0) this.setCache(cacheKey, fx, ttlMs);
         return fx;
       }
-      // a) File cache (30-min TTL)
+      // a) In-memory cache. Checked before the file cache so a burst of button
+      //    clicks is served from RAM and never re-reads the multi-megabyte file.
+      const cached = this.getCached<Fixture[]>(cacheKey);
+      if (cached) { console.info(`[Factory] mem cache HIT fixtures ${date} ${league}`); return cached; }
+      console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
+
+      // b) File cache (production warm start / provider outage, 30-min TTL).
+      //    Promoted into the memory cache so the following clicks are cheap.
       const fc = this.readJsonCache();
       if (fc && Array.isArray(fc.data)) {
         // Purge synthetic archive entries from cache immediately
@@ -320,25 +403,22 @@ export class DataProviderFactory {
         const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
         if (filtered.length > 0) {
           console.info(`[Factory] file cache HIT ${date} ${league}`);
+          this.setCache(cacheKey, filtered, ttlMs);
           return filtered;
         }
       }
-      // memory cache
-      const cached = this.getCached<Fixture[]>(cacheKey);
-      if (cached) { console.info(`[Factory] mem cache HIT fixtures ${date} ${league}`); return cached; }
-      console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
 
       let fixtures: Fixture[] = [];
       const wantGerman = league === 'ALL' || league === 'BUNDESLIGA' || league === 'BUNDESLIGA2';
 
-      // b) ESPN public scoreboard - all major global leagues, live scores, no API key
+      // c) ESPN public scoreboard - all major global leagues, live scores, no API key
       try {
         const espn = await this.espnProvider.getFixturesByDate(date, league);
         if (espn.length > 0) fixtures.push(...espn);
         console.info(`[Factory] ESPN returned ${espn.length} fixtures for ${date}`);
       } catch (e: any) { console.warn('[Factory] ESPN failed:', e.message); }
 
-      // c) Football-Data.org for main leagues
+      // d) Football-Data.org for main leagues
       if (fixtures.length === 0 && this.backupProvider && !(this.backupProvider.isQuotaExhausted?.() ?? false) && !(this.backupProvider.isInCooldown?.() ?? false)) {
         try {
           const fd = await this.backupProvider.getFixturesByDate(date, league);
@@ -346,7 +426,7 @@ export class DataProviderFactory {
         } catch (e: any) { console.warn('[Factory] Football-Data failed:', e.message); }
       }
 
-      // d) OpenLigaDB (German specialist)
+      // e) OpenLigaDB (German specialist)
       if (fixtures.length === 0 && wantGerman) {
         try {
           const g = await this.openligadbProvider.getFixturesByDate(date, league);
@@ -354,7 +434,7 @@ export class DataProviderFactory {
         } catch (e: any) { console.warn('[Factory] OpenLigaDB failed:', e.message); }
       }
 
-      // e) TheSportsDB fallback if too few
+      // f) TheSportsDB fallback if too few
       if (fixtures.length < 3) {
         try {
           const ts = await this.thesportsdbProvider.getFixturesByDate(date, league);
@@ -368,7 +448,7 @@ export class DataProviderFactory {
         } catch (e: any) { console.warn('[Factory] TheSportsDB failed:', e.message); }
       }
 
-      // f) Football-Data.co.uk free CSV fallback
+      // g) Football-Data.co.uk free CSV fallback
       if (fixtures.length === 0) {
         try {
           const fduk = await this.footballDataUkProvider.getFixturesByDate(date, league);
@@ -376,7 +456,7 @@ export class DataProviderFactory {
         } catch (e: any) { console.warn('[Factory] FootballDataUk failed:', e.message); }
       }
 
-      // g) OpenFootball static dataset fallback
+      // h) OpenFootball static dataset fallback
       if (fixtures.length === 0) {
         try {
           const of = await this.openfootballGitHubProvider.getFixturesByDate(date, league);
@@ -391,7 +471,7 @@ export class DataProviderFactory {
       fixtures = fixtures.map((f) => ({ ...f, retrievedAt })) as any;
 
       if (fixtures.length > 0) {
-        this.setCache(cacheKey, fixtures);
+        this.setCache(cacheKey, fixtures, ttlMs);
         this.writeJsonCache(fixtures);
       }
       return fixtures;
@@ -416,6 +496,11 @@ export class DataProviderFactory {
       const cached = this.getCached<MatchAnalysis>(cacheKey);
       if (cached) return cached;
 
+      // A match that is in play is re-analysed on the short active window so the
+      // live scorecard keeps moving; settled and upcoming matches keep the
+      // configured analysis TTL.
+      const ttlMs = this.matchTtlMs(fixtureId);
+
       let details: MatchAnalysis | null = null;
 
       // ESPN fixtures: route directly to ESPN adapter (no API-Football quota consumed)
@@ -426,7 +511,7 @@ export class DataProviderFactory {
           console.warn(`[Factory] ESPN details failed for ${fixtureId}:`, e.message);
         }
         if (details) {
-          this.setCache(cacheKey, details);
+          this.setCache(cacheKey, details, ttlMs);
           return details;
         }
         // ESPN identity could not be verified: fall through to a model-only bundle
@@ -434,7 +519,7 @@ export class DataProviderFactory {
         const fx = await this.findFixtureById(fixtureId);
         if (fx) {
           details = buildGenericAnalysis(fx);
-          this.setCache(cacheKey, details);
+          this.setCache(cacheKey, details, ttlMs);
         }
         return details;
       }
@@ -446,7 +531,7 @@ export class DataProviderFactory {
         const fx = await this.findFixtureById(fixtureId);
         if (fx && isVerifiedFixture(fx)) {
           details = buildGenericAnalysis(fx);
-          this.setCache(cacheKey, details);
+          this.setCache(cacheKey, details, ttlMs);
         }
         return details;
       }
@@ -470,7 +555,7 @@ export class DataProviderFactory {
         details = await this.fallbackProvider.getMatchDetails(fixtureId);
       }
       if (details) {
-        this.setCache(cacheKey, details);
+        this.setCache(cacheKey, details, ttlMs);
       }
       return details;
     })();

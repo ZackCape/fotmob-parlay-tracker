@@ -98,7 +98,40 @@ function persist(): void {
 }
 
 // Hydrate from disk on module load.
-load();
+initSavedParlays();
+
+/**
+ * Boot report for the saved-slip store.
+ */
+export interface SavedParlayBootReport {
+  /** Slips loaded from disk into active memory. */
+  total: number;
+  /** Slips restored with ACTIVE_TRACKING set — the ones `/track` lists. */
+  active: number;
+}
+
+/**
+ * Hydrate the saved-slip store from `data/saved_parlays.json`.
+ *
+ * Called on boot by `DiscordBotService.start()` so a restart (a Render
+ * redeploy, a crash restart, a scale-to-zero wake) never drops a slip the user
+ * saved: each slip's legs, its ACTIVE_TRACKING flag and every settled leg come
+ * back exactly as written, and the live worker resumes settling them on its
+ * next tick.
+ *
+ * Intended to run once during boot. A later call replaces the in-memory store
+ * with the file's contents, so anything held only in memory is discarded.
+ */
+export function initSavedParlays(): SavedParlayBootReport {
+  savedParlays.clear();
+  load();
+  const slips = [...savedParlays.values()];
+  const active = slips.filter((p) => p.activeTracking).length;
+  if (slips.length) {
+    console.log(`[SavedParlays] Restored ${slips.length} saved slip(s) from disk (${active} actively tracking).`);
+  }
+  return { total: slips.length, active };
+}
 
 /** Stable identity for a leg, used to remember what has already settled. */
 export function legKey(leg: { fixtureId: string; market: MarketType; selection: string }): string {
@@ -488,6 +521,7 @@ export default {
   setSavedParlayActiveTracking,
   getSavedParlaysForFixture,
   clearSavedParlays,
+  initSavedParlays,
   legKey,
   savedLegStatus,
   isSavedLegSettled,

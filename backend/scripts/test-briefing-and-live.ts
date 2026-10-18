@@ -215,7 +215,7 @@ section('2) Briefing — upcoming-only, clean layout');
   check('briefing titled with the date', data.title === `🏆 Cape Predictor Briefing • ${TODAY}`);
   check('no leftover morning prose', !text.includes('Good morning'));
 
-  check('section 1 present', fields[0]?.name === '📊 Top Calibrated Value Picks');
+  check('section 1 present', fields[0]?.name === '📊 Top Value Picks (EPL & Champions League Priority)');
   check('section 1 lists upcoming fixtures', fields[0]?.value.includes('Home up-1 vs Away up-1'));
   check('section 1 lists the second upcoming fixture', fields[0]?.value.includes('Home up-2 vs Away up-2'));
   check('section 1 shows calibrated probability', fields[0]?.value.includes('Calibrated'));
@@ -223,7 +223,7 @@ section('2) Briefing — upcoming-only, clean layout');
   check('section 1 excludes live fixtures', !fields[0]?.value.includes('live-1'));
   check('section 1 excludes finished fixtures', !fields[0]?.value.includes('ft-1'));
 
-  check('section 2 present', fields[1]?.name === '⚡ Featured 5-Leg High-Probability Parlay');
+  check('section 2 present', fields[1]?.name === '⚡ Featured 5-Leg High-Probability Slip');
   check('section 2 shows combined probability', fields[1]?.value.includes('Combined Probability'));
   check('section 2 shows compound odds', fields[1]?.value.includes('Compound Odds'));
   check('section 2 shows a $10 return', fields[1]?.value.includes('$10 Returns'));

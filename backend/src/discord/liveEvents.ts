@@ -89,12 +89,48 @@ function saveSeenEvents(): void {
 }
 
 // Hydrate from disk on module load.
-loadSubscriptions();
-loadSeenEvents();
+initLiveSubscriptions();
 
 // Persist to disk every minute (best-effort, never blocks the event loop).
 setInterval(saveSubscriptions, 60_000).unref?.();
 setInterval(saveSeenEvents, 60_000).unref?.();
+
+/**
+ * Boot report for the live-subscription store.
+ */
+export interface LiveSubscriptionBootReport {
+  /** Subscriptions restored from disk. */
+  total: number;
+  /** Distinct fixtures that still have at least one subscriber. */
+  fixtureIds: string[];
+}
+
+/**
+ * Hydrate the live-subscription store (and the seen-event de-duplication set)
+ * from `data/user_live_subscriptions.json` / `data/seen_live_events.json`.
+ *
+ * Called on boot by `DiscordBotService.start()`, which then hands the returned
+ * fixture ids to the 60-second live worker so every match a user was tracking
+ * before the restart is polled again on the worker's first tick instead of
+ * waiting for the match to reappear in a fixture sweep.
+ *
+ * Intended to run once during boot; a later call replaces the in-memory store
+ * with the file's contents.
+ */
+export function initLiveSubscriptions(): LiveSubscriptionBootReport {
+  subscriptions.clear();
+  seenEvents.clear();
+  loadSubscriptions();
+  loadSeenEvents();
+  const total = [...subscriptions.values()].reduce((n, list) => n + list.length, 0);
+  const fixtureIds = [...subscriptions.entries()]
+    .filter(([, list]) => list.length > 0)
+    .map(([fixtureId]) => fixtureId);
+  if (total) {
+    console.log(`[LiveEvents] Restored ${total} live subscription(s) across ${fixtureIds.length} fixture(s).`);
+  }
+  return { total, fixtureIds };
+}
 
 /* ------------------------------------------------------------------ *
  * Subscription store
@@ -376,6 +412,7 @@ export default {
   isSubscribed,
   getSubscriptionsForFixture,
   allSubscriptions,
+  initLiveSubscriptions,
   isSeenEvent,
   markEventSeen,
   detectNewEvents,

@@ -1,5 +1,9 @@
 import { MarketPrediction, ParlayLeg, ParlayLegCount, ParlayMode, StatisticalParlay } from '../types/football.js';
 import { areMarketsConflicting, filterNonCorrelatedPredictions } from './correlation-detector.js';
+import {
+  compareCompetitionPriority,
+  orderByCompetitionPriorityThenScore,
+} from '../utils/competitionPriority.js';
 
 export interface ParlayBuilderOptions {
   targetLegsCount: ParlayLegCount;
@@ -8,6 +12,13 @@ export interface ParlayBuilderOptions {
   leagueFilter?: string;
   mode?: ParlayMode; // 'ANTI_CORRELATED' | 'SAME_GAME_PARLAY' | 'CORRELATED_ALLOWED'
   targetFixtureId?: string; // Optional: specify target match for Same-Game Parlay
+  /**
+   * Rank Premier League and UEFA Champions League candidates ahead of the
+   * secondary domestic leagues (default: true). The minimum-probability gate is
+   * applied first, so priority reorders eligible legs and never promotes a leg
+   * that failed the threshold. Set false for a pure probability ranking.
+   */
+  prioritizePriorityLeagues?: boolean;
 }
 
 export function buildStatisticalParlay(
@@ -21,6 +32,7 @@ export function buildStatisticalParlay(
     leagueFilter = 'ALL',
     mode = 'ANTI_CORRELATED',
     targetFixtureId,
+    prioritizePriorityLeagues = true,
   } = options;
 
   // Filter candidates by league, probability threshold, and market filters
@@ -31,26 +43,50 @@ export function buildStatisticalParlay(
     return true;
   });
 
+  // Competition priority (EPL / UCL first) over the eligible pool, with the
+  // strength of each leg as the in-tier ranking. Everything below consumes this
+  // order, so the strongest priority legs lead and secondary leagues only fill
+  // what the priority pool leaves over.
+  const ordered = orderByCompetitionPriorityThenScore(
+    filtered,
+    (p) => p.league,
+    (p) => p.estimatedProbability,
+    { prioritize: prioritizePriorityLeagues },
+  );
+
   let selectedPredictions: MarketPrediction[] = [];
 
   if (mode === 'SAME_GAME_PARLAY') {
     // Mode 1: Same-Game Parlay (SGP) - Multiple complementary markets from the SAME match!
     let targetFixturePicks: MarketPrediction[] = [];
     if (targetFixtureId) {
-      targetFixturePicks = filtered.filter(p => p.fixtureId === targetFixtureId);
+      targetFixturePicks = ordered.filter(p => p.fixtureId === targetFixtureId);
     } else {
       // Find fixture with the most qualifying high-probability markets
       const fixtureCounts = new Map<string, MarketPrediction[]>();
-      for (const p of filtered) {
+      for (const p of ordered) {
         const list = fixtureCounts.get(p.fixtureId) || [];
         list.push(p);
         fixtureCounts.set(p.fixtureId, list);
       }
-      let bestList: MarketPrediction[] = [];
-      for (const list of fixtureCounts.values()) {
-        if (list.length > bestList.length) bestList = list;
+      const groups = [...fixtureCounts.values()];
+      if (prioritizePriorityLeagues) {
+        // Widest market coverage wins; competition priority breaks a tie, then
+        // the fixture whose best market is strongest.
+        groups.sort((a, b) => {
+          if (b.length !== a.length) return b.length - a.length;
+          const byPriority = compareCompetitionPriority(a[0]?.league, b[0]?.league);
+          if (byPriority !== 0) return byPriority;
+          return Math.max(...b.map(p => p.estimatedProbability)) - Math.max(...a.map(p => p.estimatedProbability));
+        });
+        targetFixturePicks = groups[0] ?? [];
+      } else {
+        let bestList: MarketPrediction[] = [];
+        for (const list of groups) {
+          if (list.length > bestList.length) bestList = list;
+        }
+        targetFixturePicks = bestList;
       }
-      targetFixturePicks = bestList;
     }
 
     // Sort descending by probability
@@ -66,7 +102,11 @@ export function buildStatisticalParlay(
     }
   } else if (mode === 'CORRELATED_ALLOWED') {
     // Mode 2: Correlated Allowed - Allows intra-match stacking across fixtures
-    const sorted = [...filtered].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+    // (already priority-ordered; re-sort inside each tier by probability).
+    const sorted = prioritizePriorityLeagues
+      ? [...ordered].sort((a, b) =>
+          compareCompetitionPriority(a.league, b.league) || (b.estimatedProbability - a.estimatedProbability))
+      : [...filtered].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
     for (const cand of sorted) {
       if (selectedPredictions.length >= targetLegsCount) break;
       const matchConflicts = selectedPredictions.some(
@@ -78,7 +118,10 @@ export function buildStatisticalParlay(
     }
   } else {
     // Mode 3: Strict Anti-Correlated (Default) - Strictly 1 leg per fixture across separate stadiums
-    const independentPicks = filterNonCorrelatedPredictions(filtered);
+    // The priority ordering is the input order for the de-duplication pass.
+    const independentPicks = filterNonCorrelatedPredictions(ordered, {
+      respectGivenOrder: prioritizePriorityLeagues,
+    });
     selectedPredictions = independentPicks.slice(0, targetLegsCount);
   }
 

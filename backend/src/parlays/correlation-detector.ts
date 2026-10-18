@@ -52,12 +52,26 @@ export function areLegsCorrelated(legA: MarketPrediction, legB: MarketPrediction
   return false;
 }
 
-export function filterNonCorrelatedPredictions(predictions: MarketPrediction[]): MarketPrediction[] {
+/**
+ * One selection per fixture, keeping the strongest candidate for each match.
+ *
+ * By default the pool is ranked by calibrated probability first, which is the
+ * plain "most reliable selection per match" rule. `respectGivenOrder` is set by
+ * the parlay builder when it has already applied a deliberate ordering (for
+ * example competition priority with probability as the in-tier tie-break): the
+ * caller's order then survives the de-duplication untouched.
+ */
+export function filterNonCorrelatedPredictions(
+  predictions: MarketPrediction[],
+  options: { respectGivenOrder?: boolean } = {},
+): MarketPrediction[] {
   const seenFixtures = new Set<string>();
   const filtered: MarketPrediction[] = [];
 
   // Sort by highest calibrated probability first to take the most reliable selection per match
-  const sorted = [...predictions].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+  const sorted = options.respectGivenOrder
+    ? [...predictions]
+    : [...predictions].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
 
   for (const pred of sorted) {
     if (!seenFixtures.has(pred.fixtureId)) {
