@@ -81,6 +81,16 @@ export interface Fixture {
   dataSource: string; // e.g., 'API-Football (Live)', 'Football-Data.org', 'Verified Archive'
   retrievedAt?: string;
   fallbackReason?: string;
+  /**
+   * Live match clock exactly as published by the provider, e.g. "68'" or
+   * "45'+2'". Null for fixtures that are not in play or when the provider
+   * omits it — never estimated.
+   */
+  liveClock?: string | null;
+  /** Match period reported while live (1 = first half, 2 = second half, …). */
+  livePeriod?: number | null;
+  /** Provider-native status name, e.g. ESPN's "STATUS_HALFTIME". */
+  providerStatus?: string | null;
 }
 
 export type MarketType =

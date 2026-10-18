@@ -492,6 +492,11 @@ export class ApiFootballAdapter implements IFootballDataProvider {
       htAwayScore: scoreRaw.halftime?.away ?? null,
       venue: fixtureRaw.venue?.name || 'Stadium',
       statistics: null,
+      // API-Football publishes the elapsed minute while a match is live.
+      liveClock: typeof fixtureRaw.status?.elapsed === 'number' && Number.isFinite(fixtureRaw.status.elapsed)
+        ? `${Math.round(fixtureRaw.status.elapsed)}'`
+        : null,
+      providerStatus: shortStatus ? String(shortStatus) : null,
       dataSource: 'API-Football (Live)',
     };
   }

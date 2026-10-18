@@ -180,6 +180,7 @@ export class EspnAdapter implements IFootballDataProvider {
         if (!home || !away) continue;
 
         const state = comp.status?.type?.state || ev.status?.type?.state;
+        const statusBlock = comp.status || ev.status || {};
         const hs = num(home.score);
         const as = num(away.score);
         const kickoff = comp.date || ev.date || `${date}T00:00:00Z`;
@@ -201,6 +202,10 @@ export class EspnAdapter implements IFootballDataProvider {
           htAwayScore: null,
           venue: comp.venue?.fullName || ev.venue?.fullName || '',
           statistics: null,
+          // Real live clock straight from ESPN's status block (never inferred).
+          liveClock: statusBlock?.displayClock ? String(statusBlock.displayClock).trim() : null,
+          livePeriod: Number.isFinite(statusBlock?.period) ? Number(statusBlock.period) : null,
+          providerStatus: statusBlock?.type?.name ? String(statusBlock.type.name) : null,
           dataSource: 'ESPN Public Scoreboard (Free)',
         });
       }

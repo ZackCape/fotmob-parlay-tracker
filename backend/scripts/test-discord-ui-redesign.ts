@@ -195,13 +195,34 @@ async function main() {
   const liveText = JSON.stringify(liveEmbed.toJSON());
 
   check('live embed titled', liveEmbed.data.title === '🔴 Cape Predictor — Live Matches');
-  check('LIVE badge with minute', liveText.includes('🔴 LIVE'));
-  check('match score displayed', liveText.includes('**Arsenal** 2 - 1 **Chelsea**'));
-  check('league displayed', liveText.includes('`LALIGA`'));
+  check('LIVE badge present', liveText.includes('🔴 **LIVE**'));
+  check('match score displayed', liveText.includes('**Arsenal 2 — 1 Chelsea**'));
+  check('league displayed', liveText.includes('[LALIGA]'));
   check('recent event line', liveText.includes('**Recent Event:**'));
   check('stats line', liveText.includes('**Stats:**'));
   check('possession stats', liveText.includes('`Possession 58% - 42%`'));
-  check('shots on target stats', liveText.includes('`Shots on Target 8 - 4`'));
+  check('shots on target stats', liveText.includes('`On Target 8 - 4`'));
+  check('xG / corners / cards line', liveText.includes('**xG:**') && liveText.includes('**Corners:** `6 - 4`') && liveText.includes('**Cards:** `2 - 1`'));
+
+  // The provider clock is rendered verbatim in the header: 68'
+  const clockedEmbed = buildLiveMatchesEmbed([{ ...fixtures[1], liveClock: "68'" }]);
+  const clockedText = JSON.stringify(clockedEmbed.toJSON());
+  check("live clock formatted as 68'", clockedText.includes("🔴 **68'** • **Arsenal 2 — 1 Chelsea** [LALIGA]"));
+
+  // Half-time is labelled HT rather than a fabricated minute
+  const htEmbed = buildLiveMatchesEmbed([{ ...fixtures[1], liveClock: null, providerStatus: 'STATUS_HALFTIME' }]);
+  check('half-time labelled HT', JSON.stringify(htEmbed.toJSON()).includes('🔴 **HT**'));
+
+  // Finished / upcoming fixtures are never rendered as live
+  const mixedEmbed = buildLiveMatchesEmbed([fixtures[0], fixtures[1], fixtures[2]]);
+  const mixedText = JSON.stringify(mixedEmbed.toJSON());
+  check('only live fixtures rendered', mixedText.includes('Arsenal') && !mixedText.includes('Bournemouth') && !mixedText.includes('Inter'));
+
+  const emptyLive = buildLiveMatchesEmbed([fixtures[0], fixtures[2]]);
+  check(
+    'empty live state message',
+    JSON.stringify(emptyLive.toJSON()).includes('No live matches currently in play. Use `/fixtures` to see upcoming games.'),
+  );
 
   /* ================================================================ *
    * Live action buttons
@@ -230,6 +251,15 @@ async function main() {
 
   // Max 5 action rows (Discord limit)
   check('total action rows <= 5', actionRows.length <= 5);
+
+  // One action row per live match, so [ ⚡ Track Match ] sits under its fixture
+  const secondLive = { ...fixtures[1], id: 'espn-90', homeTeam: { name: 'Roma' }, awayTeam: { name: 'Lazio' } };
+  const perMatchRows = buildLiveActionRows([fixtures[1], secondLive, fixtures[0]]);
+  check('one action row per live match', perMatchRows.length === 2);
+  check(
+    'second match gets its own track button',
+    perMatchRows[1].toJSON().components.some((c: any) => c.custom_id === 'cp:live:track:espn-90'),
+  );
 
   /* ================================================================ *
    * Summary

@@ -278,12 +278,26 @@ async function main() {
   check('livematches titled', liveEmbed.data.title === '🔴 Cape Predictor — Live Matches');
   check('livematches lists Everton v Chelsea', liveText.includes('Everton') && liveText.includes('Chelsea'));
   check('livematches lists Real Madrid v Sevilla', liveText.includes('Real Madrid') && liveText.includes('Sevilla'));
-  check('livematches shows scores', liveText.includes('1 - 2') && liveText.includes('2 - 1'));
+  check('livematches shows scores', liveText.includes('Everton 1 — 2 Chelsea') && liveText.includes('Real Madrid 2 — 1 Sevilla'));
+  check('livematches shows shots', liveText.includes('`Shots 9 - 14`'));
+  check('livematches shows xG', liveText.includes('`0.95 - 1.72`'));
+  check('livematches shows cards', liveText.includes('**Cards:** `2 - 3'));
   check('livematches no undefined/NaN', !liveText.includes('undefined') && !liveText.includes('NaN'));
+
+  // Provider clock is rendered verbatim, e.g. 68'
+  const clocked = buildLiveMatchesEmbed([{ ...makeFixture({ id: 'espn-3' }), liveClock: "68'", homeTeam: { ...makeFixture().homeTeam, name: 'AFC Bournemouth' }, awayTeam: { ...makeFixture().awayTeam, name: 'Sunderland' } }]);
+  check("livematches clock 68'", JSON.stringify(clocked.toJSON()).includes("🔴 **68'** • **AFC Bournemouth 1 — 2 Sunderland** [EPL]"));
+
+  // A finished fixture must never be rendered as live
+  const finishedOnly = buildLiveMatchesEmbed([makeFixture({ id: 'espn-4', status: 'FINISHED' })]);
+  check(
+    'livematches excludes finished fixtures',
+    JSON.stringify(finishedOnly.toJSON()).includes('No live matches currently in play. Use `/fixtures` to see upcoming games.'),
+  );
 
   const emptyLive = buildLiveMatchesEmbed([]);
   const emptyText = JSON.stringify(emptyLive.toJSON());
-  check('empty livematches message', emptyText.includes('No matches are currently in progress'));
+  check('empty livematches message', emptyText.includes('No live matches currently in play. Use `/fixtures` to see upcoming games.'));
 
   /* ================================================================ *
    * Track buttons

@@ -5,6 +5,7 @@ import {
 import { MatchAnalysis } from '../types/football.js';
 import { BRAND } from './brand.js';
 import { buildStatsTab } from './analysisEmbeds.js';
+import { isActiveLiveFixture, liveClockLabel, isUpcomingFixture } from './fixtureStatus.js';
 
 /* ------------------------------------------------------------------ *
  * Live match tracker with auto-refreshing embeds
@@ -130,18 +131,27 @@ export function buildLivePickerEmbed(fixtureCount: number): EmbedBuilder {
     .setTimestamp(new Date());
 }
 
+/* ------------------------------------------------------------------ *
+ * Live scorecard formatting
+ *
+ * Everything rendered here comes straight from the provider: the clock is
+ * ESPN's own display clock and every statistic is a published match stat.
+ * Missing values render as "N/A" rather than being guessed.
+ * ------------------------------------------------------------------ */
+
+/** Largest number of live matches we can give their own button row. */
+export const MAX_LIVE_MATCH_ROWS = 5;
+
 /**
- * Format a live match line with elapsed minute:
- *   🔴 LIVE 62' — Arsenal 2 - 1 Chelsea `Premier League`
+ * Live match header with the provider's clock:
+ *   🔴 **68'** • **AFC Bournemouth 2 — 0 Sunderland** [EPL]
  */
-function formatLiveLine(f: any): string {
-  const home = f.homeTeam.name;
-  const away = f.awayTeam.name;
-  const score = `${f.homeScore ?? '-'} - ${f.awayScore ?? '-'}`;
-  // Elapsed minute from statistics possessionHome hack if present, else just show status.
-  const s = f.statistics;
-  const minute = (s && typeof s.possessionHome === 'number') ? ` ${Math.round(s.possessionHome)}'` : '';
-  return `🔴 LIVE${minute} — **${home}** ${score} **${away}** \`${f.league}\``;
+function formatLiveHeader(f: any): string {
+  const clock = liveClockLabel(f);
+  const home = f.homeTeam?.name ?? 'Home';
+  const away = f.awayTeam?.name ?? 'Away';
+  const score = `${f.homeScore ?? '-'} — ${f.awayScore ?? '-'}`;
+  return `🔴 **${clock}** • **${home} ${score} ${away}** [${f.league ?? 'N/A'}]`;
 }
 
 /**
@@ -166,23 +176,44 @@ function formatRecentEvent(f: any): string {
 }
 
 /**
- * Stats line for a live match:
- *   > **Stats:** `Possession 54% - 46%` | `Shots on Target 6 - 3`
+ * Two stat lines for a live match — shots, shots on target, xG, corners,
+ * cards and possession, all from the provider's published match stats.
  */
 function formatLiveStats(f: any): string {
   const s = f.statistics;
   if (!s) {
-    return `> **Stats:** \`No stats yet\``;
+    return `> **Stats:** \`No stats published yet\``;
   }
-  const homePoss = Number.isFinite(Number(s.possessionHome)) ? Math.round(s.possessionHome) : '-';
-  const awayPoss = Number.isFinite(Number(s.possessionAway)) ? Math.round(s.possessionAway) : '-';
-  const homeSot = Number.isFinite(Number(s.shotsOnTargetHome)) ? Math.round(s.shotsOnTargetHome) : '-';
-  const awaySot = Number.isFinite(Number(s.shotsOnTargetAway)) ? Math.round(s.shotsOnTargetAway) : '-';
-  return `> **Stats:** \`Possession ${homePoss}% - ${awayPoss}%\` | \`Shots on Target ${homeSot} - ${awaySot}\``;
+  const num = (v: unknown): string => (Number.isFinite(Number(v)) && v !== null && v !== undefined && v !== '' ? String(Math.round(Number(v))) : 'N/A');
+  const dec = (v: unknown): string => (Number.isFinite(Number(v)) && v !== null && v !== undefined && v !== '' ? Number(v).toFixed(2) : 'N/A');
+  const pct = (v: unknown): string => (Number.isFinite(Number(v)) && v !== null && v !== undefined && v !== '' ? `${Math.round(Number(v))}%` : 'N/A');
+
+  const cards = (side: 'Home' | 'Away') => {
+    const y = num(s[`yellowCards${side}`]);
+    const r = Number(s[`redCards${side}`]);
+    return Number.isFinite(r) && r > 0 ? `${y} (+${r}🟥)` : y;
+  };
+
+  return (
+    `> **Stats:** \`Possession ${pct(s.possessionHome)} - ${pct(s.possessionAway)}\` | ` +
+    `\`Shots ${num(s.shotsHome)} - ${num(s.shotsAway)}\` | \`On Target ${num(s.shotsOnTargetHome)} - ${num(s.shotsOnTargetAway)}\`\n` +
+    `> **xG:** \`${dec(s.xgHome)} - ${dec(s.xgAway)}\` | **Corners:** \`${num(s.cornersHome)} - ${num(s.cornersAway)}\` | **Cards:** \`${cards('Home')} - ${cards('Away')}\``
+  );
 }
 
-/** Embed listing all matches currently being played in real time. */
+/**
+ * Embed listing every match currently being played in real time.
+ *
+ * Only genuinely active fixtures (in play / half-time / paused) are rendered;
+ * anything finished or still to kick off is filtered out here as well as at the
+ * call site, so a stale slate can never be shown as live. The list is capped at
+ * {@link MAX_LIVE_MATCH_ROWS} so each rendered row has its own button row
+ * beneath it (Discord allows at most five action rows per message).
+ */
 export function buildLiveMatchesEmbed(fixtures: any[]): EmbedBuilder {
+  const active = (fixtures ?? []).filter((f) => isActiveLiveFixture(f));
+  const shown = active.slice(0, MAX_LIVE_MATCH_ROWS);
+
   const e = new EmbedBuilder()
     .setColor(BRAND.accent)
     .setAuthor({ name: BRAND.author })
@@ -190,80 +221,115 @@ export function buildLiveMatchesEmbed(fixtures: any[]): EmbedBuilder {
     .setFooter({ text: BRAND.footer })
     .setTimestamp(new Date());
 
-  if (!fixtures.length) {
+  if (!active.length) {
     e.setDescription(
       `*${BRAND.tagline}*\n` +
-      'No matches are currently in progress. Use `/fixtures` to view upcoming scheduled matches.',
+      'No live matches currently in play. Use `/fixtures` to see upcoming games.',
     );
     return e;
   }
 
-  const lines = fixtures.map((f) => {
-    return `${formatLiveLine(f)}\n${formatRecentEvent(f)}\n${formatLiveStats(f)}`;
-  });
+  const lines = shown.map((f) => `${formatLiveHeader(f)}\n${formatRecentEvent(f)}\n${formatLiveStats(f)}`);
+
+  const overflow = active.length > shown.length
+    ? `\n*Showing the first ${shown.length} of ${active.length} live matches.*`
+    : '';
 
   e.setDescription(
     `*${BRAND.tagline}*\n` +
-    `All matches currently in progress. Use the buttons below each match to track it.\n\n` +
-    lines.join('\n\n'),
+    'Every match currently in play, with the provider\'s live clock. Use the buttons under each match to track it.\n\n' +
+    lines.join('\n\n') +
+    overflow,
   );
   return e;
 }
 
-/** Track + stats + refresh button rows: up to 3 buttons per live match,
- * packed into Discord action rows (max 5 components per row).
+/**
+ * One action row per live match, so the `[ ⚡ Track Match ]` button sits directly
+ * beneath the fixture it belongs to:
  *
- *   [ ⚡ Track Match ]  (Primary)   one-click live tracking
- *   [ 📊 Live Match Stats ] (Secondary)  full possession/shots/corners
- *   [ 🔄 Refresh ]  (Secondary)  re-fetch live scores
+ *   [ ⚡ Track Arsenal v Chelsea ]  [ 📊 Stats ]  [ 🔄 Refresh ]
+ *
+ * Discord caps a message at five action rows, so at most five matches get
+ * buttons ({@link MAX_LIVE_MATCH_ROWS}).
  */
 export function buildLiveActionRows(fixtures: any[]): ActionRowBuilder<ButtonBuilder>[] {
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  let row = new ActionRowBuilder<ButtonBuilder>();
+  const active = (fixtures ?? []).filter((f) => isActiveLiveFixture(f)).slice(0, MAX_LIVE_MATCH_ROWS);
 
-  const push = (b: ButtonBuilder) => {
-    if (row.toJSON().components.length >= 5) {
-      rows.push(row);
-      row = new ActionRowBuilder<ButtonBuilder>();
-    }
-    row.addComponents(b);
-  };
-
-  for (const f of fixtures) {
+  return active.map((f) => {
     const label = `Track ${f.homeTeam.name.slice(0, 8)} v ${f.awayTeam.name.slice(0, 8)}`.slice(0, 80);
-    push(
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`cp:live:track:${f.id}`)
         .setLabel(label)
         .setEmoji('⚡')
         .setStyle(ButtonStyle.Primary),
-    );
-    push(
       new ButtonBuilder()
         .setCustomId(`cp:live:lstats:${f.id}`)
         .setLabel('Stats')
         .setEmoji('📊')
         .setStyle(ButtonStyle.Secondary),
-    );
-    push(
       new ButtonBuilder()
         .setCustomId(`cp:live:lrefresh:${f.id}`)
         .setLabel('Refresh')
         .setEmoji('🔄')
         .setStyle(ButtonStyle.Secondary),
     );
-  }
-
-  if (row.toJSON().components.length > 0) {
-    rows.push(row);
-  }
-
-  return rows;
+  });
 }
 
 /** Keep the old name as an alias for callers that still reference it. */
 export function buildLiveTrackRows(fixtures: any[]): ActionRowBuilder<ButtonBuilder>[] {
   return buildLiveActionRows(fixtures);
+}
+
+/**
+ * Embed listing the individual matches a user (or channel) has chosen to track
+ * with `[ ⚡ Track Match ]`. Each entry shows the live clock and scoreline, or a
+ * kick-off time for matches that have not started yet.
+ */
+export function buildTrackedMatchesEmbed(fixtures: any[]): EmbedBuilder {
+  const list = (fixtures ?? []).filter(Boolean).slice(0, 15);
+
+  const e = new EmbedBuilder()
+    .setColor(BRAND.accent)
+    .setAuthor({ name: BRAND.author })
+    .setTitle('⚡ Tracked Matches')
+    .setTimestamp(new Date())
+    .setFooter({ text: `${BRAND.footer} • Settles automatically at full time` });
+
+  if (!list.length) {
+    e.setDescription(
+      `*${BRAND.tagline}*\n` +
+      'You are not tracking any individual matches yet. Use `/live` or `/fixtures` and press **⚡ Track Match**.',
+    );
+    return e;
+  }
+
+  const lines = list.map((f) => {
+    if (isActiveLiveFixture(f)) {
+      return `${formatLiveHeader(f)}\n${formatLiveStats(f)}`;
+    }
+    const home = f.homeTeam?.name ?? 'Home';
+    const away = f.awayTeam?.name ?? 'Away';
+    if (String(f.status).toUpperCase() === 'FINISHED') {
+      return `🏁 **FT** • **${home} ${f.homeScore ?? '-'} — ${f.awayScore ?? '-'} ${away}** [${f.league ?? 'N/A'}]`;
+    }
+    if (!isUpcomingFixture(f)) {
+      return `⏸️ **${String(f.status ?? 'N/A').toUpperCase()}** • **${home} — ${away}** [${f.league ?? 'N/A'}]`;
+    }
+    const kickoff = f.kickoffTime
+      ? new Date(f.kickoffTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+      : null;
+    return `🕒 **${kickoff ? `${kickoff} UTC` : 'Kick-off TBC'}** • **${home} — ${away}** [${f.league ?? 'N/A'}]`;
+  });
+
+  e.setDescription(
+    `*${BRAND.tagline}*\n` +
+    'Live scorecards for the matches you asked to follow. Goal, red-card and half-time alerts are pushed automatically.\n\n' +
+    lines.join('\n'),
+  );
+  return e;
 }
 
 /**
@@ -309,7 +375,11 @@ export function buildLiveMatchEmbed(analysis: MatchAnalysis, alertsEnabled: bool
   const e = new EmbedBuilder()
     .setColor(f.status === 'LIVE' ? BRAND.accent : f.status === 'FINISHED' ? BRAND.neutral : BRAND.neutral)
     .setAuthor({ name: BRAND.author })
-    .setTitle(`🔴 ${home} ${f.homeScore ?? '-'} — ${f.awayScore ?? '-'} ${away}`)
+    .setTitle(
+      f.status === 'LIVE'
+        ? `🔴 ${liveClockLabel(f)} • ${home} ${f.homeScore ?? '-'} — ${f.awayScore ?? '-'} ${away}`
+        : `🔴 ${home} ${f.homeScore ?? '-'} — ${f.awayScore ?? '-'} ${away}`,
+    )
     .setTimestamp(new Date());
 
   e.setDescription(

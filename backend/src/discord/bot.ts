@@ -358,7 +358,7 @@ export class DiscordBotService {
           if (typeof reply === 'string') {
             await interaction.editReply(reply);
           } else {
-            await interaction.editReply({ embeds: [reply] });
+            await interaction.editReply({ embeds: reply.slice(0, 2) });
           }
         } else if (interaction.commandName === 'channel') {
           const ch = interaction.options.getChannel('target');
@@ -591,13 +591,11 @@ export class DiscordBotService {
         }
 
         if (name === 'live') {
-          await interaction.deferReply();
-          const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), 'ALL');
-          const live = fixtures.filter((f: any) => f.status === 'LIVE');
-          await interaction.followUp({
+          await interaction.deferReply({ ephemeral: true });
+          const live = await this.liveMatchFixtures();
+          await interaction.editReply({
             embeds: [CP.buildLiveMatchesEmbed(live)],
             components: [...CP.buildLiveTrackRows(live)],
-            ephemeral: true,
           });
           return;
         }
@@ -1287,7 +1285,7 @@ export class DiscordBotService {
         if (typeof reply === 'string') {
           await message.reply(reply);
         } else {
-          await message.reply({ embeds: [reply] });
+          await message.reply({ embeds: reply.slice(0, 2) });
         }
       } else if (content.startsWith('!channel') || content.startsWith('/channel')) {
         const parts = content.split(' ');
@@ -1506,28 +1504,109 @@ export class DiscordBotService {
 
   /**
    * Builds the daily morning briefing embed (8:00 default) for broadcast/DM.
+   *
+   * Layout — no prose padding:
+   *   1. Top Calibrated Value Picks (3–5 upcoming selections, one per fixture)
+   *   2. Featured 5-Leg High-Probability Parlay (probability, odds, $10 return)
+   *   3. Team News & Key Absences (provider-reported injuries/suspensions)
+   *
+   * Only fixtures that have not kicked off are considered, so the briefing can
+   * never advertise a match that is already live or finished.
    */
   public async buildMorningBriefing(): Promise<EmbedBuilder> {
+    const today = new Date().toISOString().slice(0, 10);
+
+    let upcoming: any[] = [];
+    try {
+      const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
+      upcoming = CP.filterUpcomingFixtures((allFixtures ?? []).filter(isVerifiedFixture));
+    } catch {
+      upcoming = [];
+    }
+
+    // Gather model predictions and provider-reported team news for the slate.
+    const candidatePredictions: MarketPrediction[] = [];
+    const injuryBulletins: string[] = [];
+    for (const fx of upcoming.slice(0, 8)) {
+      try {
+        const details = await this.factory.getMatchDetails(fx.id);
+        if (!details) continue;
+        if (details.marketPredictions?.length) candidatePredictions.push(...details.marketPredictions);
+        if (details.injuries?.length) {
+          for (const inj of details.injuries.slice(0, 2)) {
+            const reason = inj.reason ? ` · ${inj.reason}` : '';
+            injuryBulletins.push(`• **${inj.teamName}** — ${inj.player} *(${inj.status}${reason})*`);
+          }
+        }
+      } catch { /* provider unavailable for this fixture — skip it */ }
+    }
+
+    // ---- Section 1: Top Calibrated Value Picks (one per fixture, 3–5) ----
+    const bestByFixture = new Map<string, MarketPrediction>();
+    for (const p of candidatePredictions) {
+      if (p.market !== 'HOME_WIN' && p.market !== 'DRAW' && p.market !== 'AWAY_WIN') continue;
+      const current = bestByFixture.get(p.fixtureId);
+      if (!current || p.estimatedProbability > current.estimatedProbability) bestByFixture.set(p.fixtureId, p);
+    }
+    const valuePicks = [...bestByFixture.values()]
+      .sort((a, b) => b.estimatedProbability - a.estimatedProbability)
+      .slice(0, 5);
+
+    const oddsConfigured = this.factory.isOddsConfigured();
+    const fixturesById = new Map<string, any>(upcoming.map((fx) => [fx.id, fx]));
+    const pickLines: string[] = [];
+    for (const [i, p] of valuePicks.entries()) {
+      let extra = `Fair \`${(1 / p.estimatedProbability).toFixed(2)}x\``;
+      const fx = fixturesById.get(p.fixtureId);
+      if (oddsConfigured && fx) {
+        try {
+          const prices = this.extractH2hPricesLocal(await this.factory.getOddsForFixture(fx));
+          const marketPrice = p.market === 'HOME_WIN' ? prices.home : p.market === 'DRAW' ? prices.draw : prices.away;
+          if (marketPrice) {
+            const edge = (p.estimatedProbability - 1 / marketPrice) * 100;
+            extra += ` • Market \`${marketPrice.toFixed(2)}x\` → Edge \`${edge > 0 ? '+' : ''}${edge.toFixed(1)}%\``;
+          }
+        } catch { /* odds unavailable for this fixture */ }
+      }
+      pickLines.push(`**${i + 1}. ${p.fixtureDescription}** [${p.league}]\n> \`${p.selection}\` • Calibrated \`${(p.estimatedProbability * 100).toFixed(1)}%\` • ${extra}`);
+    }
+
+    // ---- Section 2: Featured 5-Leg High-Probability Parlay ----
+    const parlay5 = buildStatisticalParlay(candidatePredictions, { targetLegsCount: 5, minProbability: 0.60 });
+    const legLines = parlay5.legs
+      .map((l, i) => `**Leg ${i + 1}**: ${l.fixtureDescription} ➔ \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`)
+      .join('\n');
+    const parlayReturn = (10 * parlay5.compoundOddsDecimal).toFixed(2);
+    const parlayBody = parlay5.legs.length
+      ? `${legLines}\n\n**Combined Probability**: \`${(parlay5.combinedProbability * 100).toFixed(2)}%\` • ` +
+        `**Compound Odds**: \`${parlay5.compoundOddsDecimal}x\` • **$10 Returns**: \`$${parlayReturn}\``
+      : 'Insufficient independent fixtures on today\'s slate to build a 5-leg combination.';
+
     const e = new EmbedBuilder()
       .setColor(BRAND.accent)
       .setAuthor({ name: BRAND.author })
-      .setTitle('🌅 Cape Predictor — Morning Briefing')
+      .setTitle(`🏆 Cape Predictor Briefing • ${today}`)
+      .addFields(
+        {
+          name: '📊 Top Calibrated Value Picks',
+          value: pickLines.join('\n\n') || 'No qualifying upcoming fixtures on today\'s slate.',
+          inline: false,
+        },
+        {
+          name: '⚡ Featured 5-Leg High-Probability Parlay',
+          value: parlayBody,
+          inline: false,
+        },
+        {
+          name: '🏥 Team News & Key Absences',
+          value: injuryBulletins.slice(0, 6).join('\n') ||
+            '• No confirmed injuries or suspensions published by the provider for today\'s upcoming fixtures.',
+          inline: false,
+        },
+      )
+      .setFooter({ text: `${BRAND.footer} • Upcoming fixtures only • Model estimates, not guarantees` })
       .setTimestamp(new Date());
-    const today = new Date().toISOString().slice(0, 10);
-    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(isVerifiedFixture);
-    const top = fixtures.slice(0, 5);
-    const lines = top.map((fx, i) => {
-      const kickoff = new Date(fx.kickoffTime).toLocaleTimeString('en-US', {
-        hour: 'numeric', minute: '2-digit', hour12: true,
-      });
-      return `• **${fx.homeTeam.name} vs ${fx.awayTeam.name}** — ${kickoff} \`${fx.league}\``;
-    });
-    e.setDescription(
-      `Good morning! Here are today's top fixtures (**${fixtures.length}** matches).\n\n${lines.join('\n')}\n\n` +
-      `Use \`/fixtures\` for full multi-market picks or \`/value\` for +EV picks.`
-    );
-    e.setFooter({ text: `${BRAND.footer} • ${today}` });
+
     return e;
   }
 
@@ -2045,34 +2124,122 @@ export class DiscordBotService {
     );
   }
 
-  public async generateLiveTrackerReply(options: { userId?: string; channelId?: string } = {}): Promise<EmbedBuilder | string> {
-    // Saved slips take priority: `/track` reads `saved_parlays.json` for the
-    // (user, channel) pair and shows the legs' settlement status. A slip is
-    // flagged ACTIVE_TRACKING on Save & Share, so this works immediately.
+  /**
+   * Live matches currently in play, enriched with the provider's published
+   * match statistics and clock. Only genuinely active fixtures are returned,
+   * and the result is capped so the embed and its button rows stay aligned.
+   */
+  private async liveMatchFixtures(limit = CP.MAX_LIVE_MATCH_ROWS): Promise<any[]> {
+    const today = new Date().toISOString().slice(0, 10);
+    let fixtures: any[] = [];
+    try {
+      fixtures = await CP.fetchVerifiedFixtures(this.factory, today, 'ALL');
+    } catch {
+      return [];
+    }
+
+    const live = (fixtures ?? []).filter((f: any) => CP.isActiveLiveFixture(f)).slice(0, limit);
+
+    // One detail call per live match so shots/xG/corners render for real.
+    await Promise.all(live.map(async (f: any) => {
+      try {
+        const details = await this.factory.getMatchDetails(f.id);
+        if (details?.fixture?.statistics) f.statistics = details.fixture.statistics;
+        if (details?.fixture?.liveClock) f.liveClock = details.fixture.liveClock;
+        if (details?.fixture?.providerStatus) f.providerStatus = details.fixture.providerStatus;
+      } catch { /* provider unavailable — render N/A rather than invent stats */ }
+    }));
+
+    return live;
+  }
+
+  /**
+   * Fixtures the user has explicitly subscribed to with `[ ⚡ Track Match ]`
+   * inside this channel, resolved across the surrounding five days and
+   * enriched with live stats where available.
+   */
+  private async trackedMatchFixtures(userId: string, channelId: string): Promise<any[]> {
+    let ids: string[] = [];
+    try {
+      ids = CP.getSubscribedFixtureIdsForUserChannel(userId, channelId);
+    } catch {
+      return [];
+    }
+    if (!ids.length) return [];
+
+    const wanted = new Set(ids);
+    const found = new Map<string, any>();
+    for (const offset of [0, -1, 1, -2, 2]) {
+      if (found.size >= wanted.size) break;
+      const date = new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+      try {
+        const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+        for (const f of list) {
+          if (wanted.has(f.id) && !found.has(f.id)) found.set(f.id, f);
+        }
+      } catch { /* provider unavailable — try the next day */ }
+    }
+
+    const fixtures = [...found.values()];
+
+    // Live matches get their published stats attached (bounded, best-effort).
+    const live = fixtures.filter((f) => CP.isActiveLiveFixture(f)).slice(0, 5);
+    await Promise.all(live.map(async (f) => {
+      try {
+        const details = await this.factory.getMatchDetails(f.id);
+        if (details?.fixture?.statistics) f.statistics = details.fixture.statistics;
+        if (details?.fixture?.liveClock) f.liveClock = details.fixture.liveClock;
+        if (details?.fixture?.providerStatus) f.providerStatus = details.fixture.providerStatus;
+      } catch { /* render what the scoreboard already gave us */ }
+    }));
+
+    return fixtures;
+  }
+
+  /**
+   * `/track` reply. Returns up to two embeds:
+   *   1. the active saved parlay slip with per-leg status icons, and
+   *   2. the individual matches the user/channel asked to track.
+   * Falls back to the statistical tracker service, then to a text hint.
+   */
+  public async generateLiveTrackerReply(
+    options: { userId?: string; channelId?: string } = {},
+  ): Promise<EmbedBuilder[] | string> {
+    const embeds: EmbedBuilder[] = [];
+
     if (options.userId && options.channelId) {
+      // 1) Saved parlay slip (ACTIVE_TRACKING), settled leg by leg.
       let activeSlips: any[] = [];
       try {
         activeSlips = CP.getActiveSavedParlaysForUserChannel(options.userId, options.channelId);
       } catch { activeSlips = []; }
 
       if (activeSlips.length > 0) {
-        const embed = CP.buildSavedSlipTrackerEmbed(activeSlips[0]);
+        const slipEmbed = CP.buildSavedSlipTrackerEmbed(activeSlips[0]);
         if (activeSlips.length > 1) {
-          embed.setFooter({
+          slipEmbed.setFooter({
             text: `${BRAND.footer} • ${activeSlips.length} saved slips in this channel — showing the most recent`,
           });
         }
-        return embed;
+        embeds.push(slipEmbed);
       }
+
+      // 2) Individually tracked matches (⚡ Track Match).
+      try {
+        const tracked = await this.trackedMatchFixtures(options.userId, options.channelId);
+        if (tracked.length) embeds.push(CP.buildTrackedMatchesEmbed(tracked));
+      } catch { /* provider unavailable — skip the matches embed */ }
     }
 
+    if (embeds.length) return embeds;
+
     if (!this.trackerService) {
-      return '⚠️ Live tracker service is not active.';
+      return '⚠️ Live tracker service is not active. Use `/live` to follow a match, or save a slip with `/customparlay`.';
     }
 
     const trackedList = this.trackerService.getTrackedParlays();
     if (trackedList.length === 0) {
-      return 'No parlays are currently tracked! Save a slip with `/customparlay` → **💾 Save & Share**, or generate one with `/generateparlay`. The web dashboard is at ' + DASHBOARD_URL + '.';
+      return 'No parlays are currently tracked! Save a slip with `/customparlay` → **💾 Save & Share**, or generate one with `/generateparlay`. Press **⚡ Track Match** on `/live` to follow a single match. The web dashboard is at ' + DASHBOARD_URL + '.';
     }
 
     const active = trackedList[0];
@@ -2108,7 +2275,7 @@ export class DiscordBotService {
       text: `Live tracker updates in real-time • Web Dashboard at ${DASHBOARD_URL}`,
     }).setTimestamp();
 
-    return embed;
+    return [embed];
   }
 
   public getStatus() {

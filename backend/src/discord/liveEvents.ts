@@ -140,6 +140,18 @@ export function allSubscriptions(): LiveSubscription[] {
   return [...subscriptions.values()].flat();
 }
 
+/**
+ * Distinct fixture ids this user is tracking inside this channel. `/track`
+ * uses it to render the "Tracked Matches" scorecard embed.
+ */
+export function getSubscribedFixtureIdsForUserChannel(userId: string, channelId: string): string[] {
+  const ids = new Set<string>();
+  for (const [fixtureId, list] of subscriptions.entries()) {
+    if (list.some((s) => s.userId === userId && s.channelId === channelId)) ids.add(fixtureId);
+  }
+  return [...ids];
+}
+
 /* ------------------------------------------------------------------ *
  * Seen-event de-duplication
  * ------------------------------------------------------------------ */

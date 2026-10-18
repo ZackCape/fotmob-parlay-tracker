@@ -76,3 +76,35 @@ export function isUpcomingFixture(fixture: any): boolean {
 export function filterUpcomingFixtures<T = any>(fixtures: readonly T[] | null | undefined): T[] {
   return (fixtures ?? []).filter((f) => isUpcomingFixture(f as any));
 }
+
+/**
+ * True when the match is being played right now — in play, at half-time or
+ * temporarily paused. Finished, upcoming and postponed fixtures are excluded.
+ */
+export function isActiveLiveFixture(fixture: any): boolean {
+  if (!fixture) return false;
+
+  const status = String(fixture.status ?? '').toUpperCase();
+  if (status === 'LIVE') return true;
+  if (status === 'FINISHED' || status === 'POSTPONED') return false;
+
+  // Unknown/unmapped normalised status: trust an explicit live provider code
+  // (IN_PLAY, PAUSED, HT, 1H, 2H, …).
+  return rawStatuses(fixture).some((code) => LIVE_CODES.has(code));
+}
+
+/**
+ * Human label for the live clock: the provider's own minute ("68'", "45'+2'"),
+ * "HT" at half-time, or "LIVE" when the provider has not published a clock.
+ * Never estimated from the wall clock.
+ */
+export function liveClockLabel(fixture: any): string {
+  if (!fixture) return 'LIVE';
+
+  const providerStatus = fixture.providerStatus ? String(fixture.providerStatus).toUpperCase() : '';
+  if (providerStatus.includes('HALFTIME')) return 'HT';
+
+  const clock = fixture.liveClock ? String(fixture.liveClock).trim() : '';
+  if (!clock) return 'LIVE';
+  return clock.endsWith("'") ? clock : `${clock}'`;
+}

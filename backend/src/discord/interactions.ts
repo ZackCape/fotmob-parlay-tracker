@@ -29,7 +29,7 @@ export * from './parlayBuilder.js';
 export * from './savedParlays.js';
 export * from './liveTracker.js';
 export * from './liveEvents.js';
-export { isUpcomingFixture, filterUpcomingFixtures } from './fixtureStatus.js';
+export { isUpcomingFixture, filterUpcomingFixtures, isActiveLiveFixture, liveClockLabel } from './fixtureStatus.js';
 export { buildStatisticalParlay } from '../parlays/parlay-builder.js';
 
 export function baseEmbed(title: string, description?: string): EmbedBuilder {
