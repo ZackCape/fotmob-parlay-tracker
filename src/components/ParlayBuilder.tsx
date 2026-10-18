@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { StatisticalParlay, ParlayLegCount, ParlayMode, LiveTrackedParlay } from '../types';
 import { generateParlay, trackParlay } from '../api';
-import { Layers, AlertCircle, ShieldAlert, CheckCircle2, TrendingUp, HelpCircle, Trophy, Zap, Activity } from 'lucide-react';
+import { Layers, AlertCircle, ShieldAlert, CheckCircle2, TrendingUp, HelpCircle, Trophy, Zap, Activity, AlertTriangle } from 'lucide-react';
 
 interface ParlayBuilderProps {
   selectedDate: string;
@@ -17,6 +17,8 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
   const [loading, setLoading] = useState<boolean>(false);
   const [trackingLoading, setTrackingLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [bestAvailableLoading, setBestAvailableLoading] = useState<boolean>(false);
+  const [tomorrowLoading, setTomorrowLoading] = useState<boolean>(false);
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -34,6 +36,47 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
       setError(err.message || 'Failed to generate parlay');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGenerateTomorrow = async () => {
+    setTomorrowLoading(true);
+    setError(null);
+    try {
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      const result = await generateParlay({
+        date: tomorrow,
+        legsCount,
+        mode,
+        minProbability: minProb,
+        leagueFilter: selectedLeague,
+      });
+      setParlay(result);
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate tomorrow\'s slate');
+    } finally {
+      setTomorrowLoading(false);
+    }
+  };
+
+  const handleGenerateBestAvailable = async () => {
+    if (!parlay) return;
+    const target = (parlay.actualLegsCount && parlay.actualLegsCount > 0 ? parlay.actualLegsCount : parlay.legs.length) || 1;
+    setBestAvailableLoading(true);
+    setError(null);
+    try {
+      const result = await generateParlay({
+        date: selectedDate,
+        legsCount: target as ParlayLegCount,
+        mode,
+        minProbability: minProb,
+        leagueFilter: selectedLeague,
+      });
+      setParlay(result);
+    } catch (err: any) {
+      setError(err.message || 'Failed to scale down the slip');
+    } finally {
+      setBestAvailableLoading(false);
     }
   };
 
@@ -206,6 +249,39 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
         {error && (
           <div className="mt-4 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
             {error}
+          </div>
+        )}
+
+        {parlay && (parlay.status === 'INSUFFICIENT_SELECTIONS' || parlay.legs.length === 0) && (
+          <div className="mt-4 space-y-3">
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-200 text-xs flex items-start space-x-3">
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-amber-400" />
+              <p className="leading-relaxed">
+                ⚠️ Insufficient Upcoming Matches Remaining Today — Most matches for today have already started or finished. The pre-kickoff filter excluded them to protect your slip.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleGenerateTomorrow}
+                disabled={tomorrowLoading}
+                className="py-2.5 px-4 rounded-2xl bg-[#00d66c]/15 border border-[#00d66c]/30 text-[#00d66c] font-bold text-xs flex items-center space-x-2 hover:bg-[#00d66c]/25 disabled:opacity-50 transition-all cursor-pointer"
+              >
+                {tomorrowLoading ? <div className="w-3.5 h-3.5 border-2 border-[#00d66c]/40 border-t-[#00d66c] rounded-full animate-spin" /> : <span>📅</span>}
+                <span>Generate for Tomorrow's Slate</span>
+              </button>
+              {parlay.legs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleGenerateBestAvailable}
+                  disabled={bestAvailableLoading}
+                  className="py-2.5 px-4 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center space-x-2 hover:bg-amber-500/25 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  {bestAvailableLoading ? <div className="w-3.5 h-3.5 border-2 border-amber-400/40 border-t-amber-400 rounded-full animate-spin" /> : <span>⚡</span>}
+                  <span>Generate Best Available ({parlay.actualLegsCount || parlay.legs.length} Legs)</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

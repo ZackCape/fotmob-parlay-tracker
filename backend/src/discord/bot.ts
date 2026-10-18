@@ -93,7 +93,7 @@ export class DiscordBotService {
     }
     const pattern = this.getCronPattern(this.currentInterval);
     this.cronJob = cron.schedule(pattern, async () => {
-      console.log(`[DiscordBot] Running scheduled ${this.currentInterval} odds & parlay broadcast...`);
+      console.log(`[DiscordBot] Running scheduled ${this.currentInterval} briefing broadcast...`);
       // Auto-recalibrate cadence from live match activity on every tick.
       try {
         const today = new Date().toISOString().slice(0, 10);
@@ -104,7 +104,9 @@ export class DiscordBotService {
           this.setBroadcastConfig(undefined, next as any);
           return;
         }
-        await this.sendHourlyUpdate();
+        // Same builder as /broadcast, /setbrief and the morning scheduler.
+        const embed = await this.buildMorningBriefing();
+        await this.deliverBriefing(embed, 'scheduled briefing');
         // Live tracker embeds self-refresh via their own 30s loop, so there is
         // no separate score push here.
       } catch (e: any) {
@@ -413,8 +415,9 @@ export class DiscordBotService {
           });
         } else if (interaction.commandName === 'broadcast') {
           await interaction.deferReply();
-          const res = await this.sendHourlyUpdate();
-          await interaction.editReply(res.message);
+          const embed = await this.buildMorningBriefing();
+          await this.deliverBriefing(embed, '/broadcast');
+          await interaction.editReply(`✅ **Briefing broadcast delivered.** The morning briefing was posted to the configured channel${this.config.webhookUrl ? ' and webhook' : ''}.`);
         }
 
         else if (interaction.commandName === 'setbrief') {
@@ -424,7 +427,11 @@ export class DiscordBotService {
             return;
           }
           this.briefingTime = time;
-          await interaction.reply({ content: `✅ Morning briefing set to **${time}** daily (local tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}).`, ephemeral: true });
+          // Deliver the briefing immediately through the same builder and the
+          // same delivery path as /broadcast and the morning scheduler.
+          const embed = await this.buildMorningBriefing();
+          await this.deliverBriefing(embed, '/setbrief');
+          await interaction.reply({ content: `✅ Morning briefing set to **${time}** daily (local tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}) and posted now.` });
           return;
         } else if (interaction.commandName === 'h2h') {
           await interaction.deferReply();
@@ -1263,8 +1270,9 @@ export class DiscordBotService {
         const replyText = await this.generateParlayReply({ legs, mode });
         await message.reply(replyText);
       } else if (content === '!broadcast' || content === '/broadcast') {
-        const res = await this.sendHourlyUpdate();
-        await message.reply(res.message);
+        const embed = await this.buildMorningBriefing();
+        await this.deliverBriefing(embed, '/broadcast');
+        await message.reply('✅ **Briefing broadcast delivered.**');
       }
     });
 
@@ -1753,19 +1761,15 @@ export class DiscordBotService {
   }
 
   /**
-   * Sends the morning briefing to the configured channel and to users with DM alerts enabled.
+   * Sends the morning briefing to the configured channel, the configured
+   * webhook, and to users with DM alerts enabled.
    */
   public async sendMorningBriefing(): Promise<void> {
     if (!this.client?.isReady()) return;
     try {
       const embed = await this.buildMorningBriefing();
-      // Post to configured channel.
-      if (this.config.channelId) {
-        try {
-          const ch = await this.client.channels.fetch(this.config.channelId);
-          if (ch?.isTextBased()) await (ch as any).send({ embeds: [embed] });
-        } catch { /* channel send failed */ }
-      }
+      // Post to configured channel / webhook via the shared delivery path.
+      await this.deliverBriefing(embed, 'morning briefing');
       // DM users who opted into alerts.
       for (const userId of this.dmAlerts) {
         try {
@@ -1892,182 +1896,70 @@ export class DiscordBotService {
   }
 
   /**
-   * Builds rich World Cup styled embed payload for Discord
+   * Delivers a briefing embed to every configured destination.
+   *
+   * One delivery path for /broadcast, /setbrief, the scheduled cron and the
+   * morning scheduler, so the briefing is always the same clean embed and is
+   * never silently dropped when no destination is configured.
+   *
+   * @param source  Label used in log output ("/broadcast", "/setbrief", ...).
    */
-  public async buildBroadcastPayload() {
-    const today = new Date().toISOString().substring(0, 10);
-    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    // EPL/UCL first: the priority fixtures lead the analysis sweep and therefore
-    // lead the candidate pool for the featured parlay and the value picks.
-    const fixtures = orderFixturesByPriority(allFixtures.filter(fx => isVerifiedFixture(fx)));
+  public async deliverBriefing(embed: EmbedBuilder, source: string): Promise<void> {
+    let sentViaWebhook = false;
+    let sentViaBot = false;
 
-    // Collect predictions and injury bulletins
-    const candidatePredictions: MarketPrediction[] = [];
-    const injuryBulletins: string[] = [];
-
-    for (const fx of fixtures.slice(0, 12)) {
-      const details = await this.factory.getMatchDetails(fx.id);
-      if (details) {
-        if (details.marketPredictions) {
-          candidatePredictions.push(...details.marketPredictions);
-        }
-        if (details.injuries && details.injuries.length > 0) {
-          for (const inj of details.injuries.slice(0, 2)) {
-            injuryBulletins.push(`⚠️ **${inj.teamName}**: ${inj.player} (${inj.status} - ${inj.reason})`);
-          }
-        }
-      }
-    }
-
-    // Generate featured 5-leg parlay
-    const parlay5 = buildStatisticalParlay(candidatePredictions, {
-      targetLegsCount: 5,
-      minProbability: 0.60,
-    });
-
-    const topPicks = orderByCompetitionPriorityThenScore(
-      candidatePredictions,
-      (p) => p.league,
-      (p) => p.estimatedProbability,
-    ).slice(0, 5);
-
-    // Fetch verified real news
-    let topNews: string[] = [];
-    try {
-      const newsArticles = await this.factory.getLatestNews();
-      topNews = newsArticles.slice(0, 3).map(n => `• [${n.tag || 'News'}] **${n.title}** (${n.source})`);
-    } catch (e) {
-      // non-fatal
-    }
-
-    return {
-      today,
-      fixturesCount: fixtures.length,
-      topPicks,
-      injuryBulletins: injuryBulletins.slice(0, 4),
-      topNews,
-      parlay5,
-    };
-  }
-
-  /**
-   * Broadcasts update to configured Discord Channel or Webhook
-   */
-  public async sendHourlyUpdate(): Promise<{ success: boolean; message: string }> {
-    try {
-      const data = await this.buildBroadcastPayload();
-      this.lastBroadcastTime = new Date().toISOString();
-
-      const topPicksFormatted = data.topPicks
-        .map((p, i) => `${i + 1}. **${p.fixtureDescription}** [${p.league}]\n   • **Selection**: \`${p.selection}\` • **Calibrated Prob**: \`${(p.estimatedProbability * 100).toFixed(1)}%\``)
-        .join('\n\n') || 'No qualifying value picks found on current schedule.';
-
-      const injuriesFormatted = data.injuryBulletins.join('\n') || '✅ No critical injury or suspension changes reported in the last hour.';
-
-      const newsFormatted = data.topNews.join('\n') || '✅ Squad updates and team sheets synchronized.';
-
-      const parlayLegsFormatted = data.parlay5.legs
-        .map((l, i) => `**Leg ${i + 1}**: ${l.fixtureDescription} ➔ \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`)
-        .join('\n');
-
-      const embedPayload = {
-        title: `🏆 Cape Predictor Briefing • ${data.today}`,
-        description: `*Football Intelligence. Smarter Predictions.* Live statistical projections across **19 European competitions** — Premier League, EFL Championship, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira Liga, Belgian Pro League, Scottish Premiership, Süper Lig, Swiss Super League, Austrian Bundesliga, Danish Superliga, Ekstraklasa & UEFA Competitions.\n*Pure mathematical models • Real-time stats from ESPN & API-Football (free tier) with verified fallback • Zero bookmaker biases*`,
-        color: 0x2563EB, // Restrained blue primary
-        fields: [
-          {
-            name: `📊 Top Calibrated Value Picks`,
-            value: topPicksFormatted,
-            inline: false,
-          },
-          {
-            name: `⚡ Featured 5-Leg Statistical Parlay (${(data.parlay5.combinedProbability * 100).toFixed(1)}% | ${data.parlay5.compoundOddsDecimal}x)`,
-            value: parlayLegsFormatted || 'Insufficient matches on date to build 5 independent legs.',
-            inline: false,
-          },
-          {
-            name: `🏥 Breaking Team Absences & Player Injuries`,
-            value: injuriesFormatted,
-            inline: false,
-          },
-          {
-            name: `📰 Verified European Football Headlines (FootballDatabase.eu)`,
-            value: newsFormatted,
-            inline: false,
-          },
-          {
-            name: `🛡️ Anti-Correlation & Risk Disclosure`,
-            value: `Every leg is from a distinct fixture in a separate stadium. Multi-leg combinations multiply tail risk exponentially. Predictions are never guarantees or sure wins.`,
-            inline: false,
-          },
-        ],
-        footer: {
-          text: `Cape Predictor Engine • Powered by Dixon-Coles Probability Engine`,
-        },
-        timestamp: new Date().toISOString(),
-      };
-
-      let sentViaWebhook = false;
-      let sentViaBot = false;
-
-      // Send via Webhook if configured
-      if (this.config.webhookUrl) {
+    if (this.config.webhookUrl) {
+      try {
         await axios.post(this.config.webhookUrl, {
           username: 'Cape Predictor',
-        avatar_url: 'https://cdn.discordapp.com/embed/avatars/0.png',
-          embeds: [embedPayload],
+          avatar_url: 'https://cdn.discordapp.com/embed/avatars/0.png',
+          embeds: [embed],
         });
         sentViaWebhook = true;
+      } catch (e: any) {
+        console.warn(`[DiscordBot] ${source} webhook delivery failed: ${e.message}`);
+      }
+    }
+
+    if (this.client && this.isReady) {
+      let channel: any = null;
+      if (this.config.channelId) {
+        try {
+          channel = await this.client.channels.fetch(this.config.channelId);
+        } catch (e: any) {
+          console.warn(`[DiscordBot] Fetching channel ${this.config.channelId} failed: ${e.message}`);
+        }
       }
 
-      // Send via Bot Client if channel configured OR auto-discover first writable channel in joined guilds
-      if (this.client && this.isReady) {
-        let channel: any = null;
-        if (this.config.channelId) {
-          try {
-            channel = await this.client.channels.fetch(this.config.channelId);
-          } catch (e: any) {
-            console.warn(`[DiscordBot] Fetching channel ${this.config.channelId} failed: ${e.message}`);
+      // Auto-discover first available text channel if no explicit channel ID is set
+      if (!channel) {
+        for (const guild of this.client.guilds.cache.values()) {
+          const found = guild.channels.cache.find(
+            (c: any) => c.isTextBased() && c.viewable
+          );
+          if (found) {
+            channel = found;
+            break;
           }
         }
+      }
 
-        // Auto-discover first available text channel if no explicit channel ID is set
-        if (!channel) {
-          for (const guild of this.client.guilds.cache.values()) {
-            const found = guild.channels.cache.find(
-              c => c.isTextBased() && (c as any).viewable
-            );
-            if (found) {
-              channel = found;
-              break;
-            }
-          }
-        }
-
-        if (channel && channel.isTextBased()) {
-          const embed = new EmbedBuilder(embedPayload as any);
+      if (channel && channel.isTextBased()) {
+        try {
           await (channel as TextChannel).send({ embeds: [embed] });
           sentViaBot = true;
+        } catch (e: any) {
+          console.warn(`[DiscordBot] ${source} channel delivery failed: ${e.message}`);
         }
       }
+    }
 
-      if (!sentViaWebhook && !sentViaBot) {
-        return {
-          success: false,
-          message: this.client && this.client.guilds.cache.size === 0
-            ? 'Bot is logged in, but not yet invited to any Discord server. Please use the OAuth2 invite link to add it to your server!'
-            : 'Neither DISCORD_WEBHOOK_URL nor DISCORD_CHANNEL_ID is configured, and no writable channel was found.',
-        };
-      }
+    this.lastBroadcastTime = new Date().toISOString();
 
-      this.lastBroadcastTime = new Date().toISOString();
-      return {
-        success: true,
-        message: `Hourly briefing dispatched successfully (Webhook: ${sentViaWebhook}, Bot: ${sentViaBot}).`,
-      };
-    } catch (err: any) {
-      console.error('[DiscordBot] Failed to send broadcast:', err.message);
-      return { success: false, message: err.message };
+    if (!sentViaWebhook && !sentViaBot) {
+      console.warn(
+        `[DiscordBot] ${source}: briefing built but not delivered — neither DISCORD_WEBHOOK_URL nor DISCORD_CHANNEL_ID is configured, and no writable channel was found.`,
+      );
     }
   }
 
@@ -2185,15 +2077,21 @@ export class DiscordBotService {
     return CP.buildAnalysisPayload(details, tab);
   }
 
+  /**
+   * Text reply for the !fixtures / !odds chat commands, derived from the same
+   * briefing builder as /broadcast, /setbrief and the morning scheduler.
+   */
   public async generateFixturesReply(): Promise<string> {
-    const data = await this.buildBroadcastPayload();
-    if (data.topPicks.length === 0) {
-      return `⚽ **No live fixture predictions available for today (${data.today})**. Check the web dashboard for upcoming calendar dates!`;
-    }
-    const formatted = data.topPicks
-      .map(p => `• **${p.fixtureDescription}** (${p.league}): \`${p.selection}\` — **${(p.estimatedProbability * 100).toFixed(1)}%** prob (est ${(1 / Math.max(0.01, p.estimatedProbability)).toFixed(2)}x)`)
-      .join('\n');
-    return `⚽ **Today's Top Statistical Picks** (${data.today}):\n\n${formatted}\n\n*Type \`/generateparlay\` or \`/customparlay\` or \`/info\` for more commands.*`;
+    const briefing = await this.buildMorningBriefing();
+    const fields = ((briefing.toJSON().fields ?? []) as Array<{ name: string; value: string }>);
+    const picksField = fields.find((f) => f.name.includes('Top Value Picks'));
+    if (!picksField) return `⚽ **No live fixture predictions available for today**. Check the web dashboard for upcoming calendar dates!`;
+    const lines = picksField.value
+      .split('\n\n')
+      .map((block: string) => block.replace(/\*\*/g, '').replace(/^> /gm, '').trim())
+      .filter((block: string) => block.length > 0)
+      .map((block: string, i: number) => `• ${block.split('\n')[0]}${block.includes('\n') ? `\n  ${block.split('\n')[1]}` : ''}`);
+    return `⚽ **Today's Top Statistical Picks** (${new Date().toISOString().slice(0, 10)}):\n\n${lines.join('\n') || 'No qualifying value picks found on today\'s slate.'}\n\n*Type \`/generateparlay\` or \`/customparlay\` or \`/info\` for more commands.*`;
   }
 
   /**

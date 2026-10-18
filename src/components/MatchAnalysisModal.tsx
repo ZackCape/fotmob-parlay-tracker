@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { MatchAnalysis, MarketPrediction } from '../types';
 import { computeOutcomeProbabilities } from '../utils/matchOutcome';
-import { computeOddsComparison } from '../utils/oddsMath';
 import { X, TrendingUp, AlertTriangle, Shield, Activity, Users, CheckCircle2, Trophy, BarChart3, AlertCircle } from 'lucide-react';
 
 interface MatchAnalysisModalProps {
@@ -28,8 +27,6 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
   const [oddsData, setOddsData] = useState<any>(null);
   const [oddsLoading, setOddsLoading] = useState<boolean>(false);
 
-  // Declare only optional-safe values BEFORE any hook/effect uses them.
-  // Never reference `fixture` here: it is destructured below and would be in the TDZ.
   const fixtureId: string | undefined = analysis?.fixture?.id;
   const fixtureDate: string | undefined = analysis?.fixture?.date;
   const fixtureLeague: string | undefined = analysis?.fixture?.league;
@@ -39,11 +36,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
     if (!fixtureId || !fixtureDate || !fixtureLeague) return;
     let cancelled = false;
     setOddsLoading(true);
-    const params = new URLSearchParams({
-      fixtureId,
-      date: fixtureDate,
-      league: fixtureLeague,
-    });
+    const params = new URLSearchParams({ fixtureId, date: fixtureDate, league: fixtureLeague });
     const homePred = outcomePredictions.find(p => p.market === 'HOME_WIN');
     const drawPred = outcomePredictions.find(p => p.market === 'DRAW');
     const awayPred = outcomePredictions.find(p => p.market === 'AWAY_WIN');
@@ -73,47 +66,43 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
     lineups = EMPTY_LINEUPS,
   } = analysis as any;
 
-  // Adapter data may be partially populated; never trust missing collections.
   const dataQualityNotes: string[] = Array.isArray(analysis?.dataQualityNotes) ? analysis.dataQualityNotes : [];
   const homeXI = lineups?.home?.startingXI ?? [];
   const awayXI = lineups?.away?.startingXI ?? [];
-  const homeSubs = lineups?.home?.substitutes ?? [];
-  const awaySubs = lineups?.away?.substitutes ?? [];
   const homeLast5 = homeForm?.last5Results ?? [];
   const awayLast5 = awayForm?.last5Results ?? [];
   const h2hMeetings = headToHead?.recentMeetings ?? [];
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
-      <div className="relative bg-slate-900 border border-white/10 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
-        
-        {/* Header with Trophy Gold Styling */}
-        <div className="p-5 sm:p-6 bg-slate-950 border-b border-white/10 flex items-center justify-between shrink-0">
-          <div className="flex items-center space-x-4">
+      <div className="relative bg-slate-950/95 backdrop-blur-md border border-emerald-500/20 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* Hero Header — emerald / cyan glassmorphism */}
+        <div className="p-5 sm:p-6 bg-slate-950/95 backdrop-blur-md border-b border-emerald-500/20 flex items-center justify-between shrink-0">
+          <div className="flex items-center space-x-4 flex-wrap gap-2">
             <div className="flex items-center space-x-2.5">
-              <img src={fixture.homeTeam.logo} alt={fixture.homeTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-white/10" />
+              <img src={fixture.homeTeam.logo} alt={fixture.homeTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-emerald-500/30" />
               <span className="font-extrabold text-base sm:text-xl text-white">{fixture.homeTeam.name}</span>
             </div>
-            <span className="text-amber-400 font-black text-sm">vs</span>
+            <span className="text-emerald-400 font-black text-sm">vs</span>
             <div className="flex items-center space-x-2.5">
-              <img src={fixture.awayTeam.logo} alt={fixture.awayTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-white/10" />
+              <img src={fixture.awayTeam.logo} alt={fixture.awayTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-cyan-500/30" />
               <span className="font-extrabold text-base sm:text-xl text-white">{fixture.awayTeam.name}</span>
             </div>
-            <span className="hidden sm:inline-block text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            <span className="hidden sm:inline-block text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
               {fixture.league}
             </span>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 transition-colors"
+            className="p-2 text-slate-400 hover:text-white rounded-full hover:bg-emerald-500/10 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Quick Highlights Bar */}
-        <div className="px-6 py-3.5 bg-slate-950/80 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+        {/* Quick Highlights Bar — Home xG emerald / Away xG cyan */}
+        <div className="px-6 py-3.5 bg-slate-950/80 border-b border-emerald-500/10 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
           <div className="flex items-center space-x-4 text-slate-300">
             <div>
               <span className="text-slate-500">Venue:</span> <span className="font-semibold text-white">{fixture.venue}</span>
@@ -122,74 +111,47 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               <span className="text-slate-500">Kickoff:</span> <span className="font-semibold text-white font-mono">{fixture.kickoffTime.substring(0, 10)}</span>
             </div>
             <div>
-              <span className="text-slate-500">Feed:</span> <span className="text-amber-400 font-semibold">{fixture.dataSource}</span>
+              <span className="text-slate-500">Feed:</span> <span className="text-emerald-400 font-semibold">{fixture.dataSource}</span>
             </div>
           </div>
 
           <div className="flex items-center space-x-3 font-mono">
-            <span className="bg-amber-500/10 px-3 py-1 rounded-xl border border-amber-500/25 text-amber-300 font-bold">
+            <span className="bg-emerald-500/10 px-3 py-1 rounded-xl border border-emerald-500/30 text-emerald-400 font-bold">
               Home xG: {dixonColesParameters?.homeExpectedGoals ?? 'N/A'}
             </span>
-            <span className="bg-sky-500/10 px-3 py-1 rounded-xl border border-sky-500/25 text-sky-300 font-bold">
+            <span className="bg-cyan-500/10 px-3 py-1 rounded-xl border border-cyan-500/30 text-cyan-400 font-bold">
               Away xG: {dixonColesParameters?.awayExpectedGoals ?? 'N/A'}
             </span>
           </div>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="px-6 border-b border-white/10 flex space-x-6 text-xs sm:text-sm font-bold shrink-0 bg-slate-950/50">
-          <button
-            onClick={() => setActiveTab('markets')}
-            className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'markets' ? 'border-amber-400 text-amber-300' : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4 text-amber-400" />
-            <span>Market Predictions ({marketPredictions.length})</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('stats')}
-            className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'stats' ? 'border-blue-400 text-blue-300' : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4" />
-            <span>Match Stats</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('matrix')}
-            className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'matrix' ? 'border-amber-400 text-amber-300' : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Activity className="w-4 h-4 text-amber-400" />
-            <span>Scoreline Heatmap</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('form')}
-            className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'form' ? 'border-amber-400 text-amber-300' : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Shield className="w-4 h-4 text-amber-400" />
-            <span>Form & Head-to-Head</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('lineups')}
-            className={`py-3.5 border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'lineups' ? 'border-amber-400 text-amber-300' : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Users className="w-4 h-4 text-amber-400" />
-            <span>Injuries & Lineups</span>
-          </button>
+        {/* Tab Switcher — pill buttons */}
+        <div className="px-6 border-b border-emerald-500/10 flex space-x-2 py-2 shrink-0 bg-slate-950/50 overflow-x-auto">
+          {([
+            { id: 'markets', label: 'Market Predictions', icon: <TrendingUp className="w-4 h-4 text-emerald-400" /> },
+            { id: 'stats', label: 'Match Stats', icon: <BarChart3 className="w-4 h-4" /> },
+            { id: 'matrix', label: 'Scoreline Heatmap', icon: <Activity className="w-4 h-4 text-emerald-400" /> },
+            { id: 'form', label: 'Form & Head-to-Head', icon: <Shield className="w-4 h-4 text-emerald-400" /> },
+            { id: 'lineups', label: 'Injuries & Lineups', icon: <Users className="w-4 h-4 text-emerald-400" /> },
+          ] as const).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === tab.id
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-slate-900/60 text-slate-400 border border-white/10 hover:text-slate-200'
+              }`}
+            >
+              {tab.icon}
+              <span>{tab.label}{tab.id === 'markets' ? ` (${marketPredictions.length})` : ''}</span>
+            </button>
+          ))}
         </div>
 
         {/* Content Body */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
-
-          {/* MATCH OUTCOME PROBABILITIES */}
+          {/* MATCH OUTCOME PROBABILITIES — 1X2 */}
           {(() => {
             const homePred = outcomePredictions.find(p => p.market === 'HOME_WIN');
             const drawPred = outcomePredictions.find(p => p.market === 'DRAW');
@@ -201,9 +163,9 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             );
             if (!res) return null;
             const rows = [
-              { label: `${fixture.homeTeam.name} Win`, value: res.home, color: 'bg-blue-500', key: 'home' as const },
-              { label: 'Draw', value: res.draw, color: 'bg-slate-400', key: 'draw' as const },
-              { label: `${fixture.awayTeam.name} Win`, value: res.away, color: 'bg-sky-500', key: 'away' as const },
+              { label: `${fixture.homeTeam.name} Win`, value: res.home, key: 'home' as const },
+              { label: 'Draw', value: res.draw, key: 'draw' as const },
+              { label: `${fixture.awayTeam.name} Win`, value: res.away, key: 'away' as const },
             ];
             const mostLikelyLabel = res.tied
               ? 'Tied highest probability'
@@ -213,12 +175,14 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               ? `${fixture.awayTeam.name} Win`
               : 'Draw';
             return (
-              <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4 space-y-3">
+              <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-white">Match Outcome (Predicted)</span>
-                  <span className="text-xs text-slate-400">
-                    {res.tied ? 'Tied highest probability' : `Most likely: ${mostLikelyLabel}`}
-                  </span>
+                  {!res.tied && (
+                    <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.35)]">
+                      🏆 Most Likely: {mostLikelyLabel}
+                    </span>
+                  )}
                 </div>
                 {rows.map((r, i) => {
                   const isTop = !res.tied && res.mostLikely === r.key;
@@ -226,12 +190,15 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                     <div key={i} className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className={`font-semibold ${isTop ? 'text-white' : 'text-slate-300'}`}>{r.label}</span>
-                        <span className={`font-mono font-bold ${isTop ? 'text-blue-300' : 'text-slate-400'}`}>
+                        <span className={`font-mono font-bold ${isTop ? 'text-emerald-400' : 'text-slate-400'}`}>
                           {isFinite(r.value) ? `${(r.value * 100).toFixed(1)}%` : 'N/A'}
                         </span>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                        <div className={`${r.color} h-1.5 rounded-full transition-all`} style={{ width: `${Math.min(100, r.value * 100)}%` }} />
+                      <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`${isTop ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-slate-700 to-slate-600'} h-2 rounded-full transition-all duration-700 ease-out`}
+                          style={{ width: `${Math.min(100, r.value * 100)}%` }}
+                        />
                       </div>
                     </div>
                   );
@@ -243,12 +210,12 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             );
           })()}
 
-          {/* ODDS & MARKET */}
+          {/* ODDS & MARKET MATRIX */}
           {oddsLoading && (
             <div className="text-xs text-slate-400">Loading odds...</div>
           )}
           {!oddsLoading && oddsData && oddsData.available && (
-            <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4 space-y-3">
+            <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-bold text-white">Odds & Market (1X2)</span>
                 <span className="text-[10px] text-slate-400">
@@ -260,16 +227,22 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   { label: `${fixture.homeTeam.name}`, odds: oddsData.homeOdds, model: oddsData.comparison?.diffHome, fair: oddsData.comparison?.fairOddsHome },
                   { label: 'Draw', odds: oddsData.drawOdds, model: oddsData.comparison?.diffDraw, fair: oddsData.comparison?.fairOddsDraw },
                   { label: `${fixture.awayTeam.name}`, odds: oddsData.awayOdds, model: oddsData.comparison?.diffAway, fair: oddsData.comparison?.fairOddsAway },
-                ].map((r, i) => (
-                  <div key={i} className="bg-slate-900/60 rounded-xl p-3 space-y-1">
-                    <div className="text-[10px] text-slate-400 truncate">{r.label}</div>
-                    <div className="font-mono font-bold text-white">{r.odds != null ? Number(r.odds).toFixed(2) : 'n/a'}</div>
-                    <div className="text-[10px] text-slate-500">Fair: {r.fair != null ? Number(r.fair).toFixed(2) : 'n/a'}</div>
-                    <div className="text-[10px] text-slate-500">
-                      {r.model != null ? `${r.model > 0 ? '+' : ''}${r.model.toFixed(1)}pp` : ''}
+                ].map((r, i) => {
+                  const ev = r.model;
+                  const evBadge = ev != null
+                    ? (ev > 0
+                      ? <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded-full">+EV {ev > 0 ? '+' : ''}{ev.toFixed(1)}pp</span>
+                      : <span className="text-[10px] font-bold text-slate-400 bg-slate-800/60 border border-white/10 px-1.5 py-0.5 rounded-full">{ev.toFixed(1)}pp</span>)
+                    : null;
+                  return (
+                    <div key={i} className="bg-slate-900/60 border border-emerald-500/10 rounded-xl p-3 space-y-1">
+                      <div className="text-[10px] text-slate-400 truncate">{r.label}</div>
+                      <div className="font-mono font-bold text-white">{r.odds != null ? Number(r.odds).toFixed(2) : 'n/a'}</div>
+                      <div className="text-[10px] text-emerald-400">Fair: {r.fair != null ? Number(r.fair).toFixed(2) : 'n/a'}</div>
+                      <div>{evBadge}</div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <p className="text-[10px] text-slate-500">
                 Bookmaker odds are market data, not Cape Predictor predictions. Differences are model-vs-market signals, not guaranteed edges.
@@ -277,7 +250,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             </div>
           )}
           {!oddsLoading && oddsData && !oddsData.available && (
-            <div className="text-xs text-slate-400 bg-slate-950/70 border border-white/10 rounded-2xl p-3">
+            <div className="text-xs text-slate-400 bg-slate-950/70 border border-emerald-500/20 rounded-2xl p-3">
               Odds unavailable: {oddsData.reason || 'unknown'}.
             </div>
           )}
@@ -285,11 +258,11 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           {/* TAB 1: MARKET PREDICTIONS */}
           {activeTab === 'markets' && (
             <div className="space-y-4">
-              <div className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-amber-500/5 border border-amber-500/20 rounded-2xl p-3.5 text-xs text-amber-200/90 flex items-center justify-between">
+              <div className="bg-gradient-to-r from-emerald-500/10 via-slate-900 to-cyan-500/5 border border-emerald-500/20 rounded-2xl p-3.5 text-xs text-emerald-200/90 flex items-center justify-between">
                 <span>
                   <strong>Strict Non-Betting-Odds Methodology:</strong> Probabilities derived exclusively from attack intensity, defense vulnerability, Dixon-Coles low-score correction, and Bayesian shrinkage.
                 </span>
-                <span className="font-mono text-[11px] font-bold bg-amber-500/20 px-2.5 py-0.5 rounded-full text-amber-300">
+                <span className="font-mono text-[11px] font-bold bg-emerald-500/20 px-2.5 py-0.5 rounded-full text-emerald-300 border border-emerald-500/30">
                   Calibrated
                 </span>
               </div>
@@ -298,14 +271,14 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                 {marketPredictions.map(pred => (
                   <div
                     key={pred.id}
-                    className="bg-slate-950/70 border border-white/5 rounded-2xl p-4 flex flex-col justify-between hover:border-amber-400/30 transition-colors shadow-sm"
+                    className="bg-slate-950/70 border border-emerald-500/10 rounded-2xl p-4 flex flex-col justify-between hover:border-emerald-400/30 transition-colors shadow-sm"
                   >
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] text-amber-300/80 uppercase font-black tracking-wider">
+                        <span className="text-[10px] text-emerald-300/80 uppercase font-black tracking-wider">
                           {pred.marketLabel}
                         </span>
-                        <div className="flex items-center space-x-1 font-mono text-amber-400 font-black text-sm">
+                        <div className="flex items-center space-x-1 font-mono text-emerald-400 font-black text-sm">
                           <span>{(pred.estimatedProbability * 100).toFixed(1)}%</span>
                         </div>
                       </div>
@@ -315,7 +288,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       {/* Probability Bar */}
                       <div className="w-full bg-slate-800 rounded-full h-2 mb-3 overflow-hidden">
                         <div
-                          className="bg-gradient-to-r from-blue-600 to-blue-400 h-2 rounded-full"
+                          className="bg-gradient-to-r from-emerald-500 to-cyan-400 h-2 rounded-full transition-all duration-700 ease-out"
                           style={{ width: `${Math.min(100, pred.estimatedProbability * 100)}%` }}
                         />
                       </div>
@@ -329,14 +302,14 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                           <span className="text-slate-500">95% Confidence:</span> [{(pred.confidenceLower * 100).toFixed(1)}% - {(pred.confidenceUpper * 100).toFixed(1)}%]
                         </div>
                         <div>
-                          <span className="text-slate-500">Home/Away Goals:</span> {pred.supportingStatistics.homeGoalAverageLast5} vs {pred.supportingStatistics.awayGoalAverageLast5}
+                          <span className="text-slate-500">Home/Away Goals:</span> {pred.supportingStatistics?.homeGoalAverageLast5 ?? 'N/A'} vs {pred.supportingStatistics?.awayGoalAverageLast5 ?? 'N/A'}
                         </div>
                       </div>
                     </div>
 
                     {/* Risk Factors */}
                     {(pred.riskFactors?.length ?? 0) > 0 && (
-                      <div className="border-t border-white/5 pt-2 text-[10px] text-amber-300/90 flex items-start space-x-1.5">
+                      <div className="border-t border-emerald-500/10 pt-2 text-[10px] text-amber-300/90 flex items-start space-x-1.5">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
                         <span>{pred.riskFactors.join(' • ')}</span>
                       </div>
@@ -351,16 +324,16 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           {activeTab === 'matrix' && (
             <div className="space-y-4">
               <p className="text-xs text-slate-300 leading-relaxed">
-                Joint scoreline probability distribution calculated via Dixon-Coles bivariate Poisson with low-score correlation adjustment factor <span className="font-mono text-amber-400 font-bold">ρ = -0.11</span>.
+                Joint scoreline probability distribution calculated via Dixon-Coles bivariate Poisson with low-score correlation adjustment factor <span className="font-mono text-emerald-400 font-bold">ρ = -0.11</span>.
               </p>
 
-              <div className="overflow-x-auto rounded-2xl border border-white/10">
+              <div className="overflow-x-auto rounded-2xl border border-emerald-500/20">
                 <table className="w-full border-collapse text-center text-xs">
                   <thead>
                     <tr>
-                      <th className="p-3 border border-white/5 bg-slate-950 font-bold text-amber-300">Home \ Away</th>
+                      <th className="p-3 border border-emerald-500/10 bg-slate-950 font-bold text-emerald-300">Home \ Away</th>
                       {[0, 1, 2, 3, 4].map(a => (
-                        <th key={a} className="p-3 border border-white/5 bg-slate-950 font-mono font-bold text-slate-200">
+                        <th key={a} className="p-3 border border-emerald-500/10 bg-slate-950 font-mono font-bold text-slate-200">
                           {fixture.awayTeam.code} {a}
                         </th>
                       ))}
@@ -369,7 +342,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   <tbody>
                     {[0, 1, 2, 3, 4].map(h => (
                       <tr key={h}>
-                        <th className="p-3 border border-white/5 bg-slate-950 font-mono font-bold text-slate-200">
+                        <th className="p-3 border border-emerald-500/10 bg-slate-950 font-mono font-bold text-slate-200">
                           {fixture.homeTeam.code} {h}
                         </th>
                         {[0, 1, 2, 3, 4].map(a => {
@@ -379,10 +352,10 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                           return (
                             <td
                               key={a}
-                              className="p-3.5 border border-white/5 font-mono font-extrabold transition-colors"
+                              className="p-3.5 border border-emerald-500/10 font-mono font-extrabold transition-colors"
                               style={{
-                                backgroundColor: `rgba(245, 158, 11, ${intensity * 0.35})`,
-                                color: prob > 0.08 ? '#fef08a' : '#cbd5e1',
+                                backgroundColor: `rgba(16, 185, 129, ${intensity * 0.35})`,
+                                color: prob > 0.08 ? '#6ee7b7' : '#cbd5e1',
                               }}
                             >
                               {(prob * 100).toFixed(1)}%
@@ -403,7 +376,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               {fixture.statistics ? (
                 <>
                   {/* Possession */}
-                  <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4">
+                  <div className="bg-slate-950/70 border border-emerald-500/20 rounded-2xl p-4">
                     <div className="text-sm font-bold text-white mb-3">Possession</div>
                     <div className="flex items-center gap-3">
                       <span className="font-mono font-bold text-white text-sm w-12 text-right">
@@ -411,11 +384,11 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       </span>
                       <div className="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden flex">
                         <div
-                          className="bg-blue-500 h-full"
+                          className="bg-emerald-500 h-full"
                           style={{ width: `${Math.max(0, Math.min(100, fixture.statistics.possessionHome ?? 0))}%` }}
                         />
                         <div
-                          className="bg-slate-500 h-full flex-1"
+                          className="bg-slate-600 h-full flex-1"
                           style={{ width: `${Math.max(0, 100 - Math.max(0, Math.min(100, fixture.statistics.possessionHome ?? 0)))}%` }}
                         />
                       </div>
@@ -426,7 +399,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   </div>
 
                   {/* Stat rows */}
-                  <div className="bg-slate-950/70 border border-white/10 rounded-2xl overflow-hidden">
+                  <div className="bg-slate-950/70 border border-emerald-500/20 rounded-2xl overflow-hidden">
                     {[
                       { label: 'Total shots', home: fixture.statistics.shotsHome, away: fixture.statistics.shotsAway },
                       { label: 'Shots on target', home: fixture.statistics.shotsOnTargetHome, away: fixture.statistics.shotsOnTargetAway },
@@ -441,14 +414,14 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       const total = hv + av;
                       const hp = total > 0 ? Math.max(0, Math.min(100, (hv / total) * 100)) : 50;
                       return (
-                        <div key={row.label} className="px-4 py-2.5 border-b border-white/5 last:border-b-0">
+                        <div key={row.label} className="px-4 py-2.5 border-b border-emerald-500/10 last:border-b-0">
                           <div className="flex items-center justify-between text-xs mb-1.5">
                             <span className="font-mono font-bold text-white w-10">{row.home ?? '-'}</span>
                             <span className="text-slate-400">{row.label}</span>
                             <span className="font-mono font-bold text-white w-10 text-right">{row.away ?? '-'}</span>
                           </div>
                           <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
-                            <div className="bg-blue-500 h-full" style={{ width: `${hp}%` }} />
+                            <div className="bg-emerald-500 h-full" style={{ width: `${hp}%` }} />
                             <div className="bg-slate-600 h-full flex-1" style={{ width: `${100 - hp}%` }} />
                           </div>
                         </div>
@@ -460,7 +433,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   </p>
                 </>
               ) : (
-                <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-6 text-center">
+                <div className="bg-slate-950/70 border border-emerald-500/20 rounded-2xl p-6 text-center">
                   <AlertCircle className="w-6 h-6 mx-auto mb-2 text-slate-500" />
                   <p className="text-sm text-slate-300 font-semibold">Match statistics unavailable</p>
                   <p className="text-xs text-slate-500 mt-1">
@@ -476,7 +449,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Home Form */}
-                <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-5">
+                <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.homeTeam.name} (Home)</span>
                     <div className="flex space-x-1.5">
@@ -504,7 +477,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                 </div>
 
                 {/* Away Form */}
-                <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-5">
+                <div className="bg-slate-950/70 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.awayTeam.name} (Away)</span>
                     <div className="flex space-x-1.5">
@@ -533,19 +506,19 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               </div>
 
               {/* Head-to-Head */}
-              <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-5">
+              <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
                 <h4 className="font-extrabold text-white text-sm mb-3">Head-to-Head Records</h4>
                 {headToHead.totalMeetings > 0 ? (
                   <div className="space-y-2">
                     <p className="text-xs text-slate-300 mb-3">
                       Over last {headToHead.totalMeetings} meetings: {fixture.homeTeam.name} won {headToHead.homeWins}, {headToHead.draws} draws, {fixture.awayTeam.name} won {headToHead.awayWins}. Avg goals: {headToHead.avgGoals}.
                     </p>
-                    <div className="divide-y divide-white/5">
+                    <div className="divide-y divide-emerald-500/10">
                       {h2hMeetings.map((m, idx) => (
                         <div key={idx} className="py-2 flex items-center justify-between text-xs">
                           <span className="text-slate-500 font-mono">{m.date}</span>
                           <span className="font-semibold text-slate-200">{m.homeTeam} vs {m.awayTeam}</span>
-                          <span className="font-mono font-bold text-amber-300 bg-slate-900 px-2.5 py-0.5 rounded-full">{m.score}</span>
+                          <span className="font-mono font-bold text-emerald-400 bg-slate-900 px-2.5 py-0.5 rounded-full border border-emerald-500/30">{m.score}</span>
                         </div>
                       ))}
                     </div>
@@ -561,7 +534,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           {activeTab === 'lineups' && (
             <div className="space-y-6">
               {/* Injuries */}
-              <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-5">
+              <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
                 <h4 className="font-extrabold text-white text-sm mb-3 flex items-center space-x-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
                   <span>Reported Injuries & Suspensions</span>
@@ -569,7 +542,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                 {injuries && injuries.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {injuries.map((inj, i) => (
-                      <div key={i} className="bg-slate-900/90 border border-white/5 p-3 rounded-2xl flex items-center justify-between">
+                      <div key={i} className="bg-slate-900/90 border border-emerald-500/10 p-3 rounded-2xl flex items-center justify-between">
                         <div>
                           <div className="font-bold text-white text-xs">{inj.player}</div>
                           <div className="text-[11px] text-slate-400">{inj.teamName} • {inj.reason}</div>
@@ -591,18 +564,18 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
 
               {/* Lineups */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-5">
+                <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.homeTeam.name} Lineup</span>
-                    <span className="text-[10px] text-amber-300 font-mono bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/25">
+                    <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
                       {lineups.home?.formation || '4-3-3'}
                     </span>
                   </div>
                   {homeXI.length > 0 ? (
                     <div className="space-y-1 text-xs">
                       {homeXI.map(p => (
-                        <div key={p.id} className="flex items-center justify-between py-1 border-b border-white/5 text-slate-300">
-                          <span><span className="font-mono text-amber-400 mr-2">#{p.number}</span>{p.name}</span>
+                        <div key={p.id} className="flex items-center justify-between py-1 border-b border-emerald-500/10 text-slate-300">
+                          <span><span className="font-mono text-emerald-400 mr-2">#{p.number}</span>{p.name}</span>
                           <span className="text-slate-500 text-[10px] uppercase font-mono">{p.position}</span>
                         </div>
                       ))}
@@ -612,18 +585,18 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   )}
                 </div>
 
-                <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-5">
+                <div className="bg-slate-950/70 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.awayTeam.name} Lineup</span>
-                    <span className="text-[10px] text-amber-300 font-mono bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/25">
+                    <span className="text-[10px] text-cyan-400 font-mono bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/30">
                       {lineups.away?.formation || '4-2-3-1'}
                     </span>
                   </div>
                   {awayXI.length > 0 ? (
                     <div className="space-y-1 text-xs">
                       {awayXI.map(p => (
-                        <div key={p.id} className="flex items-center justify-between py-1 border-b border-white/5 text-slate-300">
-                          <span><span className="font-mono text-amber-400 mr-2">#{p.number}</span>{p.name}</span>
+                        <div key={p.id} className="flex items-center justify-between py-1 border-b border-cyan-500/10 text-slate-300">
+                          <span><span className="font-mono text-cyan-400 mr-2">#{p.number}</span>{p.name}</span>
                           <span className="text-slate-500 text-[10px] uppercase font-mono">{p.position}</span>
                         </div>
                       ))}
@@ -637,8 +610,8 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           )}
 
           {/* Data Quality & Integrity Footer */}
-          <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 text-[11px] text-slate-400 space-y-1">
-            <div className="font-bold text-amber-300">Data Integrity Policy:</div>
+          <div className="bg-slate-950/70 backdrop-blur-md p-4 rounded-2xl border border-emerald-500/20 text-[11px] text-slate-400 space-y-1">
+            <div className="font-bold text-emerald-300">Data Integrity Policy:</div>
             {dataQualityNotes.map((note, i) => (
               <div key={i}>• {note}</div>
             ))}
