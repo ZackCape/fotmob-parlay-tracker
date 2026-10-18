@@ -105,9 +105,13 @@ export type MarketType =
   | 'OVER_5_5_CORNERS'
   | 'OVER_7_5_CORNERS'
   | 'OVER_8_5_CORNERS'
+  | 'UNDER_8_5_CORNERS'
+  | 'OVER_9_5_CORNERS'
   | 'UNDER_11_5_CORNERS'
   | 'OVER_2_5_CARDS'
   | 'OVER_3_5_CARDS'
+  | 'OVER_4_5_CARDS'
+  | 'UNDER_4_5_CARDS'
   | 'UNDER_5_5_CARDS';
 
 export interface MarketPrediction {

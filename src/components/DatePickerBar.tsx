@@ -14,6 +14,23 @@ interface DatePickerBarProps {
   lastSyncedTime: string;
 }
 
+/** Dynamic local client date (YYYY-MM-DD), evaluated on mount / call. */
+const getTodayString = () => new Date().toISOString().split('T')[0];
+
+/** Header label like "Today, 18 Oct" when the selected date is today. */
+const formatDateLabel = (date: string): string => {
+  const today = getTodayString();
+  if (date === today) {
+    const d = new Date();
+    return `Today, ${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'short' })}`;
+  }
+  return new Date(date + 'T12:00:00Z').toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+};
+
 export const DatePickerBar: React.FC<DatePickerBarProps> = ({
   selectedDate,
   onDateChange,
@@ -32,19 +49,21 @@ export const DatePickerBar: React.FC<DatePickerBarProps> = ({
 
   const setSpecialDay = (type: 'today' | 'saturday' | 'sunday') => {
     if (type === 'today') {
-      onDateChange('2026-10-17');
+      onDateChange(getTodayString());
     } else if (type === 'saturday') {
-      onDateChange('2026-10-17');
+      const d = new Date();
+      d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7) || 7);
+      onDateChange(d.toISOString().split('T')[0]);
     } else if (type === 'sunday') {
-      onDateChange('2026-10-18');
+      const d = new Date();
+      d.setDate(d.getDate() + ((7 - d.getDay() + 7) % 7));
+      onDateChange(d.toISOString().split('T')[0]);
     }
   };
 
-  const formattedDate = new Date(selectedDate + 'T12:00:00Z').toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  });
+  const formattedDate = formatDateLabel(selectedDate);
+  const todayStr = getTodayString();
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
   return (
     <div className="bg-[#16181d] border border-[#252932] rounded-2xl p-3.5 shadow-md mb-4">
@@ -61,7 +80,7 @@ export const DatePickerBar: React.FC<DatePickerBarProps> = ({
             </button>
 
             <div className="flex items-center px-3 space-x-2 font-bold text-xs sm:text-sm text-white min-w-[130px] justify-center">
-              <span>{selectedDate === '2026-10-17' ? 'Today, 17 Oct' : formattedDate}</span>
+              <span>{formattedDate}</span>
             </div>
 
             <button
@@ -78,7 +97,7 @@ export const DatePickerBar: React.FC<DatePickerBarProps> = ({
             <button
               onClick={() => setSpecialDay('today')}
               className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
-                selectedDate === '2026-10-17'
+                selectedDate === todayStr
                   ? 'bg-[#00d66c] text-black shadow-sm'
                   : 'bg-[#1c1f26] text-[#8c92a4] hover:text-white hover:bg-[#252932]'
               }`}
@@ -88,7 +107,7 @@ export const DatePickerBar: React.FC<DatePickerBarProps> = ({
             <button
               onClick={() => setSpecialDay('sunday')}
               className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
-                selectedDate === '2026-10-18'
+                selectedDate === tomorrowStr
                   ? 'bg-[#00d66c] text-black shadow-sm'
                   : 'bg-[#1c1f26] text-[#8c92a4] hover:text-white hover:bg-[#252932]'
               }`}

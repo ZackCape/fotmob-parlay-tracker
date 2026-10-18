@@ -17,7 +17,8 @@ import { AlertCircle, RefreshCw } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'fixtures' | 'parlays' | 'livetracker' | 'performance' | 'history' | 'discord'>('fixtures');
-  const [selectedDate, setSelectedDate] = useState<string>('2026-10-17'); // Saturday matchday default
+  const getTodayString = () => new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayString());
   const [selectedLeague, setSelectedLeague] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterLiveOnly, setFilterLiveOnly] = useState<boolean>(false);

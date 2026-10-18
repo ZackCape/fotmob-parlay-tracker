@@ -266,7 +266,14 @@ export function buildLiveTrackRows(fixtures: any[]): ActionRowBuilder<ButtonBuil
   return buildLiveActionRows(fixtures);
 }
 
-/** Per-match tracking embed action row: Track Match, Live Stats, Refresh. */
+/**
+ * Per-match tracking embed action row.
+ *
+ *   [ ⚡ Track Match ]  [ 📊 Live Match Stats ]  [ 🔄 Refresh ]  [ 📩 Alerts On/Off ]
+ *
+ * The alerts button toggles live goal/card/HT broadcasts for this tracker; its
+ * label and style mirror the tracker's current `alertsEnabled` state.
+ */
 export function buildLiveActionRow(messageId: string, alertsEnabled: boolean): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -284,6 +291,11 @@ export function buildLiveActionRow(messageId: string, alertsEnabled: boolean): A
       .setLabel('Refresh')
       .setEmoji('🔄')
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`cp:live:alerts:${messageId}`)
+      .setLabel(alertsEnabled ? 'Alerts On' : 'Alerts Off')
+      .setEmoji('📩')
+      .setStyle(alertsEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
   );
 }
 

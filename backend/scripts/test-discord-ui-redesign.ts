@@ -134,10 +134,10 @@ async function main() {
   check('no emoji clutter in fixture rows', !emojiClutter.test(embedText),
     `found emoji in: ${embedText.match(emojiClutter)}`);
 
-  // Explicit percentage labels: Home 46%, Draw 25%, Away 29%
-  check('Home win probability label', embedText.includes('`Home 46%`'));
-  check('Draw probability label', embedText.includes('`Draw 25%`'));
-  check('Away win probability label', embedText.includes('`Away 29%`'));
+  // Explicit label + probability + implied fair odds, e.g. `Home 46% (2.17x)`
+  check('Home win probability + odds label', embedText.includes('`Home 46% (2.17x)`'));
+  check('Draw probability + odds label', embedText.includes('`Draw 25% (4.00x)`'));
+  check('Away probability + odds label', embedText.includes('`Away 29% (3.45x)`'));
 
   // Goal markets
   check('Over 1.5 Goals label', embedText.includes('`Over 1.5 Goals (82%)`'));

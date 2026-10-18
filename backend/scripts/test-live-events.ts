@@ -298,7 +298,10 @@ async function main() {
   const trackIds = allTrackButtons.map((c: any) => c.custom_id);
   check('track button for match 1', trackIds.includes('cp:live:track:espn-1'));
   check('track button for match 2', trackIds.includes('cp:live:track:espn-2'));
-  check('track buttons are ⚡ Track actions', allTrackButtons.every((c: any) => c.emoji && c.emoji.name === '⚡'));
+  // Each fixture contributes a ⚡ Track button followed by 📊 Stats / 🔄 Refresh.
+  const trackButtons = allTrackButtons.filter((c: any) => String(c.custom_id).startsWith('cp:live:track:'));
+  check('track buttons are ⚡ Track actions',
+    trackButtons.length === 2 && trackButtons.every((c: any) => c.emoji && c.emoji.name === '⚡'));
 
   /* ================================================================ *
    * Summary

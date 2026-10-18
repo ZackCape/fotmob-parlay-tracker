@@ -430,6 +430,8 @@ export class EspnAdapter implements IFootballDataProvider {
       awayRecent: sampleFromResults(stats?.recentGoals.away),
       homeXg: st?.xgHome ?? null,
       awayXg: st?.xgAway ?? null,
+      homeTeam: fixture.homeTeam?.name ?? null,
+      awayTeam: fixture.awayTeam?.name ?? null,
     });
 
     const dcResult = calculateDixonColes(

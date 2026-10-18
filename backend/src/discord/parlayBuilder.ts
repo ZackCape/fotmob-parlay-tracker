@@ -26,6 +26,8 @@ export interface ParlayLeg {
   /** Confidence band from the model, when available. */
   confidenceLower?: number | null;
   confidenceUpper?: number | null;
+  /** Real bookmaker decimal price for this selection, when available. */
+  marketOdds?: number | null;
 }
 
 export interface CustomParlay {
@@ -37,6 +39,12 @@ export interface CustomParlay {
   /** Units staked, used for payout maths. */
   stake: number;
 }
+
+/** Base stake in currency units. Slips default to 1 unit = $10. */
+export const BASE_STAKE_USD = 10;
+/** Dollar value of one unit. */
+export const UNIT_VALUE_USD = 10;
+const MAX_RECOMMENDED_UNITS = 10;
 
 const parlayStore = new Map<string, CustomParlay>();
 
@@ -52,7 +60,7 @@ export const MAX_LEGS = 10;
 export function getParlay(ownerId: string): CustomParlay {
   let p = parlayStore.get(ownerId);
   if (!p) {
-    p = { ownerId, legs: [], createdAt: Date.now(), saved: false, savedAt: null, stake: 1 };
+    p = { ownerId, legs: [], createdAt: Date.now(), saved: false, savedAt: null, stake: BASE_STAKE_USD };
     parlayStore.set(ownerId, p);
   }
   // A slip that has been saved and then edited is a draft again.
@@ -191,6 +199,93 @@ export function parlayExpectedValue(parlay: CustomParlay): number | null {
   return Number((p * payout - parlay.stake).toFixed(2));
 }
 
+/**
+ * Combined decimal price of the slip using real bookmaker prices, when every
+ * leg carries one. Returns null if any leg lacks a market price, so we never
+ * present a synthetic "combined odds" figure.
+ */
+export function parlayMarketOdds(parlay: CustomParlay): number | null {
+  if (!parlay.legs.length) return null;
+  let product = 1;
+  for (const l of parlay.legs) {
+    const o = l.marketOdds;
+    if (typeof o !== 'number' || !Number.isFinite(o) || o <= 1) return null;
+    product *= o;
+  }
+  return Number(product.toFixed(3));
+}
+
+/** Model edge over the market: P(model) * marketOdds - 1. Null when unknown. */
+export function parlayEdge(parlay: CustomParlay): number | null {
+  const odds = parlayMarketOdds(parlay);
+  if (odds === null) return null;
+  const p = parlayCombinedProbability(parlay);
+  return Number((p * odds - 1).toFixed(4));
+}
+
+/**
+ * Fractional Kelly stake for a given probability and decimal price.
+ * Clamped to [0, 0.25] so one optimistic leg cannot recommend the whole bankroll.
+ */
+export function kellyFraction(probability: number, decimalOdds: number): number {
+  if (!Number.isFinite(probability) || !Number.isFinite(decimalOdds) || decimalOdds <= 1) return 0;
+  const f = (probability * decimalOdds - 1) / (decimalOdds - 1);
+  return Math.max(0, Math.min(0.25, f));
+}
+
+/**
+ * Recommended stake from a model edge, expressed in units (1 unit = $10).
+ *
+ * The flat base is 1 unit; each percent of +EV edge adds a small, capped step,
+ * so an 8.2% edge recommends ~1.55 units ($15.50). With no market price the
+ * edge is 0 and the base 1-unit stake is recommended.
+ */
+export function recommendedStakeForEdge(edge: number | null): { units: number; stake: number; edgePct: number } {
+  const e = Number.isFinite(edge as number) ? (edge as number) : 0;
+  const units = Math.max(1, Math.min(MAX_RECOMMENDED_UNITS, 1 + Math.max(0, e) * 6.7));
+  const rounded = Number(units.toFixed(2));
+  return { units: rounded, stake: Number((rounded * UNIT_VALUE_USD).toFixed(2)), edgePct: Number((e * 100).toFixed(1)) };
+}
+
+/** Full recommended-stake bundle for a slip (edge, units, dollar stake). */
+export function recommendedStake(parlay: CustomParlay): {
+  units: number;
+  stake: number;
+  edgePct: number;
+  hasMarketOdds: boolean;
+  kelly: number;
+} {
+  const odds = parlayMarketOdds(parlay);
+  const edge = parlayEdge(parlay);
+  const rec = recommendedStakeForEdge(edge);
+  const kelly = odds !== null ? kellyFraction(parlayCombinedProbability(parlay), odds) : 0;
+  return { ...rec, hasMarketOdds: odds !== null, kelly: Number(kelly.toFixed(4)) };
+}
+
+/** Plain-text slip for the "Copy Text Slip" button. */
+export function buildTextSlip(parlay: CustomParlay): string {
+  if (!parlay.legs.length) return 'Cape Predictor — empty slip.';
+  const lines = parlay.legs.map((l, i) => `${i + 1}. ${l.description} — ${l.selection} (${pct(l.probability)})`);
+  const odds = parlayMarketOdds(parlay) ?? parlayImpliedOdds(parlay);
+  const combined = parlayCombinedProbability(parlay);
+  const rec = recommendedStake(parlay);
+  return [
+    'CAPE PREDICTOR — CUSTOM PARLAY',
+    `Football Intelligence. Smarter Predictions.`,
+    '',
+    ...lines,
+    '',
+    `Legs: ${parlay.legs.length}`,
+    `Combined odds: ${odds ? `${odds.toFixed(2)}x` : 'N/A'}`,
+    `Model win probability: ${pct(combined, 2)}`,
+    `Stake: $${parlay.stake.toFixed(2)}`,
+    `Payout if every leg lands: $${((odds ?? 0) * parlay.stake).toFixed(2)}`,
+    `Recommended stake: $${rec.stake.toFixed(2)} (${rec.units.toFixed(2)} units)`,
+    '',
+    'Model estimates only — not bookmaker odds, not financial advice.',
+  ].join('\n');
+}
+
 /* ------------------------------------------------------------------ *
  * Mutations
  * ------------------------------------------------------------------ */
@@ -297,6 +392,8 @@ export function buildParlayMarketRow(current?: string): ActionRowBuilder<StringS
 
 export function buildParlayActionRows(parlay: CustomParlay): ActionRowBuilder<ButtonBuilder>[] {
   const empty = parlay.legs.length === 0;
+  // The manual "Set Stake" button was removed: slips now auto-default to a
+  // 1-unit ($10) base stake and the model recommends an edge-scaled amount.
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -312,13 +409,14 @@ export function buildParlayActionRows(parlay: CustomParlay): ActionRowBuilder<Bu
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(empty),
       new ButtonBuilder()
-        .setCustomId('cp:parlay:stake')
-        .setLabel('Set Stake')
-        .setEmoji('💵')
-        .setStyle(ButtonStyle.Secondary),
+        .setCustomId('cp:parlay:copyslip')
+        .setLabel('Copy Text Slip')
+        .setEmoji('📋')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(empty),
       new ButtonBuilder()
         .setCustomId('cp:parlay:save')
-        .setLabel('Save Parlay')
+        .setLabel('Save & Share')
         .setEmoji('💾')
         .setStyle(ButtonStyle.Success)
         .setDisabled(empty),
@@ -405,9 +503,13 @@ export function buildParlayEmbed(parlay: CustomParlay, notice?: string): EmbedBu
 
   const correlated = hasCorrelatedLegs(parlay);
   const combined = parlayCombinedProbability(parlay);
-  const odds = parlayImpliedOdds(parlay);
-  const payout = parlayExpectedPayout(parlay);
-  const ev = parlayExpectedValue(parlay);
+  const marketOdds = parlayMarketOdds(parlay);
+  const fairOddsValue = parlayImpliedOdds(parlay);
+  const displayOdds = marketOdds ?? fairOddsValue;
+  const stake = parlay.stake;
+  const payout = displayOdds !== null ? Number((displayOdds * stake).toFixed(2)) : null;
+  const ev = displayOdds !== null ? Number((combined * displayOdds * stake - stake).toFixed(2)) : null;
+  const rec = recommendedStake(parlay);
 
   const calc = correlated
     ? [
@@ -415,11 +517,12 @@ export function buildParlayEmbed(parlay: CustomParlay, notice?: string): EmbedBu
       'Keep one selection per match to see combined odds.',
     ].join('\n')
     : [
- `Combined probability: **${pct(combined, 2)}**`,
-      `Combined fair odds: **${odds ? odds.toFixed(2) : 'n/a'}x**`,
-      `Stake: **${parlay.stake}** unit${parlay.stake === 1 ? '' : 's'}`,
-      `Payout if every leg lands: **${payout ?? 'n/a'}**`,
-      `Expected value: **${ev ?? 'n/a'}** *(fair odds are EV-neutral by definition)*`,
+      `Combined Decimal Odds: **${displayOdds !== null ? `${displayOdds.toFixed(2)}x` : 'N/A'}**${marketOdds !== null ? ' *(bookmaker)*' : ' *(model fair)*'}`,
+      `Model Win Probability: **${pct(combined, 2)}**`,
+      `Estimated Potential Payout: **$${stake.toFixed(2)} → $${payout !== null ? payout.toFixed(2) : 'N/A'}**`,
+      `Expected Value: **$${ev !== null ? ev.toFixed(2) : 'N/A'}**${marketOdds === null ? ' *(fair odds are EV-neutral)*' : ''}`,
+      '',
+      `> **Recommended Stake:** $${rec.stake.toFixed(2)} (${rec.units.toFixed(2)} Units based on ${rec.edgePct.toFixed(1)}% ${rec.edgePct >= 0 ? '+' : ''}EV edge)`,
     ].join('\n');
 
   e.addFields({ name: 'Combined', value: calc, inline: false });

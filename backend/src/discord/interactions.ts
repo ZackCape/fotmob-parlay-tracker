@@ -136,11 +136,15 @@ export function formatFixtureMarkets(
   const corners = getPct('OVER_8_5_CORNERS');
   const cards = getPct('OVER_3_5_CARDS');
 
+  // Explicit label + probability + implied fair odds, e.g. `Home 46% (2.17x)`.
+  const withOdds = (label: string, p: number) =>
+    bt(`${label} ${(p * 100).toFixed(0)}% (${(1 / p).toFixed(2)}x)`);
+
   return {
     winOdds: [
-      home !== null ? bt(`Home ${(home * 100).toFixed(0)}%`) : null,
-      draw !== null ? bt(`Draw ${(draw * 100).toFixed(0)}%`) : null,
-      away !== null ? bt(`Away ${(away * 100).toFixed(0)}%`) : null,
+      home !== null ? withOdds('Home', home) : null,
+      draw !== null ? withOdds('Draw', draw) : null,
+      away !== null ? withOdds('Away', away) : null,
     ].filter(Boolean).join(' | ') || '`N/A`',
 
     goals: [
@@ -327,6 +331,17 @@ export function buildHelpRow(): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
+/** DM-alerts toggle for a user who is tracking a match. */
+export function buildDmAlertsRow(userId: string, enabled = false): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`cp:dm:alerts:${userId}`)
+      .setLabel(enabled ? 'DM Alerts On' : 'DM Alerts Off')
+      .setEmoji('📩')
+      .setStyle(enabled ? ButtonStyle.Success : ButtonStyle.Secondary),
+  );
+}
+
 export function buildHelpEmbed(): EmbedBuilder {
   const e = baseEmbed('Cape Predictor • Command Directory',
     `*${BRAND.tagline}*\nStatistical football intelligence powered by a Dixon-Coles probability engine and real verified fixture data.`);
@@ -338,6 +353,25 @@ export function buildHelpEmbed(): EmbedBuilder {
     { name: '🚀 Web App', value: '`/dashboard` — launch the full React dashboard, optionally embedded in Discord.', inline: false },
     { name: '⚙️ Settings', value: '`/interval` set broadcast cadence • `/channel` link a channel.', inline: false },
   );
+  return e;
+}
+
+/** Community match prediction poll embed for /poll. */
+export function buildPollEmbed(matchId: string): EmbedBuilder {
+  const e = new EmbedBuilder()
+    .setColor(BRAND.accent)
+    .setAuthor({ name: BRAND.author })
+    .setTitle('📊 Community Match Prediction')
+    .setTimestamp(new Date());
+  e.setDescription(
+    `Cast your vote for match **${matchId}**.\n\n` +
+    `React with:\n` +
+    `🏠 Home Win\n` +
+    `🤝 Draw\n` +
+    `✈️ Away Win\n\n` +
+    `Results tallied after kickoff.`
+  );
+  e.setFooter({ text: `${BRAND.footer} • Community predictions, not advice` });
   return e;
 }
 

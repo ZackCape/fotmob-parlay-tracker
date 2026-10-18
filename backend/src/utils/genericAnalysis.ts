@@ -33,6 +33,8 @@ export function buildGenericAnalysis(fixture: Fixture): MatchAnalysis {
     league: fixture.league,
     homeXg: fixture.statistics?.xgHome ?? null,
     awayXg: fixture.statistics?.xgAway ?? null,
+    homeTeam: fixture.homeTeam?.name ?? null,
+    awayTeam: fixture.awayTeam?.name ?? null,
   });
 
   const { homeAttack, homeDefense, awayAttack, awayDefense } = strength;

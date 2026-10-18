@@ -8,6 +8,8 @@ import { FootballDatabaseAdapter, FootballNewsArticle } from './footballdatabase
 import { OpenFootballGitHubAdapter } from './openfootball-github-adapter.js';
 import { EspnAdapter } from './espn-adapter.js';
 import { TheOddsAdapter } from './theodds-adapter.js';
+import { OddsApiAdapter, DEFAULT_ODDS_REGIONS } from './odds-api-adapter.js';
+import { PublicOddsAdapter } from './public-odds-adapter.js';
 import { TheSportsDBAdapter } from './thesportsdb-adapter.js';
 import { OpenLigaDBAdapter } from './openligadb-adapter.js';
 import { FootballDataUkAdapter } from './football-data-uk-adapter.js';
@@ -26,6 +28,26 @@ interface CacheEntry<T> {
   ttlMs: number;
 }
 
+/**
+ * Extract h2h (moneyline) decimal prices from a The Odds API snapshot.
+ * Returns nulls for any outcome the snapshot did not price.
+ */
+function extractH2hPrices(snapshot: any): { home: number | null; draw: number | null; away: number | null } {
+  if (!snapshot) return { home: null, draw: null, away: null };
+  let market: any = null;
+  for (const b of snapshot.bookmakers || []) {
+    const m = (b.markets || []).find((mk: any) => mk.key === 'h2h');
+    if (m) { market = m; break; }
+  }
+  if (!market) return { home: null, draw: null, away: null };
+  const safe = (v: any) => (typeof v === 'number' && isFinite(v) && v > 0 ? v : null);
+  return {
+    home: safe(market.outcomes?.find((o: any) => o.name === snapshot.homeTeam)?.price),
+    away: safe(market.outcomes?.find((o: any) => o.name === snapshot.awayTeam)?.price),
+    draw: safe(market.outcomes?.find((o: any) => /draw/i.test(o.name))?.price),
+  };
+}
+
 export class DataProviderFactory {
   private primaryProvider: IFootballDataProvider;
   private backupProvider: IFootballDataProvider | null;
@@ -38,6 +60,7 @@ export class DataProviderFactory {
   private openfootballGitHubProvider: OpenFootballGitHubAdapter;
   private espnProvider: EspnAdapter;
   private oddsAdapter: TheOddsAdapter | null;
+  private publicOddsAdapter: PublicOddsAdapter;
   private config: AppConfig;
   private fallbackProvider: IFootballDataProvider;
   private adaptiveLearning: AdaptiveLearningEngine;
@@ -57,7 +80,17 @@ export class DataProviderFactory {
     this.footballDataUkProvider = new FootballDataUkAdapter();
     this.openfootballGitHubProvider = new OpenFootballGitHubAdapter();
     this.espnProvider = new EspnAdapter();
-    this.oddsAdapter = config.theOddsApiKey ? new TheOddsAdapter(config.theOddsApiKey, config.theOddsApiRegions, config.theOddsApiMonthlyLimit, config.theOddsApiSafetyReserve) : null;
+    // Tier 1: The Odds API (multi-region eu,uk,us + markets h2h,totals,spreads).
+    this.oddsAdapter = config.theOddsApiKey
+      ? new OddsApiAdapter(
+          config.theOddsApiKey,
+          config.theOddsApiRegions && config.theOddsApiRegions !== 'uk' ? config.theOddsApiRegions : DEFAULT_ODDS_REGIONS,
+          config.theOddsApiMonthlyLimit,
+          config.theOddsApiSafetyReserve,
+        )
+      : null;
+    // Tier 2: zero-quota public odds cache.
+    this.publicOddsAdapter = new PublicOddsAdapter();
     this.backupProvider = config.footballDataOrgKey ? new FootballDataOrgAdapter(config.footballDataOrgKey) : null;
     this.defaultTtlMs = config.cacheTtlMinutes * 60 * 1000;
 
@@ -111,7 +144,12 @@ export class DataProviderFactory {
 
   public async getOddsForFixture(fixture: Fixture): Promise<any> {
     if (!this.oddsAdapter) return null;
-    return this.oddsAdapter.getOddsForFixture(fixture);
+    const snap = await this.oddsAdapter.getOddsForFixture(fixture);
+    // Self-populate the Tier-2 zero-quota cache whenever Tier 1 succeeds.
+    if (snap) {
+      try { this.publicOddsAdapter.saveFromSnapshots([snap]); } catch { /* best-effort */ }
+    }
+    return snap;
   }
 
   public getOddsUsage() {
@@ -121,6 +159,98 @@ export class DataProviderFactory {
 
   public isOddsConfigured(): boolean {
     return Boolean(this.oddsAdapter);
+  }
+
+  public isPublicOddsAvailable(): boolean {
+    return this.publicOddsAdapter.isAvailable();
+  }
+
+  /**
+   * Hybrid multi-tier odds resolution.
+   *
+   *   Tier 1 — The Odds API live bookmaker consensus (if key present + budget).
+   *   Tier 2 — Zero-quota public odds cache (`data/odds_cache.json`).
+   *   Tier 3 — No bookmaker line; caller derives calibrated fair odds (1 / P).
+   *
+   * Always returns a tier so the surface can explain *why* a price is shown,
+   * and never throws: an unavailable tier simply falls through.
+   */
+  public async resolveOdds(fixture: Fixture): Promise<{
+    tier: 1 | 2 | 3;
+    source: 'bookmaker' | 'public-cache' | 'model';
+    odds: any | null;
+    home: number | null;
+    draw: number | null;
+    away: number | null;
+    reason: string;
+  }> {
+    // --- Tier 1 ---
+    if (this.oddsAdapter) {
+      try {
+        const snap = await this.oddsAdapter.getOddsForFixture(fixture);
+        const prices = extractH2hPrices(snap);
+        if (snap && (prices.home !== null || prices.draw !== null || prices.away !== null)) {
+          try { this.publicOddsAdapter.saveFromSnapshots([snap]); } catch { /* best-effort */ }
+          return { tier: 1, source: 'bookmaker', odds: snap, ...prices, reason: 'ok' };
+        }
+        const usage = this.oddsAdapter.getUsage();
+        if (usage && usage.used >= usage.limit - usage.reserve) {
+          // fall through to Tier 2 / 3
+          return this.finishOddsFallback(fixture, 'quota_exhausted');
+        }
+      } catch {
+        return this.finishOddsFallback(fixture, 'odds_api_error');
+      }
+    }
+
+    // --- Tier 2 ---
+    const cached = this.publicOddsAdapter.getOddsForFixture(fixture);
+    if (cached && (cached.home !== null || cached.draw !== null || cached.away !== null)) {
+      return {
+        tier: 2,
+        source: 'public-cache',
+        odds: null,
+        home: cached.home,
+        draw: cached.draw,
+        away: cached.away,
+        reason: 'bookmaker_unavailable_using_cache',
+      };
+    }
+
+    // --- Tier 3 ---
+    return {
+      tier: 3,
+      source: 'model',
+      odds: null,
+      home: null,
+      draw: null,
+      away: null,
+      reason: this.oddsAdapter ? 'no_odds_found' : 'odds_provider_not_configured',
+    };
+  }
+
+  private finishOddsFallback(fixture: Fixture, reason: string) {
+    const cached = this.publicOddsAdapter.getOddsForFixture(fixture);
+    if (cached && (cached.home !== null || cached.draw !== null || cached.away !== null)) {
+      return {
+        tier: 2 as const,
+        source: 'public-cache' as const,
+        odds: null,
+        home: cached.home,
+        draw: cached.draw,
+        away: cached.away,
+        reason,
+      };
+    }
+    return {
+      tier: 3 as const,
+      source: 'model' as const,
+      odds: null,
+      home: null,
+      draw: null,
+      away: null,
+      reason,
+    };
   }
 
   private getCached<T>(key: string): T | null {

@@ -277,8 +277,9 @@ async function main() {
   const btns = pPayload.components[3].toJSON().components.map((c: any) => c.custom_id);
   check('parlay has Add Leg', btns.includes('cp:parlay:add'));
   check('parlay has Remove Leg', btns.includes('cp:parlay:remove'));
-  check('parlay has Set Stake (modal)', btns.includes('cp:parlay:stake'));
-  check('parlay has Save Parlay', btns.includes('cp:parlay:save'));
+  check('parlay has Copy Text Slip', btns.includes('cp:parlay:copyslip'));
+  check('parlay has Save & Share', btns.includes('cp:parlay:save'));
+  check('parlay has no manual Set Stake button', !btns.includes('cp:parlay:stake'));
   check('parlay has per-leg drop buttons', pPayload.components.some((r: any) =>
     r.toJSON().components[0]?.custom_id?.startsWith('cp:parlay:drop:')));
 

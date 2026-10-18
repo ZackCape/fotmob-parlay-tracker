@@ -58,7 +58,7 @@ async function bootstrap() {
     console.log(`🚀 Server listening on http://localhost:${config.port}`);
     console.log(`📊 Health Check: http://localhost:${config.port}/api/system/status`);
     console.log(`🤖 Discord Status: http://localhost:${config.port}/api/discord/status`);
-    console.log(`📅 Fixtures API: http://localhost:${config.port}/api/fixtures?date=2026-10-18`);
+    console.log(`📅 Fixtures API: http://localhost:${config.port}/api/fixtures?date=${new Date().toISOString().split('T')[0]}`);
     console.log('----------------------------------------------------');
   });
 

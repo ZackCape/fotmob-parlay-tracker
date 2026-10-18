@@ -2,6 +2,11 @@ import { Router, Request, Response } from 'express';
 import { DataProviderFactory } from '../providers/provider-factory.js';
 import { computeOddsComparison } from '../utils/oddsMath.js';
 import { isVerifiedFixture } from '../utils/fixtureValidation.js';
+import { bayesianBlend, OutcomeProbabilities, MARKET_BLEND_WEIGHT } from '../engine/poisson-dixon-coles.js';
+
+/** Fair (overround-free) decimal odds from a probability. */
+const fairOdds = (p: number | null): number | null =>
+  p !== null && p > 0 ? Number((1 / p).toFixed(2)) : null;
 
 export function createOddsRouter(factory: DataProviderFactory): Router {
   const router = Router();
@@ -29,39 +34,82 @@ export function createOddsRouter(factory: DataProviderFactory): Router {
         return res.json({ available: false, reason: 'non_live_fixture', odds: null });
       }
 
-      if (!factory.isOddsConfigured()) {
-        return res.status(200).json({ available: false, reason: 'odds_provider_not_configured', odds: null });
+      // --- Hybrid multi-tier odds resolution ---
+      const tiered = await factory.resolveOdds(fixture as any);
+
+      // Model probabilities from the Dixon-Coles engine (or the caller-supplied values).
+      let modelHome: number | null = null;
+      let modelDraw: number | null = null;
+      let modelAway: number | null = null;
+      let details: any = null;
+      try {
+        details = await factory.getMatchDetails(fixtureId);
+      } catch { /* analysis unavailable */ }
+      const preds: any[] = details?.marketPredictions || [];
+      for (const p of preds) {
+        if (p.market === 'HOME_WIN') modelHome = p.estimatedProbability;
+        else if (p.market === 'DRAW') modelDraw = p.estimatedProbability;
+        else if (p.market === 'AWAY_WIN') modelAway = p.estimatedProbability;
       }
 
-      console.info(`[OddsRoute] request fixture=${fixtureId} home=${fixture.homeTeam.name} away=${fixture.awayTeam.name} kickoff=${fixture.kickoffTime}`);
+      const reqModelHome = req.query.modelHome ? Number(req.query.modelHome) : null;
+      const reqModelDraw = req.query.modelDraw ? Number(req.query.modelDraw) : null;
+      const reqModelAway = req.query.modelAway ? Number(req.query.modelAway) : null;
+      modelHome = reqModelHome ?? modelHome;
+      modelDraw = reqModelDraw ?? modelDraw;
+      modelAway = reqModelAway ?? modelAway;
 
-      const odds = await factory.getOddsForFixture(fixture as any);
-      if (!odds) {
-        return res.json({ available: false, reason: 'no_odds_found', odds: null, usage: factory.getOddsUsage() });
+      const hasBookmaker = tiered.home !== null && tiered.draw !== null && tiered.away !== null;
+
+      // Bayesian shrinkage: 0.70 * market + 0.30 * model when a full line exists.
+      let blended: OutcomeProbabilities | null = null;
+      if (hasBookmaker) {
+        const market: OutcomeProbabilities = {
+          home: 1 / (tiered.home as number),
+          draw: 1 / (tiered.draw as number),
+          away: 1 / (tiered.away as number),
+        };
+        if (modelHome !== null && modelDraw !== null && modelAway !== null) {
+          blended = bayesianBlend(market, { home: modelHome, draw: modelDraw, away: modelAway });
+        } else {
+          blended = bayesianBlend(market, market, 1);
+        }
       }
 
-      let bookmaker: any = null;
-      let market: any = null;
-      for (const b of odds.bookmakers) {
-        const m = b.markets.find((mk: any) => mk.key === 'h2h');
-        if (m) { bookmaker = b; market = m; break; }
-      }
-      const homeOdds = market?.outcomes?.find((o: any) => o.name === odds.homeTeam)?.price ?? null;
-      const awayOdds = market?.outcomes?.find((o: any) => o.name === odds.awayTeam)?.price ?? null;
-      const drawOdds = market?.outcomes?.find((o: any) => /draw/i.test(o.name))?.price ?? null;
+      const comparison = computeOddsComparison(
+        tiered.home, tiered.draw, tiered.away,
+        modelHome, modelDraw, modelAway,
+      );
 
-      const modelHome = req.query.modelHome ? Number(req.query.modelHome) : null;
-      const modelDraw = req.query.modelDraw ? Number(req.query.modelDraw) : null;
-      const modelAway = req.query.modelAway ? Number(req.query.modelAway) : null;
+      // Bookmaker odds when available; otherwise Cape Fair Odds (model implied).
+      const effectiveHome = hasBookmaker ? tiered.home : fairOdds(modelHome);
+      const effectiveDraw = hasBookmaker ? tiered.draw : fairOdds(modelDraw);
+      const effectiveAway = hasBookmaker ? tiered.away : fairOdds(modelAway);
 
-      const comparison = computeOddsComparison(homeOdds, drawOdds, awayOdds, modelHome, modelDraw, modelAway);
+      const overround = hasBookmaker
+        ? 1 / (tiered.home as number) + 1 / (tiered.draw as number) + 1 / (tiered.away as number)
+        : null;
 
+      // `available` is now always true when we returned a verified fixture: the
+      // pipeline can always fall back to calibrated fair odds (Tier 3).
       return res.json({
         available: true,
-        odds,
-        bookmaker: bookmaker ? { key: bookmaker.key, title: bookmaker.title, lastUpdate: bookmaker.lastUpdate } : null,
-        market: market ? { key: market.key, lastUpdate: market.lastUpdate } : null,
-        homeOdds, drawOdds, awayOdds,
+        tier: tiered.tier,
+        source: tiered.source,
+        reason: tiered.reason,
+        odds: tiered.odds,
+        bookmaker: tiered.source === 'bookmaker' ? 'consensus' : null,
+        overround,
+        homeOdds: effectiveHome,
+        drawOdds: effectiveDraw,
+        awayOdds: effectiveAway,
+        // Explicit fair odds (1 / P) — always populated when the model has run.
+        fairOddsHome: fairOdds(modelHome),
+        fairOddsDraw: fairOdds(modelDraw),
+        fairOddsAway: fairOdds(modelAway),
+        modelHome, modelDraw, modelAway,
+        blended,
+        blendWeight: MARKET_BLEND_WEIGHT,
         comparison,
         usage: factory.getOddsUsage(),
       });

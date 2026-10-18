@@ -23,6 +23,8 @@
  * records which sources were actually used so the UI can disclose it.
  */
 
+import { lookupTeamPower } from '../engine/teamPower.js';
+
 /** League baseline goals per team per match, mirroring the DC engine. */
 export function leagueBaselineRate(league: string): number {
   switch (league) {
@@ -52,6 +54,10 @@ export interface StrengthInput {
   /** Provider xG for the home side in this specific fixture (preferred). */
   homeXg?: number | null;
   awayXg?: number | null;
+  /** Home team name, used to look up its ELO power prior. */
+  homeTeam?: string | null;
+  /** Away team name, used to look up its ELO power prior. */
+  awayTeam?: string | null;
 }
 
 export interface TeamStrengths {
@@ -97,22 +103,28 @@ function clampMultiplier(value: number): number {
 }
 
 /**
- * Blend an observed rate with the neutral prior (1.0) using sample shrinkage.
+ * Blend an observed rate with a prior multiplier using sample shrinkage.
+ *
+ * The prior is normally the team's ELO power rating (alpha / beta); it defaults
+ * to the neutral 1.0 when the club is unknown, which preserves the previous
+ * behaviour exactly.
  */
-function shrink(observed: number, baseline: number, matches: number): number {
+function shrink(observed: number, baseline: number, matches: number, prior: number = 1): number {
   const raw = observed / baseline;
   const w = sampleWeight(matches);
-  return clampMultiplier(1 * (1 - w) + raw * w);
+  return clampMultiplier(prior * (1 - w) + raw * w);
 }
 
 /**
  * Attack multiplier: provider xG for this specific fixture is the most
- * specific signal, so it is blended in ahead of recent scoring form.
+ * specific signal, so it is blended in ahead of recent scoring form. Observed
+ * evidence is shrunk toward the team's ELO power prior, never toward a bare 1.0.
  */
 function attackMultiplier(
   baseline: number,
   xg: number | null | undefined,
   recent: RecentGoalSample | null | undefined,
+  prior: number = 1,
 ): { value: number; used: boolean } {
   const xgValue = finitePositive(xg);
   const gf = finitePositive(recent?.goalsForPerMatch);
@@ -120,26 +132,27 @@ function attackMultiplier(
 
   if (xgValue !== null && gf !== null) {
     // 65% fixture xG / 35% form, each already shrunk toward the prior.
-    const fromXg = shrink(xgValue, baseline, n);
-    const fromForm = shrink(gf, baseline, n);
+    const fromXg = shrink(xgValue, baseline, n, prior);
+    const fromForm = shrink(gf, baseline, n, prior);
     return { value: clampMultiplier(fromXg * 0.65 + fromForm * 0.35), used: true };
   }
-  if (xgValue !== null) return { value: shrink(xgValue, baseline, n), used: true };
-  if (gf !== null && n > 0) return { value: shrink(gf, baseline, n), used: true };
+  if (xgValue !== null) return { value: shrink(xgValue, baseline, n, prior), used: true };
+  if (gf !== null && n > 0) return { value: shrink(gf, baseline, n, prior), used: true };
 
-  // No observed attacking signal: neutral prior.
-  return { value: 1, used: false };
+  // No observed attacking signal: use the ELO power prior (neutral 1.0 if unknown).
+  return { value: clampMultiplier(prior), used: prior !== 1 };
 }
 
 /** Defensive multiplier is expressed as goals *conceded* relative to baseline. */
 function defenseMultiplier(
   baseline: number,
   recent: RecentGoalSample | null | undefined,
+  prior: number = 1,
 ): { value: number; used: boolean } {
   const ga = finitePositive(recent?.goalsConcededPerMatch);
   const n = recent?.matches ?? 0;
-  if (ga !== null && n > 0) return { value: shrink(ga, baseline, n), used: true };
-  return { value: 1, used: false };
+  if (ga !== null && n > 0) return { value: shrink(ga, baseline, n, prior), used: true };
+  return { value: clampMultiplier(prior), used: prior !== 1 };
 }
 
 /**
@@ -149,16 +162,25 @@ function defenseMultiplier(
 export function estimateTeamStrengths(input: StrengthInput): TeamStrengths {
   const baseline = leagueBaselineRate(input.league);
 
-  const homeAtk = attackMultiplier(baseline, input.homeXg, input.homeRecent);
-  const awayAtk = attackMultiplier(baseline, input.awayXg, input.awayRecent);
-  const homeDef = defenseMultiplier(baseline, input.homeRecent);
-  const awayDef = defenseMultiplier(baseline, input.awayRecent);
+  // ELO power priors (alpha = attack, beta = defensive weakness).
+  const homePower = lookupTeamPower(input.homeTeam);
+  const awayPower = lookupTeamPower(input.awayTeam);
+  const homeAtkPrior = homePower?.attack ?? 1;
+  const homeDefPrior = homePower?.defense ?? 1;
+  const awayAtkPrior = awayPower?.attack ?? 1;
+  const awayDefPrior = awayPower?.defense ?? 1;
+
+  const homeAtk = attackMultiplier(baseline, input.homeXg, input.homeRecent, homeAtkPrior);
+  const awayAtk = attackMultiplier(baseline, input.awayXg, input.awayRecent, awayAtkPrior);
+  const homeDef = defenseMultiplier(baseline, input.homeRecent, homeDefPrior);
+  const awayDef = defenseMultiplier(baseline, input.awayRecent, awayDefPrior);
 
   const used: string[] = [];
   if (input.homeXg || input.awayXg) used.push('fixture xG');
   if (input.homeRecent?.matches || input.awayRecent?.matches) {
     used.push(`recent form (${(input.homeRecent?.matches ?? 0) + (input.awayRecent?.matches ?? 0)} matches)`);
   }
+  if (homePower || awayPower) used.push('ELO power ratings');
 
   const priorOnly = used.length === 0;
 

@@ -7,6 +7,7 @@ import { MarketPrediction, ParlayMode } from '../types/football.js';
 import { LiveParlayTrackerService } from '../parlays/live-tracker.js';
 import { isVerifiedFixture } from '../utils/fixtureValidation.js';
 import * as CP from './interactions.js';
+import { BRAND } from './brand.js';
 
 export type UpdateInterval = '5m' | '15m' | '30m' | '45m' | '1h';
 
@@ -40,6 +41,16 @@ export class DiscordBotService {
   private liveEventFirstPolled: Set<string> = new Set();
   /** Last observed status per fixture, used to detect halftime transitions. */
   private liveEventLastStatus: Map<string, string> = new Map();
+  /** Daily morning briefing time (HH:MM) set via /setbrief. */
+  private briefingTime: string | null = null;
+  /** User IDs that have opted into DM alerts for their tracked matches. */
+  private dmAlerts: Set<string> = new Set();
+  /** Last channel topic written per channel, so we only edit when it changes. */
+  private liveTopics: Map<string, string> = new Map();
+  /** Daily morning-briefing scheduler. */
+  private briefingTimer?: NodeJS.Timeout;
+  /** ISO date of the last morning briefing sent, to avoid duplicates. */
+  private lastBriefingDate: string | null = null;
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
     this.config = config;
@@ -246,6 +257,41 @@ export class DiscordBotService {
             .setName('broadcast')
             .setDescription('Trigger a live odds & team news briefing right now in this channel'),
           new SlashCommandBuilder()
+            .setName('setbrief')
+            .setDescription('Set the daily morning briefing time (HH:MM, local tz)')
+            .addStringOption(opt =>
+              opt
+                .setName('time')
+                .setDescription('Briefing time in HH:MM format (e.g. 08:00)')
+                .setRequired(true)),
+          new SlashCommandBuilder()
+            .setName('h2h')
+            .setDescription('Head-to-head history between two teams (Team1 vs Team2)')
+            .addStringOption(opt =>
+              opt
+                .setName('teams')
+                .setDescription('Two teams separated by " vs "')
+                .setRequired(true)),
+          new SlashCommandBuilder()
+            .setName('team')
+            .setDescription('Team form and recent stats')
+            .addStringOption(opt =>
+              opt
+                .setName('name')
+                .setDescription('Team name')
+                .setRequired(true)),
+          new SlashCommandBuilder()
+            .setName('value')
+            .setDescription('Highlight +EV model-vs-market picks for today'),
+          new SlashCommandBuilder()
+            .setName('poll')
+            .setDescription('Community match prediction poll')
+            .addStringOption(opt =>
+              opt
+                .setName('match')
+                .setDescription('Match ID (press 📊 Analyze on a fixture to copy one)')
+                .setRequired(true)),
+          new SlashCommandBuilder()
             .setName('help')
             .setDescription('Cape Predictor command directory with interactive navigation buttons'),
         ];
@@ -261,7 +307,9 @@ export class DiscordBotService {
     this.client.on('interactionCreate', async interaction => {
       if (!interaction.isChatInputCommand()) return;
       try {
-        if (interaction.commandName === 'info' || interaction.commandName === 'help') {
+        // `/help` is handled by the interactive-GUI listener below; `/info`
+        // keeps the short static summary.
+        if (interaction.commandName === 'info') {
           const embed = this.buildInfoEmbed();
           await interaction.reply({ embeds: [embed] });
         } else if (interaction.commandName === 'fixtures') {
@@ -313,6 +361,45 @@ export class DiscordBotService {
           await interaction.deferReply();
           const res = await this.sendHourlyUpdate();
           await interaction.editReply(res.message);
+        }
+
+        else if (interaction.commandName === 'setbrief') {
+          const time = interaction.options.getString('time', true);
+          if (!/^\d{2}:\d{2}$/.test(time)) {
+            await interaction.reply({ content: '⚠️ Please use HH:MM format (e.g. 08:00).', ephemeral: true });
+            return;
+          }
+          this.briefingTime = time;
+          await interaction.reply({ content: `✅ Morning briefing set to **${time}** daily (local tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}).`, ephemeral: true });
+          return;
+        } else if (interaction.commandName === 'h2h') {
+          await interaction.deferReply();
+          const teams = interaction.options.getString('teams', true);
+          const [t1, t2] = teams.split(' vs ').map((s: string) => s.trim());
+          if (!t1 || !t2) {
+            await interaction.editReply({ content: '⚠️ Use format: `Team1 vs Team2`.' });
+            return;
+          }
+          const h2h = await this.headToHead(t1, t2);
+          await interaction.editReply({ embeds: [h2h] });
+          return;
+        } else if (interaction.commandName === 'team') {
+          await interaction.deferReply();
+          const teamName = interaction.options.getString('name', true);
+          const embed = await this.teamForm(teamName);
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        } else if (interaction.commandName === 'value') {
+          await interaction.deferReply();
+          const embed = await this.valuePicks();
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        } else if (interaction.commandName === 'poll') {
+          await interaction.deferReply();
+          const matchId = interaction.options.getString('match', true);
+          const embed = CP.buildPollEmbed(matchId);
+          await interaction.editReply({ embeds: [embed] });
+          return;
         }
       } catch (err: any) {
         console.error('[DiscordBot] Interaction error:', err.message);
@@ -503,37 +590,6 @@ export class DiscordBotService {
     });
 
     /* ================================================================ *
-     * Modal submissions (stake input)
-     * ================================================================ */
-    this.client.on('interactionCreate', async (interaction: any) => {
-      if (!interaction.isModalSubmitCommand?.()) return;
-      if (interaction.customId !== 'cp:parlay:stake-modal') return;
-
-      const ownerId = interaction.user.id;
-      const parlay = CP.getParlay(ownerId);
-      const raw = interaction.fields.getTextInputValue('stake');
-      const stake = Number(raw);
-
-      if (!Number.isFinite(stake) || stake <= 0) {
-        await interaction.update({
-          ...CP.buildParlayPayload(parlay, await parlayFixtures(ownerId), {
-            league: CP.getParlayLeague(ownerId),
-            notice: 'Stake must be a positive number.',
-          }),
-        }).catch(() => {});
-        return;
-      }
-
-      parlay.stake = Number(stake.toFixed(2));
-      await interaction.update({
-        ...CP.buildParlayPayload(parlay, await parlayFixtures(ownerId), {
-          league: CP.getParlayLeague(ownerId),
-          notice: `Stake set to **${parlay.stake}** unit${parlay.stake === 1 ? '' : 's'}.`,
-        }),
-      }).catch(() => {});
-    });
-
-    /* ================================================================ *
      * Components: select menus, buttons, tabs
      * ================================================================ */
     this.client.on('interactionCreate', async (interaction: any) => {
@@ -566,6 +622,7 @@ export class DiscordBotService {
               ? `⚡ You are now tracking **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**! You will receive direct alerts for Goals, Own Goals, Red Cards, and Halftime Reports.`
               : 'You are already tracking this match.',
             ephemeral: true,
+            components: [CP.buildDmAlertsRow(interaction.user.id, this.dmAlerts.has(interaction.user.id))],
           });
           return;
         }
@@ -599,6 +656,7 @@ export class DiscordBotService {
               ? `⚡ You are now tracking **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**! You will receive direct alerts for Goals, Own Goals, Red Cards, and Halftime Reports.`
               : 'You are already tracking this match.',
             ephemeral: true,
+            components: [CP.buildDmAlertsRow(interaction.user.id, this.dmAlerts.has(interaction.user.id))],
           });
           return;
         }
@@ -645,6 +703,26 @@ export class DiscordBotService {
               `(${found.details.fixture.status})`,
             ephemeral: true,
           });
+          return;
+        }
+
+        /* ---------- dm alerts toggle ---------- */
+        if (id.startsWith('cp:dm:alerts:')) {
+          const userId = id.split(':')[3];
+          if (userId !== interaction.user.id) {
+            await interaction.reply({ content: 'Only the person tracking the match can toggle DM alerts.', ephemeral: true });
+            return;
+          }
+          const enabled = !this.dmAlerts.has(userId);
+          if (enabled) this.dmAlerts.add(userId); else this.dmAlerts.delete(userId);
+          try {
+            await interaction.update({ components: [CP.buildDmAlertsRow(userId, enabled)] });
+          } catch {
+            await interaction.reply({
+              content: `DM alerts ${enabled ? 'enabled' : 'disabled'}. You will ${enabled ? '' : 'no longer '}receive direct messages for your tracked matches.`,
+              ephemeral: true,
+            }).catch(() => {});
+          }
           return;
         }
 
@@ -785,6 +863,7 @@ export class DiscordBotService {
               ? `⚡ You are now tracking **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**! You will receive direct alerts for Goals, Own Goals, Red Cards, and Halftime Reports.`
               : 'You are already tracking this match.',
             ephemeral: true,
+            components: [CP.buildDmAlertsRow(interaction.user.id, this.dmAlerts.has(interaction.user.id))],
           });
           return;
         }
@@ -855,6 +934,18 @@ export class DiscordBotService {
             return;
           }
 
+          // Attach a real bookmaker price for h2h selections where one exists,
+          // so the slip can show combined decimal odds and a genuine +EV edge.
+          let marketOdds: number | null = null;
+          try {
+            const resolved = await this.factory.resolveOdds(found.fixture as any);
+            marketOdds =
+              market === 'HOME_WIN' ? resolved.home
+              : market === 'DRAW' ? resolved.draw
+              : market === 'AWAY_WIN' ? resolved.away
+              : null;
+          } catch { /* odds unavailable — model fair odds will be used */ }
+
           const res = CP.addLeg(parlay, {
             fixtureId,
             description: `${found.fixture.homeTeam.name} v ${found.fixture.awayTeam.name}`,
@@ -864,6 +955,7 @@ export class DiscordBotService {
             probability: mp.estimatedProbability,
             confidenceLower: mp.confidenceLower,
             confidenceUpper: mp.confidenceUpper,
+            marketOdds,
           });
 
           if (res.ok) CP.clearParlayPending(ownerId);
@@ -880,14 +972,21 @@ export class DiscordBotService {
           return;
         }
 
-        /* ---------- parlay: stake modal ---------- */
-        if (id === 'cp:parlay:stake') {
+        /* ---------- parlay: copy text slip ---------- */
+        if (id === 'cp:parlay:copyslip') {
           const parlay = CP.getParlay(ownerId);
-          await interaction.showModal(CP.buildStakeModal(parlay.stake));
+          if (!parlay.legs.length) {
+            await interaction.reply({ content: 'Add at least one leg before copying your slip.', ephemeral: true });
+            return;
+          }
+          const slip = CP.buildTextSlip(parlay);
+          // Discord messages cap at 2000 chars; keep it inside a code block.
+          const body = `\`\`\`\n${slip.slice(0, 1900)}\n\`\`\``;
+          await interaction.reply({ content: body, ephemeral: true });
           return;
         }
 
-        /* ---------- parlay: save ---------- */
+        /* ---------- parlay: save & share ---------- */
         if (id === 'cp:parlay:save') {
           const parlay = CP.getParlay(ownerId);
           const res = CP.saveParlay(parlay);
@@ -1034,6 +1133,13 @@ export class DiscordBotService {
               } catch (e: any) {
                 console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e.message}`);
               }
+              // Honoured DM alerts: users who opted in receive the alert privately.
+              if (this.dmAlerts.has(sub.userId)) {
+                try {
+                  const user = await this.client.users.fetch(sub.userId);
+                  await user.send({ embeds: [embed] });
+                } catch { /* DMs closed or user unavailable */ }
+              }
             }
           }
 
@@ -1055,6 +1161,9 @@ export class DiscordBotService {
             } catch { /* analysis unavailable */ }
           }
         }
+
+        // Keep subscribed channels' topics in sync during match windows.
+        await this.syncLiveChannelTopics(liveFixtures);
       } catch (e: any) {
         console.warn('[LiveEvents] alert worker tick failed:', e.message);
       }
@@ -1062,6 +1171,22 @@ export class DiscordBotService {
 
     // Never keep the process alive just for the alert loop.
     (this.liveEventTimer as any)?.unref?.();
+
+    /* ================================================================ *
+     * Daily morning briefing scheduler (default 08:00, /setbrief to change)
+     * ================================================================ */
+    this.briefingTimer = setInterval(async () => {
+      if (!this.client?.isReady()) return;
+      const now = new Date();
+      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const today = now.toISOString().slice(0, 10);
+      const target = this.briefingTime || '08:00';
+      if (hhmm === target && this.lastBriefingDate !== today) {
+        this.lastBriefingDate = today;
+        await this.sendMorningBriefing();
+      }
+    }, 60_000);
+    (this.briefingTimer as any)?.unref?.();
 
     // Handle Standard Chat Message Commands (e.g. /info or !info or !parlay)
     this.client.on('messageCreate', async message => {
@@ -1111,6 +1236,283 @@ export class DiscordBotService {
     });
 
     await this.client.login(this.config.botToken);
+  }
+
+  /* ---------------- QoL command helpers ---------------- */
+  private async headToHead(t1: string, t2: string): Promise<EmbedBuilder> {
+    const e = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle(`⚔️ Head-to-Head: ${t1} vs ${t2}`)
+      .setTimestamp(new Date());
+    const meetings: any[] = [];
+    const lt1 = t1.toLowerCase();
+    const lt2 = t2.toLowerCase();
+    for (let d = 1; d <= 45 && meetings.length < 10; d++) {
+      const date = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+      try {
+        const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+        for (const f of list) {
+          const h = f.homeTeam.name.toLowerCase();
+          const a = f.awayTeam.name.toLowerCase();
+          if ((h.includes(lt1) && a.includes(lt2)) || (h.includes(lt2) && a.includes(lt1))) {
+            meetings.push(f);
+          }
+        }
+      } catch { /* skip date */ }
+    }
+    if (!meetings.length) {
+      e.setDescription('No recent head-to-head meetings found in our verified archive.');
+      return e;
+    }
+    let t1W = 0, t2W = 0, draws = 0;
+    const lines = meetings.slice(0, 8).map((f) => {
+      const h = f.homeTeam.name.toLowerCase().includes(lt1);
+      const hs = f.homeScore ?? 0;
+      const as = f.awayScore ?? 0;
+      let winner: string;
+      if (hs > as) winner = h ? t1 : t2;
+      else if (hs < as) winner = h ? t2 : t1;
+      else winner = 'Draw';
+      if (winner === t1) t1W++; else if (winner === t2) t2W++; else draws++;
+      return `• ${f.homeTeam.name} ${hs}-${as} ${f.awayTeam.name} — **${winner}** (${f.date})`;
+    });
+    e.setDescription(
+      `Last ${meetings.length} meeting${meetings.length === 1 ? '' : 's'}:\n${lines.join('\n')}\n\n` +
+      `**${t1} wins:** ${t1W}  •  **Draws:** ${draws}  •  **${t2} wins:** ${t2W}`
+    );
+    e.setFooter({ text: `${BRAND.footer} • Verified archive only` });
+    return e;
+  }
+
+  private async teamForm(name: string): Promise<EmbedBuilder> {
+    const e = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle(`📊 Team Form: ${name}`)
+      .setTimestamp(new Date());
+    const lt = name.toLowerCase();
+    const form: Array<'W' | 'D' | 'L'> = [];
+    for (let d = 1; d <= 45 && form.length < 8; d++) {
+      const date = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+      try {
+        const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+        for (const f of list) {
+          const h = f.homeTeam.name.toLowerCase();
+          const a = f.awayTeam.name.toLowerCase();
+          if (!h.includes(lt) && !a.includes(lt)) continue;
+          const hs = f.homeScore ?? null;
+          const as = f.awayScore ?? null;
+          if (hs === null || as === null) continue;
+          const isHome = h.includes(lt);
+          const gf = isHome ? hs : as;
+          const ga = isHome ? as : hs;
+          form.push(gf > ga ? 'W' : gf === ga ? 'D' : 'L');
+          if (form.length >= 6) break;
+        }
+      } catch { /* skip date */ }
+      if (form.length >= 6) break;
+    }
+    if (form.length === 0) {
+      e.setDescription('No recent completed fixtures found for this team in our verified archive.');
+      return e;
+    }
+    const w = form.filter(r => r === 'W').length;
+    const dr = form.filter(r => r === 'D').length;
+    const l = form.filter(r => r === 'L').length;
+    const glyphs = form.map(r => (r === 'W' ? '🟢' : r === 'D' ? '🟡' : '🔴')).join('');
+    e.setDescription(
+      `Last ${form.length} match${form.length === 1 ? '' : 'es'}:\n${glyphs}\n\n` +
+      `**${w}W ${dr}D ${l}L**`
+    );
+    e.setFooter({ text: `${BRAND.footer} • Verified archive only` });
+    return e;
+  }
+
+  private async valuePicks(): Promise<EmbedBuilder> {
+    const e = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle('💎 +EV Value Picks')
+      .setTimestamp(new Date());
+    const today = new Date().toISOString().slice(0, 10);
+    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const fixtures = allFixtures.filter(isVerifiedFixture);
+    const ranked: Array<{ fx: any; model: number; label: string }> = [];
+    for (const fx of fixtures) {
+      try {
+        const details = await this.factory.getMatchDetails(fx.id);
+        if (!details?.marketPredictions) continue;
+        const h = details.marketPredictions.find((p: any) => p.market === 'HOME_WIN')?.estimatedProbability ?? null;
+        const d = details.marketPredictions.find((p: any) => p.market === 'DRAW')?.estimatedProbability ?? null;
+        const a = details.marketPredictions.find((p: any) => p.market === 'AWAY_WIN')?.estimatedProbability ?? null;
+        const best = [h, d, a].filter((v): v is number => v !== null);
+        if (!best.length) continue;
+        const max = Math.max(...best);
+        const label = max === h ? `${fx.homeTeam.name} to Win` : max === d ? 'Draw' : `${fx.awayTeam.name} to Win`;
+        ranked.push({ fx, model: max, label });
+      } catch { /* skip fixture */ }
+    }
+    ranked.sort((a, b) => b.model - a.model);
+    const top = ranked.slice(0, 6);
+    if (!top.length) {
+      e.setDescription('No value picks found today. Model predictions unavailable.');
+      return e;
+    }
+    const configured = this.factory.isOddsConfigured();
+    const lines: string[] = [];
+    for (const p of top) {
+      const fair = 1 / p.model;
+      let extra = `Fair ${fair.toFixed(2)}x`;
+      if (configured) {
+        try {
+          const odds = await this.factory.getOddsForFixture(p.fx as any);
+          const prices = this.extractH2hPricesLocal(odds);
+          const mkt = p.label.includes('Win') && p.label.includes(p.fx.homeTeam.name)
+            ? prices.home
+            : p.label === 'Draw' ? prices.draw : prices.away;
+          if (mkt) {
+            const edge = (p.model - 1 / mkt) * 100;
+            extra = `Market ${mkt.toFixed(2)}x → Edge ${edge > 0 ? '+' : ''}${edge.toFixed(1)}%`;
+          }
+        } catch { /* odds unavailable for this fixture */ }
+      }
+      lines.push(`• **${p.label}** — ${p.fx.homeTeam.name} vs ${p.fx.awayTeam.name}\n     Model ${(p.model * 100).toFixed(0)}% → ${extra}`);
+    }
+    e.setDescription(`Model vs market-implied odds. Positive edge = value.\n\n${lines.join('\n')}`);
+    e.setFooter({ text: `${BRAND.footer} • Model estimates, not financial advice` });
+    return e;
+  }
+
+  /**
+   * Builds a community match prediction poll embed for /poll.
+   */
+  public buildPollEmbed(matchId: string): EmbedBuilder {
+    const e = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle('📊 Community Match Prediction')
+      .setTimestamp(new Date());
+    e.setDescription(
+      `Cast your vote for **${matchId}**.\n\n` +
+      `React with:\n` +
+      `🏠 Home Win\n` +
+      `🤝 Draw\n` +
+      `✈️ Away Win\n\n` +
+      `Results tallied after kickoff.`
+    );
+    e.setFooter({ text: `${BRAND.footer} • Community predictions, not advice` });
+    return e;
+  }
+
+  /**
+   * Extract h2h prices from an odds snapshot (local helper for valuePicks).
+   */
+  private extractH2hPricesLocal(odds: any): { home: number | null; draw: number | null; away: number | null } {
+    let market: any = null;
+    for (const b of odds.bookmakers || []) {
+      const m = b.markets.find((mk: any) => mk.key === 'h2h');
+      if (m) { market = m; break; }
+    }
+    if (!market) return { home: null, draw: null, away: null };
+    const safe = (v: any) => (typeof v === 'number' && isFinite(v) && v > 0 ? v : null);
+    return {
+      home: safe(market.outcomes?.find((o: any) => o.name === odds.homeTeam)?.price),
+      away: safe(market.outcomes?.find((o: any) => o.name === odds.awayTeam)?.price),
+      draw: safe(market.outcomes?.find((o: any) => /draw/i.test(o.name))?.price),
+    };
+  }
+
+  /**
+   * Builds the daily morning briefing embed (8:00 default) for broadcast/DM.
+   */
+  public async buildMorningBriefing(): Promise<EmbedBuilder> {
+    const e = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle('🌅 Cape Predictor — Morning Briefing')
+      .setTimestamp(new Date());
+    const today = new Date().toISOString().slice(0, 10);
+    const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
+    const fixtures = allFixtures.filter(isVerifiedFixture);
+    const top = fixtures.slice(0, 5);
+    const lines = top.map((fx, i) => {
+      const kickoff = new Date(fx.kickoffTime).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true,
+      });
+      return `• **${fx.homeTeam.name} vs ${fx.awayTeam.name}** — ${kickoff} \`${fx.league}\``;
+    });
+    e.setDescription(
+      `Good morning! Here are today's top fixtures (**${fixtures.length}** matches).\n\n${lines.join('\n')}\n\n` +
+      `Use \`/fixtures\` for full multi-market picks or \`/value\` for +EV picks.`
+    );
+    e.setFooter({ text: `${BRAND.footer} • ${today}` });
+    return e;
+  }
+
+  /**
+   * Sends the morning briefing to the configured channel and to users with DM alerts enabled.
+   */
+  public async sendMorningBriefing(): Promise<void> {
+    if (!this.client?.isReady()) return;
+    try {
+      const embed = await this.buildMorningBriefing();
+      // Post to configured channel.
+      if (this.config.channelId) {
+        try {
+          const ch = await this.client.channels.fetch(this.config.channelId);
+          if (ch?.isTextBased()) await (ch as any).send({ embeds: [embed] });
+        } catch { /* channel send failed */ }
+      }
+      // DM users who opted into alerts.
+      for (const userId of this.dmAlerts) {
+        try {
+          const user = await this.client.users.fetch(userId);
+          if (user) await user.send({ embeds: [embed] });
+        } catch { /* DM failed */ }
+      }
+    } catch (e: any) {
+      console.warn(`[Briefing] morning briefing failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Live channel-topic auto-sync.
+   *
+   * While matches are live, channels that track a fixture get a topic
+   * summarising the live scores. The topic is only rewritten when it actually
+   * changes, which keeps us well inside Discord's edit rate limits.
+   */
+  private async syncLiveChannelTopics(liveFixtures: any[]): Promise<void> {
+    if (!this.client?.isReady() || !liveFixtures.length) return;
+    const byChannel = new Map<string, any[]>();
+    for (const fx of liveFixtures) {
+      let subs: any[] = [];
+      try {
+        subs = CP.getSubscriptionsForFixture(fx.id) || [];
+      } catch { subs = []; }
+      for (const sub of subs) {
+        const arr = byChannel.get(sub.channelId) || [];
+        arr.push(fx);
+        byChannel.set(sub.channelId, arr);
+      }
+    }
+
+    for (const [channelId, fixtures] of byChannel) {
+      const summary = fixtures
+        .slice(0, 3)
+        .map((f) => `${f.homeTeam.name} ${f.homeScore ?? 0}-${f.awayScore ?? 0} ${f.awayTeam.name}`)
+        .join(' | ');
+      const topic = `🔴 LIVE • ${summary}`.slice(0, 1024);
+      if (this.liveTopics.get(channelId) === topic) continue;
+      try {
+        const ch: any = await this.client.channels.fetch(channelId);
+        if (ch?.setTopic) {
+          await ch.setTopic(topic);
+          this.liveTopics.set(channelId, topic);
+        }
+      } catch { /* channel not editable or deleted */ }
+    }
   }
 
   /**

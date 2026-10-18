@@ -112,7 +112,8 @@ describe('parlay leg management', () => {
   it('starts empty and never invents legs', () => {
     const p = getParlay('u1');
     expect(p.legs).toHaveLength(0);
-    expect(p.stake).toBe(1);
+    // Slips auto-default to a 1-unit base stake of $10 (no manual Set Stake).
+    expect(p.stake).toBe(10);
   });
 
   it('adds a leg and refuses duplicates', () => {
