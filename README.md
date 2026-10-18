@@ -217,7 +217,16 @@ Configure `.env` as needed:
 | `DATABASE_URL` | *(Optional)* | PostgreSQL connection string (`postgresql://user:pass@host:5432/dbname`). If omitted, uses local storage fallback. |
 | `DATA_PROVIDER` | `auto` | Active data provider mode: `auto`, `api-football`, `football-data`, or `verified-archive` |
 | `API_FOOTBALL_KEY` | *(Optional)* | Free API key from [API-Sports](https://www.api-football.com/) or RapidAPI |
+| `API_FOOTBALL_KEYS` | *(Optional)* | Comma-separated API-Football keys for automatic rotation on quota errors |
 | `FOOTBALL_DATA_ORG_KEY` | *(Optional)* | Token from [Football-Data.org](https://www.football-data.org/) |
+| `THE_ODDS_API_KEY` | *(Optional)* | Free key from [The Odds API](https://the-odds-api.com/). Without it the odds engine still responds but reports `odds_provider_not_configured`. |
+| `THE_ODDS_API_REGIONS` | `uk` | Bookmaker regions for The Odds API (`uk`, `eu`, `us`) |
+| `THE_ODDS_API_MONTHLY_LIMIT` | `500` | Monthly request budget; the engine throttles before the free quota is exhausted |
+| `THE_ODDS_API_SAFETY_RESERVE` | `50` | Requests kept in reserve so live lookups never hard-fail |
+| `DISCORD_BOT_TOKEN` | *(Optional)* | Discord bot token; without it the web app runs standalone |
+| `REPORT_TIMEZONE` | `Africa/Harare` | Timezone for the nightly parlay report |
+| `PARLAY_REPORT_CHANNEL_ID` | *(Optional)* | Discord channel for the nightly parlay report |
+| `PUBLIC_URL` | `http://localhost:5000` | Public base URL used for Discord link buttons and the embedded dashboard |
 | `CACHE_TTL_MINUTES` | `15` | In-memory cache duration to strictly protect API quotas |
 | `SYNC_CRON_SCHEDULE` | `0 */4 * * *` | Cron schedule for background upcoming fixture refreshes |
 
@@ -265,9 +274,19 @@ This launches:
 ### Option B: Render.com (1-Click Deployment)
 1. Fork or push this repository to GitHub.
 2. In Render, select **Blueprints** -> **New Blueprint Instance**.
-3. Select this repository. Render automatically reads `render.yaml` to spin up:
-   - A managed PostgreSQL database instance.
-   - A Web Service running the Dockerfile container with healthchecks and automatic restarts.
+3. Select this repository. Render reads `render.yaml` and creates:
+   - **`cape-predictor-db`** — a managed PostgreSQL instance (free plan, Frankfurt). Its connection string is injected into the web service as `DATABASE_URL`, so prediction and parlay history survives restarts and redeploys.
+   - **`epl-championship-analytics`** — a Docker Web Service running the backend API, the Discord bot, the cron refresher and the compiled React dashboard, with health checks at `/api/system/status` and automatic restarts.
+4. When Render prompts for the `sync: false` values, paste your secrets (they are never stored in the repository):
+   `API_FOOTBALL_KEY`, `FOOTBALL_DATA_ORG_KEY`, `THE_ODDS_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_WEBHOOK_URL`, `PARLAY_REPORT_CHANNEL_ID`.
+5. Set the Discord Developer Portal interactions endpoint / Activities URL to your service URL
+   (`https://<service-name>.onrender.com`), and keep `PUBLIC_URL` in the blueprint in sync so link buttons resolve.
+
+> [!IMPORTANT]
+> **Free-plan caveats (be honest about them):**
+> - A free Render Web Service **spins down after ~15 minutes of inactivity**, which pauses the Discord bot and live leg-hit alerts until the next request wakes it. Use a paid *Starter* instance for genuine 24/7 alerting.
+> - Render's **free PostgreSQL expires after 30 days**; migrate to a paid database or export the data before then.
+> - The free plan has **no persistent disk**, so the app's local JSON state under `/app/data` (`saved_parlays.json`, `user_live_subscriptions.json`, `seen_live_events.json`) is wiped on every redeploy or restart. Attach a Render disk mounted at `/app/data` (paid plans) to keep it.
 
 ### Option C: Railway.app / Fly.io
 Deploy directly using the included `Dockerfile`:

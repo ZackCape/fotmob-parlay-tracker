@@ -30,8 +30,11 @@ COPY --from=builder /app/backend ./backend
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/tsconfig.server.json ./tsconfig.server.json
 
-# Create non-root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Create non-root user for security and a writable data dir for the app's
+# local JSON caches / SQLite fallback (state that isn't stored in Postgres).
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+ && mkdir -p /app/data \
+ && chown appuser:appgroup /app/data
 USER appuser
 
 EXPOSE 5000

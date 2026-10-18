@@ -1,20 +1,81 @@
+# Render Blueprint — Cape Predictor
+#
+# Deploys the unified backend + Discord bot + React dashboard as a single
+# Docker web service, backed by a managed PostgreSQL instance so the
+# prediction / parlay history survives restarts.
+#
+# Apply via Render dashboard: Blueprints -> New Blueprint Instance -> this repo.
+# Secrets are marked `sync: false` and must be entered in the Render dashboard;
+# they are never committed here.
+
+databases:
+  - name: cape-predictor-db
+    databaseName: football_analytics
+    user: football
+    plan: free
+    region: frankfurt
+
 services:
   - type: web
     name: epl-championship-analytics
     env: docker
     plan: free
     region: frankfurt
-    dockerfilePath: Dockerfile
+    branch: main
+    autoDeploy: true
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /api/system/status
+    numInstances: 1
     envVars:
       - key: NODE_ENV
         value: production
+
+      # --- Database -------------------------------------------------------
+      # Managed Postgres connection string, injected from the database above.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cape-predictor-db
+          property: connectionString
+      # Local fallback used only when DATABASE_URL is unreachable.
+      - key: SQLITE_DB_PATH
+        value: /app/data/football_analytics.db
+
+      # --- Data providers (free tiers) ------------------------------------
       - key: DATA_PROVIDER
         value: auto
       - key: API_FOOTBALL_KEY
         sync: false
+      - key: API_FOOTBALL_KEYS
+        sync: false
+      - key: API_FOOTBALL_DAILY_LIMIT
+        value: "90"
+      - key: API_FOOTBALL_SAFETY_MARGIN
+        value: "10"
       - key: FOOTBALL_DATA_ORG_KEY
         sync: false
+      - key: OPENFOOTBALL_ENABLED
+        value: "true"
+      - key: OPENFOOTBALL_DATA_DIR
+        value: /app/data/openfootball
+
+      # --- Odds engine (The Odds API — hybrid tiered odds) ----------------
+      - key: THE_ODDS_API_KEY
+        sync: false
+      - key: THE_ODDS_API_REGIONS
+        value: uk
+      - key: THE_ODDS_API_MONTHLY_LIMIT
+        value: "500"
+      - key: THE_ODDS_API_SAFETY_RESERVE
+        value: "50"
+
+      # --- Caching / scheduling -------------------------------------------
+      - key: CACHE_TTL_MINUTES
+        value: "15"
+      - key: SYNC_CRON_SCHEDULE
+        value: "0 */4 * * *"
+
+      # --- Discord --------------------------------------------------------
       - key: DISCORD_BOT_TOKEN
         sync: false
       - key: DISCORD_CHANNEL_ID
@@ -24,12 +85,14 @@ services:
       - key: ENABLE_DISCORD_HOURLY
         value: "true"
       - key: DISCORD_UPDATE_INTERVAL
-        value: "1h"
-      - key: CACHE_TTL_MINUTES
-        value: "15"
-      - key: SYNC_CRON_SCHEDULE
-        value: "0 */4 * * *"
+        value: 1h
+
+      # --- Reporting ------------------------------------------------------
+      - key: REPORT_TIMEZONE
+        value: Africa/Harare
+      - key: PARLAY_REPORT_CHANNEL_ID
+        sync: false
+
+      # --- Public URL (Discord link buttons / embedded app) ---------------
       - key: PUBLIC_URL
         value: https://epl-championship-analytics.onrender.com
-      - key: OPENFOOTBALL_ENABLED
-        value: "true"

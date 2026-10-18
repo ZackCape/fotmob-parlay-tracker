@@ -115,7 +115,7 @@ section('1) /customparlay state retention');
   check('fresh slip starts with no legs', fresh.legs.length === 0);
 
   const emptyRows = buildParlayActionRows(fresh);
-  const addBtn = emptyRows[0].components[0].data;
+  const addBtn = emptyRows[0].components[0].data as { custom_id?: string; disabled?: boolean };
   check('Add Leg is enabled on an empty slip (first leg can be committed)',
     addBtn.custom_id === 'cp:parlay:add' && !addBtn.disabled);
 
