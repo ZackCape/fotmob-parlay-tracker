@@ -78,11 +78,12 @@ async function main() {
     const p = preds.get(fx.id) || [];
     if (p.length === 0) continue;
     const markets = CP.formatFixtureMarkets(p);
+    const allLines = [markets.winOdds, markets.goals, markets.stats].join(' ');
     // Confirm no OVER_0_5 leak and at least one market is shown.
     check(`markets for ${fx.homeTeam.name} v ${fx.awayTeam.name} exclude OVER_0_5`,
-      !markets.includes('OVER_0_5'), `got: ${markets}`);
+      !allLines.includes('OVER_0_5'), `got: ${allLines}`);
     check(`markets for ${fx.homeTeam.name} v ${fx.awayTeam.name} are non-empty`,
-      markets !== 'markets N/A');
+      allLines !== '\`N/A\` \`N/A\` \`N/A\`');
     fixturesWithMarkets++;
   }
   check('every fixture with predictions renders diverse markets',

@@ -584,6 +584,70 @@ export class DiscordBotService {
           return;
         }
 
+        /* ---------- live matches: track / stats / refresh ---------- */
+        if (id.startsWith('cp:live:track:')) {
+          const fixtureId = id.split(':').slice(3).join(':');
+          await interaction.deferReply();
+          const found = await analysisFor(fixtureId);
+          if (!found) {
+            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
+            return;
+          }
+          const subscribed = CP.subscribeLive(interaction.user.id, interaction.channelId, fixtureId);
+          await interaction.followUp({
+            content: subscribed
+              ? `⚡ You are now tracking **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**! You will receive direct alerts for Goals, Own Goals, Red Cards, and Halftime Reports.`
+              : 'You are already tracking this match.',
+            ephemeral: true,
+          });
+          return;
+        }
+
+        if (id.startsWith('cp:live:lstats:')) {
+          const fixtureId = id.split(':').slice(3).join(':');
+          await interaction.deferReply();
+          const found = await analysisFor(fixtureId);
+          if (!found) {
+            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
+            return;
+          }
+          const s = found.details.fixture.statistics;
+          const homePoss = Number.isFinite(Number(s?.possessionHome)) ? Math.round(Number(s?.possessionHome)) : 'N/A';
+          const awayPoss = Number.isFinite(Number(s?.possessionAway)) ? Math.round(Number(s?.possessionAway)) : 'N/A';
+          const homeSot = Number.isFinite(Number(s?.shotsOnTargetHome)) ? Math.round(Number(s?.shotsOnTargetHome)) : 'N/A';
+          const awaySot = Number.isFinite(Number(s?.shotsOnTargetAway)) ? Math.round(Number(s?.shotsOnTargetAway)) : 'N/A';
+          const homeCorners = Number.isFinite(Number(s?.cornersHome)) ? Math.round(Number(s?.cornersHome)) : 'N/A';
+          const awayCorners = Number.isFinite(Number(s?.cornersAway)) ? Math.round(Number(s?.cornersAway)) : 'N/A';
+          const homeCards = Number.isFinite(Number(s?.yellowCardsHome)) ? Math.round(Number(s?.yellowCardsHome)) : 'N/A';
+          const awayCards = Number.isFinite(Number(s?.yellowCardsAway)) ? Math.round(Number(s?.yellowCardsAway)) : 'N/A';
+          await interaction.followUp({
+            content: `📊 **Live Match Stats — ${found.fixture.homeTeam.name} vs ${found.fixture.awayTeam.name}**\n` +
+              `• Possession: ${homePoss}% - ${awayPoss}%\n` +
+              `• Shots on Target: ${homeSot} - ${awaySot}\n` +
+              `• Corners: ${homeCorners} - ${awayCorners}\n` +
+              `• Cards: ${homeCards} - ${awayCards}`,
+            ephemeral: true,
+          });
+          return;
+        }
+
+        if (id.startsWith('cp:live:lrefresh:')) {
+          const fixtureId = id.split(':').slice(3).join(':');
+          await interaction.deferReply();
+          const found = await analysisFor(fixtureId);
+          if (!found) {
+            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
+            return;
+          }
+          await interaction.followUp({
+            content: `🔄 Refreshed **${found.fixture.homeTeam.name}** vs **${found.fixture.awayTeam.name}**: ` +
+              `**${found.details.fixture.homeScore ?? '-'} - ${found.details.fixture.awayScore ?? '-'}** ` +
+              `(${found.details.fixture.status})`,
+            ephemeral: true,
+          });
+          return;
+        }
+
         /* ---------- navigation ---------- */
         if (id.startsWith('cp:nav:')) {
           const target = id.split(':')[2];

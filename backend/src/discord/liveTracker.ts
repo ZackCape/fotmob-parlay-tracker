@@ -130,6 +130,57 @@ export function buildLivePickerEmbed(fixtureCount: number): EmbedBuilder {
     .setTimestamp(new Date());
 }
 
+/**
+ * Format a live match line with elapsed minute:
+ *   🔴 LIVE 62' — Arsenal 2 - 1 Chelsea `Premier League`
+ */
+function formatLiveLine(f: any): string {
+  const home = f.homeTeam.name;
+  const away = f.awayTeam.name;
+  const score = `${f.homeScore ?? '-'} - ${f.awayScore ?? '-'}`;
+  // Elapsed minute from statistics possessionHome hack if present, else just show status.
+  const s = f.statistics;
+  const minute = (s && typeof s.possessionHome === 'number') ? ` ${Math.round(s.possessionHome)}'` : '';
+  return `🔴 LIVE${minute} — **${home}** ${score} **${away}** \`${f.league}\``;
+}
+
+/**
+ * Recent event line for a live match, derived from ESPN keyEvents when
+ * available, else a neutral placeholder.
+ *   > **Recent Event:** ⚽ *Goal by Bukayo Saka (58')*
+ */
+function formatRecentEvent(f: any): string {
+  const events = f.statistics?.recentEvents ?? f._recentEvents ?? [];
+  const latest = events?.[events.length - 1];
+  if (!latest) {
+    return `> **Recent Event:** \`No events yet\``;
+  }
+  const type = latest.type ?? 'Event';
+  const player = latest.player ?? 'Unknown';
+  const minute = latest.minute ?? '?';
+  let emoji = '⚽';
+  const t = String(type).toLowerCase();
+  if (t.includes('card')) emoji = '🟥';
+  else if (t.includes('sub')) emoji = '🔄';
+  return `> **Recent Event:** ${emoji} *${type} by ${player} (${minute}')*`;
+}
+
+/**
+ * Stats line for a live match:
+ *   > **Stats:** `Possession 54% - 46%` | `Shots on Target 6 - 3`
+ */
+function formatLiveStats(f: any): string {
+  const s = f.statistics;
+  if (!s) {
+    return `> **Stats:** \`No stats yet\``;
+  }
+  const homePoss = Number.isFinite(Number(s.possessionHome)) ? Math.round(s.possessionHome) : '-';
+  const awayPoss = Number.isFinite(Number(s.possessionAway)) ? Math.round(s.possessionAway) : '-';
+  const homeSot = Number.isFinite(Number(s.shotsOnTargetHome)) ? Math.round(s.shotsOnTargetHome) : '-';
+  const awaySot = Number.isFinite(Number(s.shotsOnTargetAway)) ? Math.round(s.shotsOnTargetAway) : '-';
+  return `> **Stats:** \`Possession ${homePoss}% - ${awayPoss}%\` | \`Shots on Target ${homeSot} - ${awaySot}\``;
+}
+
 /** Embed listing all matches currently being played in real time. */
 export function buildLiveMatchesEmbed(fixtures: any[]): EmbedBuilder {
   const e = new EmbedBuilder()
@@ -148,37 +199,92 @@ export function buildLiveMatchesEmbed(fixtures: any[]): EmbedBuilder {
   }
 
   const lines = fixtures.map((f) => {
-    const score = `${f.homeScore ?? '-'} - ${f.awayScore ?? '-'}`;
-    return `**${f.homeTeam.name}** ${score} **${f.awayTeam.name}**\n     ${f.league} • Live`;
+    return `${formatLiveLine(f)}\n${formatRecentEvent(f)}\n${formatLiveStats(f)}`;
   });
 
   e.setDescription(
     `*${BRAND.tagline}*\n` +
-    `All matches currently in progress. Press **[ ⚡ Track Match ]** next to any fixture to receive direct live alerts.\n\n` +
-    lines.join('\n'),
+    `All matches currently in progress. Use the buttons below each match to track it.\n\n` +
+    lines.join('\n\n'),
   );
   return e;
 }
 
-/** Track-button rows: one `[ ⚡ Track Match ]` button per live match (max 5 per row). */
-export function buildLiveTrackRows(fixtures: any[]): ActionRowBuilder<ButtonBuilder>[] {
+/** Track + stats + refresh button rows: up to 3 buttons per live match,
+ * packed into Discord action rows (max 5 components per row).
+ *
+ *   [ ⚡ Track Match ]  (Primary)   one-click live tracking
+ *   [ 📊 Live Match Stats ] (Secondary)  full possession/shots/corners
+ *   [ 🔄 Refresh ]  (Secondary)  re-fetch live scores
+ */
+export function buildLiveActionRows(fixtures: any[]): ActionRowBuilder<ButtonBuilder>[] {
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  const chunk = 5;
-  for (let i = 0; i < fixtures.length; i += chunk) {
-    const row = new ActionRowBuilder<ButtonBuilder>();
-    for (const f of fixtures.slice(i, i + chunk)) {
-      const label = `${f.homeTeam.name.slice(0, 10)} v ${f.awayTeam.name.slice(0, 10)}`.slice(0, 80);
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cp:live:track:${f.id}`)
-          .setLabel(label)
-          .setEmoji('⚡')
-          .setStyle(ButtonStyle.Secondary),
-      );
+  let row = new ActionRowBuilder<ButtonBuilder>();
+
+  const push = (b: ButtonBuilder) => {
+    if (row.toJSON().components.length >= 5) {
+      rows.push(row);
+      row = new ActionRowBuilder<ButtonBuilder>();
     }
+    row.addComponents(b);
+  };
+
+  for (const f of fixtures) {
+    const label = `Track ${f.homeTeam.name.slice(0, 8)} v ${f.awayTeam.name.slice(0, 8)}`.slice(0, 80);
+    push(
+      new ButtonBuilder()
+        .setCustomId(`cp:live:track:${f.id}`)
+        .setLabel(label)
+        .setEmoji('⚡')
+        .setStyle(ButtonStyle.Primary),
+    );
+    push(
+      new ButtonBuilder()
+        .setCustomId(`cp:live:lstats:${f.id}`)
+        .setLabel('Stats')
+        .setEmoji('📊')
+        .setStyle(ButtonStyle.Secondary),
+    );
+    push(
+      new ButtonBuilder()
+        .setCustomId(`cp:live:lrefresh:${f.id}`)
+        .setLabel('Refresh')
+        .setEmoji('🔄')
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+
+  if (row.toJSON().components.length > 0) {
     rows.push(row);
   }
+
   return rows;
+}
+
+/** Keep the old name as an alias for callers that still reference it. */
+export function buildLiveTrackRows(fixtures: any[]): ActionRowBuilder<ButtonBuilder>[] {
+  return buildLiveActionRows(fixtures);
+}
+
+/** Per-match tracking embed action row: Track Match, Live Stats, Refresh. */
+export function buildLiveActionRow(messageId: string, alertsEnabled: boolean): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`cp:live:track:${messageId}`)
+      .setLabel('Track Match')
+      .setEmoji('⚡')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`cp:live:stats:${messageId}`)
+      .setLabel('Live Match Stats')
+      .setEmoji('📊')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`cp:live:refresh:${messageId}`)
+      .setLabel('Refresh')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Secondary),
+  );
 }
 
 /** The auto-refreshing live match embed. */
@@ -242,25 +348,6 @@ export function buildLiveMatchEmbed(analysis: MatchAnalysis, alertsEnabled: bool
   return e;
 }
 
-export function buildLiveActionRow(messageId: string, alertsEnabled: boolean): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`cp:live:refresh:${messageId}`)
-      .setLabel('Force Refresh')
-      .setEmoji('🔄')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`cp:live:stats:${messageId}`)
-      .setLabel('Live Stats')
-      .setEmoji('📊')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`cp:live:alerts:${messageId}`)
-      .setLabel(alertsEnabled ? 'Mute Alerts' : 'Enable Alerts')
-      .setEmoji('🔔')
-      .setStyle(alertsEnabled ? ButtonStyle.Danger : ButtonStyle.Success),
-  );
-}
 
 export function buildLivePayload(analysis: MatchAnalysis, messageId: string, alertsEnabled: boolean) {
   return {

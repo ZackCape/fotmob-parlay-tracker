@@ -461,19 +461,22 @@ describe('live tracker', () => {
     expect(text).toMatch(/statistics published yet/i);
   });
 
-  it('exposes Force Refresh, Live Stats and Toggle Alerts', () => {
+  it('exposes Track Match, Live Stats and Refresh buttons', () => {
     const row = buildLiveActionRow('999', true);
     const ids = row.toJSON().components.map((c: any) => c.custom_id);
-    expect(ids).toContain('cp:live:refresh:999');
+    expect(ids).toContain('cp:live:track:999');
     expect(ids).toContain('cp:live:stats:999');
-    expect(ids).toContain('cp:live:alerts:999');
+    expect(ids).toContain('cp:live:refresh:999');
+    const labels = row.toJSON().components.map((c: any) => c.label);
+    expect(labels).toContain('Track Match');
+    expect(labels).toContain('Live Match Stats');
+    expect(labels).toContain('Refresh');
   });
 
-  it('changes the alerts button label with state', () => {
-    const on = buildLiveActionRow('1', true).toJSON().components.find((c: any) => String(c.custom_id).startsWith('cp:live:alerts')) as any;
-    const off = buildLiveActionRow('1', false).toJSON().components.find((c: any) => String(c.custom_id).startsWith('cp:live:alerts')) as any;
-    expect(on!.label).toBe('Mute Alerts');
-    expect(off!.label).toBe('Enable Alerts');
+  it('uses Primary style for Track Match button', () => {
+    const row = buildLiveActionRow('1', true);
+    const trackBtn = row.toJSON().components.find((c: any) => String(c.custom_id).startsWith('cp:live:track')) as any;
+    expect(trackBtn.style).toBe(1); // ButtonStyle.Primary
   });
 
   it('match selector lists fixtures and handles the empty case', () => {

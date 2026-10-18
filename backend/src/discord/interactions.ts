@@ -44,24 +44,33 @@ export function baseEmbed(title: string, description?: string): EmbedBuilder {
 /* ------------------------------------------------------------------ *
  * /fixtures : full schedule with multi-market GUI, league selection
  * and per-match live tracking
+ *
+ * Match rows use a clean, emoji-free 3-line card format:
+ *
+ *   **01. AFC Bournemouth vs Sunderland** `EPL • 3:00 PM`
+ *   > **Win Odds:** `Home 46%` | `Draw 25%` | `Away 29%`
+ *   > **Goals:** `Over 1.5 Goals (82%)` | `Over 2.5 Goals (58%)`
+ *   > **Stats:** `Over 8.5 Corners (71%)` | `Over 3.5 Cards (58%)`
  * ------------------------------------------------------------------ */
 
 /**
  * Markets shown for every fixture in the /fixtures GUI.
  * OVER_0_5 is deliberately excluded (near-certain on almost every match).
+ * Labels are explicit (Home / Draw / Away / Over X Goals) rather than
+ * shorthand (H / D / A) so users never have to guess.
  */
 const FIXTURE_MARKETS: Array<{
   market: MarketType;
   label: string;
-  emoji: string;
+  format: (p: number) => string;
 }> = [
-  { market: 'HOME_WIN', label: 'H', emoji: '🏠' },
-  { market: 'DRAW', label: 'D', emoji: '🤝' },
-  { market: 'AWAY_WIN', label: 'A', emoji: '✈️' },
-  { market: 'OVER_1_5', label: 'O1.5', emoji: '⚽' },
-  { market: 'OVER_2_5', label: 'O2.5', emoji: '⚽' },
-  { market: 'OVER_8_5_CORNERS', label: 'Corners', emoji: '🟨' },
-  { market: 'OVER_3_5_CARDS', label: 'Cards', emoji: '🟥' },
+  { market: 'HOME_WIN', label: 'Home', format: (p) => `${Math.round(p * 100)}%` },
+  { market: 'DRAW', label: 'Draw', format: (p) => `${Math.round(p * 100)}%` },
+  { market: 'AWAY_WIN', label: 'Away', format: (p) => `${Math.round(p * 100)}%` },
+  { market: 'OVER_1_5', label: 'Over 1.5 Goals', format: (p) => `${Math.round(p * 100)}%` },
+  { market: 'OVER_2_5', label: 'Over 2.5 Goals', format: (p) => `${Math.round(p * 100)}%` },
+  { market: 'OVER_8_5_CORNERS', label: 'Over 8.5 Corners', format: (p) => `${Math.round(p * 100)}%` },
+  { market: 'OVER_3_5_CARDS', label: 'Over 3.5 Cards', format: (p) => `${Math.round(p * 100)}%` },
 ];
 
 const FIXTURES_PER_PAGE = 10;
@@ -97,16 +106,53 @@ export function clearFixturesState(userId: string): void {
   fixturesState.delete(userId);
 }
 
-/** Format the multi-market probability line for a single fixture row. */
+/**
+ * Formatted market lines for a single fixture.
+ * Each value is wrapped in backticks for clean code-block rendering.
+ */
+export interface FixtureMarketLines {
+  winOdds: string;   // `Home 46%` | `Draw 25%` | `Away 29%`
+  goals: string;     // `Over 1.5 Goals (82%)` | `Over 2.5 Goals (58%)`
+  stats: string;     // `Over 8.5 Corners (71%)` | `Over 3.5 Cards (58%)`
+}
+
+const bt = (s: string) => `\`${s}\``;
+
 export function formatFixtureMarkets(
   preds: MarketPrediction[] | null | undefined,
-): string {
+): FixtureMarketLines {
   const list = (preds || []).filter((p): p is MarketPrediction => !!p);
-  const parts = FIXTURE_MARKETS.map(({ market, label, emoji }) => {
-    const p = list.find((x) => x.market === market);
-    return p ? `${emoji}${label} ${(p.estimatedProbability * 100).toFixed(0)}%` : '';
-  }).filter(Boolean);
-  return parts.length ? parts.join(' • ') : 'markets N/A';
+  const find = (market: MarketType) => list.find((x) => x.market === market);
+  const getPct = (market: MarketType): number | null => {
+    const pred = find(market);
+    return pred ? pred.estimatedProbability : null;
+  };
+
+  const home = getPct('HOME_WIN');
+  const draw = getPct('DRAW');
+  const away = getPct('AWAY_WIN');
+  const o15 = getPct('OVER_1_5');
+  const o25 = getPct('OVER_2_5');
+  const corners = getPct('OVER_8_5_CORNERS');
+  const cards = getPct('OVER_3_5_CARDS');
+
+  return {
+    winOdds: [
+      home !== null ? bt(`Home ${(home * 100).toFixed(0)}%`) : null,
+      draw !== null ? bt(`Draw ${(draw * 100).toFixed(0)}%`) : null,
+      away !== null ? bt(`Away ${(away * 100).toFixed(0)}%`) : null,
+    ].filter(Boolean).join(' | ') || '`N/A`',
+
+    goals: [
+      o15 !== null ? bt(`Over 1.5 Goals (${(o15 * 100).toFixed(0)}%)`) : null,
+      o25 !== null ? bt(`Over 2.5 Goals (${(o25 * 100).toFixed(0)}%)`) : null,
+    ].filter(Boolean).join(' | ') || '`N/A`',
+
+    stats: [
+      corners !== null ? bt(`Over 8.5 Corners (${(corners * 100).toFixed(0)}%)`) : null,
+      cards !== null ? bt(`Over 3.5 Cards (${(cards * 100).toFixed(0)}%)`) : null,
+    ].filter(Boolean).join(' | ') || '`N/A`',
+  };
 }
 
 /** Fetch verified fixtures for a league. Never returns unverified rows. */
@@ -115,18 +161,12 @@ export async function fetchVerifiedFixtures(factory: DataProviderFactory, date: 
   return all.filter(isVerifiedFixture);
 }
 
-export function statusEmoji(status: string): string {
-  if (status === 'LIVE') return '\u{1F534}';
-  if (status === 'FINISHED') return '\u26BD';
-  if (status === 'POSTPONED') return '\u23F8';
-  return '\u23F3';
-}
-
+/** Format a kickoff ISO string as 12-hour time (e.g. "3:00 PM"). */
 function formatKickoff(iso: string): string {
   if (!iso) return 'TBC';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return 'TBC';
-  return `<t:${Math.floor(d.getTime() / 1000)}:t>`;
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 /** Rich embed listing fixtures with multi-market model picks. */
@@ -154,12 +194,19 @@ export function buildFixturesEmbed(
     const preds = predictionsByFixture.get(f.id) || [];
     const markets = formatFixtureMarkets(preds);
     const score = f.status === 'FINISHED' ? ` **${f.homeScore}-${f.awayScore}**` : '';
-    const elapsed = f.status === 'LIVE' ? ` • ${f.status}` : '';
-    return `\`${String(globalIndex).padStart(2, '0')}\` ${statusEmoji(f.status)} **${f.homeTeam.name}** vs **${f.awayTeam.name}**${score}\n     ${f.league} • ${formatKickoff(f.kickoffTime)}${elapsed} • ${markets}`;
+    const live = f.status === 'LIVE' ? ' • LIVE' : '';
+    const kickoff = formatKickoff(f.kickoffTime);
+
+    return [
+      `\`${String(globalIndex).padStart(2, '0')}\` **${f.homeTeam.name} vs ${f.awayTeam.name}**${score} \`${f.league} • ${kickoff}${live}\``,
+      `> **Win Odds:** ${markets.winOdds}`,
+      `> **Goals:** ${markets.goals}`,
+      `> **Stats:** ${markets.stats}`,
+    ].join('\n');
   });
 
   const header = `**Football Intelligence • High Probability & Market Analytics** • ${fixturesPage.length} match${fixturesPage.length === 1 ? '' : 'es'} (page ${page}/${totalPages})`;
-  e.setDescription([header, '', lines.join('\n')].join('\n'));
+  e.setDescription([header, '', lines.join('\n\n')].join('\n'));
   e.setFooter({ text: `Cape Predictor Engine • Dixon-Coles & Multi-Market Analytics • ${page}/${totalPages}` });
   return e;
 }
@@ -196,7 +243,7 @@ export function buildFixtureTrackRows(fixturesPage: any[]): ActionRowBuilder<But
   for (let i = 0; i < fixturesPage.length; i += chunk) {
     const row = new ActionRowBuilder<ButtonBuilder>();
     for (const f of fixturesPage.slice(i, i + chunk)) {
-      const label = `${f.homeTeam.name.slice(0, 12)} v ${f.awayTeam.name.slice(0, 12)}`.slice(0, 80);
+      const label = `Track ${f.homeTeam.name.slice(0, 8)} v ${f.awayTeam.name.slice(0, 8)}`.slice(0, 80);
       row.addComponents(buildTrackButton(f.id, label));
     }
     rows.push(row);
@@ -204,19 +251,24 @@ export function buildFixtureTrackRows(fixturesPage: any[]): ActionRowBuilder<But
   return rows;
 }
 
-/** Pagination buttons. */
+/** Pagination buttons: Previous | Page X / Y | Next. */
 export function buildFixturePaginationRow(page: number, totalPages: number): ActionRowBuilder<ButtonBuilder>[] {
   if (totalPages <= 1) return [];
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId('cp:fixtures:prev')
-        .setLabel('◀️ Prev')
+        .setLabel('◀️ Previous Page')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page <= 1),
       new ButtonBuilder()
+        .setCustomId('cp:fixtures:page')
+        .setLabel(`Page ${page} / ${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
         .setCustomId('cp:fixtures:next')
-        .setLabel('Next ▶️')
+        .setLabel('Next Page ▶️')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page >= totalPages),
     ),
@@ -249,7 +301,7 @@ export function buildFixturesPayload(
 
 /** Standalone "pick a league" entry point (used by the /fixtures command + help nav). */
 export function leaguePickerEmbed(): EmbedBuilder {
-  return baseEmbed('Cape Predictor — Select League or Competition',
+  return baseEmbed('Cape Predictor — Select League',
     `*${BRAND.tagline}*\nChoose a competition below to see today's verified fixtures with multi-market model picks.`);
 }
 
