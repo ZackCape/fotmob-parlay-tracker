@@ -94,10 +94,51 @@ function scoreline(v: any): { forGoals: number; againstGoals: number } | null {
   return { forGoals, againstGoals };
 }
 
+/**
+ * A single normalised match event.
+ *
+ * Every field is nullable on purpose: ESPN omits data depending on the league
+ * and the stage of the match. Notably this league feed carries **no assist**
+ * and **no VAR** entries, so those stay null rather than being invented.
+ */
+export interface EspnMatchEvent {
+  /** ESPN's stable event id - the de-duplication key for live alerts. */
+  id: string;
+  /** Normalised category. */
+  type: 'goal' | 'yellow-card' | 'red-card' | 'substitution' | 'penalty-missed' | 'var' | 'period' | 'other';
+  /** Human label straight from the provider ("Goal", "Red Card", "Halftime"). */
+  label: string;
+  /** Display clock, e.g. "23'", "45'+2'". */
+  minute: string | null;
+  /** Elapsed seconds, when the provider supplies it. */
+  minuteValue: number | null;
+  /** Match period number (1 = first half, 2 = second half, ...). */
+  period: number | null;
+  teamId: string | null;
+  team: string | null;
+  /** Scorer for goals; the player booked/sent off for cards. */
+  player: string | null;
+  /** Assist, only when the provider actually publishes one. */
+  assist: string | null;
+  /** Substitution: player leaving / entering. */
+  playerOut: string | null;
+  playerIn: string | null;
+  /** Provider's own sentence, when present (richest available context). */
+  text: string | null;
+  /** True for goals and other scoring plays. */
+  scoring: boolean;
+}
+
 export interface EspnMatchStats {
   eventId: string;
   statistics: FixtureStatistics | null;
-  events: Array<{ minute: string | null; team: string | null; type: string; detail: string | null; player: string | null }>;
+  /**
+   * Normalised match events.
+   *
+   * `id` is ESPN's stable event identifier and is what the live-event
+   * broadcaster uses to avoid re-alerting the same goal.
+   */
+  events: EspnMatchEvent[];
   lineups: { home: Lineup | null; away: Lineup | null };
   form: { home: Array<'W' | 'D' | 'L'>; away: Array<'W' | 'D' | 'L'> };
   /**
@@ -213,19 +254,56 @@ export class EspnAdapter implements IFootballDataProvider {
           : null;
 
       // ---- Key events ----
-      const events: EspnMatchStats['events'] = [];
+      //
+      // ESPN's `type.type` values are hyphenated ('yellow-card', 'red-card',
+      // 'end-regular-time'). The previous parser compared against the
+      // un-hyphenated 'yellowcard'/'redcard', so it never matched and NO card
+      // event was ever captured.
+      const events: EspnMatchEvent[] = [];
       for (const ke of data.keyEvents || []) {
-        const type = ke.type?.text || ke.type?.type || '';
+        const rawType = String(ke.type?.type || '').toLowerCase();
         const scoring = !!ke.scoringPlay;
-        const card = ke.type?.type === 'yellowcard' ? 'Yellow Card' : ke.type?.type === 'redcard' ? 'Red Card' : null;
-        if (!scoring && !card && ke.type?.type !== 'substitution') continue;
-        const participant = (ke.participants || [])[0];
+
+        let type: EspnMatchEvent['type'] = 'other';
+        if (scoring || rawType === 'goal' || rawType === 'penalty' || rawType === 'own-goal') type = 'goal';
+        else if (rawType === 'red-card' || rawType === 'redcard' || rawType === 'second-yellow-card') type = 'red-card';
+        else if (rawType === 'yellow-card' || rawType === 'yellowcard') type = 'yellow-card';
+        else if (rawType === 'substitution') type = 'substitution';
+        else if (rawType.includes('var')) type = 'var';
+        else if (
+          rawType.includes('half') || rawType.includes('period') || rawType.includes('kickoff')
+          || rawType.includes('regular-time') || rawType.includes('extra-time')
+          || rawType.includes('delay') || rawType.includes('penalty-shootout')
+        ) type = 'period';
+
+        // Only surface events worth alerting on; TV broadcast noise (start
+        // delay / end delay) is deliberately dropped from the live feed.
+        if (type === 'other') continue;
+        if (rawType === 'start-delay' || rawType === 'end-delay') continue;
+
+        const participants: any[] = ke.participants || [];
+        // Some feeds tag the second participant of a goal as the assist.
+        const assistEntry = participants.find((p: any) => {
+          const pt = String(p.type || p.participantType || '').toLowerCase();
+          return pt.includes('assist');
+        });
+        const assistName = assistEntry?.athlete?.displayName || ke.assist?.displayName || null;
+
         events.push({
+          id: String(ke.id || `${ke.clock?.value ?? 'x'}-${rawType}-${ke.team?.id ?? ''}-${participants[0]?.athlete?.id ?? ''}`),
+          type,
+          label: ke.type?.text || type,
           minute: ke.clock?.displayValue || null,
+          minuteValue: Number.isFinite(ke.clock?.value) ? Math.round(ke.clock.value) : null,
+          period: Number.isFinite(ke.period?.number) ? ke.period.number : null,
+          teamId: ke.team?.id ? String(ke.team.id) : null,
           team: ke.team?.displayName || null,
-          type: scoring ? 'Goal' : (card || ke.type?.text || 'Event'),
-          detail: scoring ? null : (card || null),
-          player: participant?.athlete?.displayName || null,
+          player: participants[0]?.athlete?.displayName || null,
+          assist: assistName,
+          playerOut: type === 'substitution' ? (participants[0]?.athlete?.displayName || null) : null,
+          playerIn: type === 'substitution' ? (participants[1]?.athlete?.displayName || null) : null,
+          text: ke.text || null,
+          scoring,
         });
       }
 

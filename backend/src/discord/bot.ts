@@ -255,8 +255,8 @@ export class DiscordBotService {
           await interaction.reply({ embeds: [embed] });
         } else if (interaction.commandName === 'fixtures') {
           await interaction.deferReply();
-          const replyText = await this.generateFixturesReply();
-          await interaction.editReply(replyText);
+          await renderFixturesPage(interaction, 'ALL', 1);
+          return;
         } else if (interaction.commandName === 'parlay') {
           await interaction.deferReply();
           const legs = interaction.options.getInteger('legs') || 5;
@@ -338,20 +338,21 @@ export class DiscordBotService {
       } catch { return null; }
     };
 
-    /* ---------------- /fixtures ---------------- */
-    const renderLeague = async (interaction: any, league: string) => {
+    /* ---------------- /fixtures (interactive) ---------------- */
+    const renderFixturesPage = async (interaction: any, league: string, page: number) => {
       const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
       const preds = new Map<string, any[]>();
-      for (const fx of fixtures.slice(0, 10)) {
+      for (const fx of fixtures) {
         try {
           const d = await this.factory.getMatchDetails(fx.id);
           if (d?.marketPredictions) preds.set(fx.id, d.marketPredictions);
         } catch { /* analysis unavailable - fixture is still listed */ }
       }
-      await interaction.followUp({
-        embeds: [CP.buildFixturesEmbed(fixtures, preds, league)],
-        components: CP.buildFixtureActionRows(fixtures) as any,
-        ephemeral: true,
+      CP.setFixturesLeague(interaction.user.id, league);
+      CP.setFixturesPage(interaction.user.id, page);
+      const state = CP.getFixturesState(interaction.user.id);
+      await interaction.editReply({
+        ...CP.buildFixturesPayload(fixtures, preds, league, page, state.selectedMatchId),
       });
     };
 
@@ -521,8 +522,99 @@ export class DiscordBotService {
       try {
         /* ---------- fixtures ---------- */
         if (id === 'cp:fixtures:league') {
+          await interaction.deferUpdate();
+          await renderFixturesPage(interaction, interaction.values?.[0] ?? 'ALL', 1);
+          return;
+        }
+
+        if (id === 'cp:fixtures:match') {
+          const matchId = interaction.values?.[0];
+          const state = CP.getFixturesState(interaction.user.id);
+          CP.setFixturesSelectedMatch(interaction.user.id, matchId && matchId !== 'none' ? matchId : null);
+          await interaction.deferUpdate();
+          await renderFixturesPage(interaction, state.league, state.page);
+          return;
+        }
+
+        if (id === 'cp:fixtures:analyze') {
+          const state = CP.getFixturesState(interaction.user.id);
+          const fixtureId = state.selectedMatchId;
+          if (!fixtureId) {
+            await interaction.reply({ content: 'Please select a match first.', ephemeral: true });
+            return;
+          }
           await interaction.deferReply();
-          await renderLeague(interaction, interaction.values?.[0] ?? 'ALL');
+          await showAnalysis(interaction, fixtureId, 'stats');
+          return;
+        }
+
+        if (id === 'cp:fixtures:parlay') {
+          const state = CP.getFixturesState(interaction.user.id);
+          const fixtureId = state.selectedMatchId;
+          if (!fixtureId) {
+            await interaction.reply({ content: 'Please select a match first.', ephemeral: true });
+            return;
+          }
+          await interaction.deferUpdate();
+          const found = await analysisFor(fixtureId);
+          if (!found) {
+            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
+            return;
+          }
+          const pick = CP.bestPickForFixture(found.details.marketPredictions);
+          if (!pick) {
+            await interaction.followUp({ content: 'No market pick available for this match.', ephemeral: true });
+            return;
+          }
+          const parlay = CP.getParlay(interaction.user.id);
+          const res = CP.addLeg(parlay, {
+            fixtureId,
+            description: `${found.fixture.homeTeam.name} v ${found.fixture.awayTeam.name}`,
+            league: found.fixture.league,
+            market: pick.market,
+            selection: pick.label,
+            probability: pick.probability,
+          });
+          if (!res.ok) {
+            await interaction.followUp({ content: res.reason, ephemeral: true });
+            return;
+          }
+          CP.setFixturesSelectedMatch(interaction.user.id, null);
+          await renderFixturesPage(interaction, state.league, state.page);
+          return;
+        }
+
+        if (id === 'cp:fixtures:track') {
+          const state = CP.getFixturesState(interaction.user.id);
+          const fixtureId = state.selectedMatchId;
+          if (!fixtureId) {
+            await interaction.reply({ content: 'Please select a match first.', ephemeral: true });
+            return;
+          }
+          await interaction.deferUpdate();
+          const found = await analysisFor(fixtureId);
+          if (!found) {
+            await interaction.followUp({ content: 'Match data is currently unavailable.', ephemeral: true });
+            return;
+          }
+          const channel: any = interaction.channel;
+          if (channel?.send) await startLiveTracker(channel, fixtureId, interaction.user.id);
+          CP.setFixturesSelectedMatch(interaction.user.id, null);
+          await renderFixturesPage(interaction, state.league, state.page);
+          return;
+        }
+
+        if (id === 'cp:fixtures:prev') {
+          const state = CP.getFixturesState(interaction.user.id);
+          await interaction.deferUpdate();
+          await renderFixturesPage(interaction, state.league, state.page - 1);
+          return;
+        }
+
+        if (id === 'cp:fixtures:next') {
+          const state = CP.getFixturesState(interaction.user.id);
+          await interaction.deferUpdate();
+          await renderFixturesPage(interaction, state.league, state.page + 1);
           return;
         }
 

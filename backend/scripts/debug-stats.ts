@@ -23,7 +23,7 @@ async function main() {
 
   console.log('\n--- Events ---');
   stats.events.slice(0, 10).forEach(e =>
-    console.log(`  ${e.minute || '-'}  ${e.team || '-'}  ${e.type}${e.detail ? ' (' + e.detail + ')' : ''}  ${e.player || ''}`));
+    console.log(`  ${e.minute || '-'}  ${e.team || '-'}  ${e.type}${e.label ? ' (' + e.label + ')' : ''}  ${e.player || ''}${e.assist ? `  assist: ${e.assist}` : ''}`));
 
   console.log('\n--- Lineups ---');
   console.log('  home XI:', stats.lineups.home?.startingXI?.length ?? 0, 'subs:', stats.lineups.home?.substitutes?.length ?? 0);
