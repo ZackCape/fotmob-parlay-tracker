@@ -1,6 +1,8 @@
 import React from 'react';
 import { League } from '../types';
 import { Trophy, Flame, Zap, Shield } from 'lucide-react';
+import { LeagueFlag } from './LeagueFlag';
+import { leagueCountryLabel } from '../utils/leagueFlags';
 
 interface TopLeaguesSidebarProps {
   selectedLeague: string;
@@ -19,18 +21,18 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
   onFilterLiveOnly,
   filterLiveOnly,
 }) => {
-  const topLeagues: Array<{ id: string; name: string; country: string; flag: string }> = [
-    { id: 'ALL', name: 'All Matches', country: 'Global', flag: '🌍' },
-    { id: 'EPL', name: 'Premier League', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
-    { id: 'CHAMPIONS_LEAGUE', name: 'Champions League', country: 'Europe', flag: '⭐️' },
-    { id: 'LALIGA', name: 'LaLiga', country: 'Spain', flag: '🇪🇸' },
-    { id: 'LIGUE1', name: 'Ligue 1', country: 'France', flag: '🇫🇷' },
-    { id: 'SERIE_A', name: 'Serie A', country: 'Italy', flag: '🇮🇹' },
-    { id: 'BUNDESLIGA', name: 'Bundesliga', country: 'Germany', flag: '🇩🇪' },
-    { id: 'BUNDESLIGA2', name: 'Bundesliga 2', country: 'Germany', flag: '🇩🇪' },
-    { id: 'EUROPA_LEAGUE', name: 'Europa League', country: 'Europe', flag: '🏆' },
-    { id: 'CONFERENCE_LEAGUE', name: 'Conference League', country: 'Europe', flag: '🛡️' },
-    { id: 'CHAMPIONSHIP', name: 'Championship', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+  const topLeagues: Array<{ id: string; name: string }> = [
+    { id: 'ALL', name: 'All Matches' },
+    { id: 'EPL', name: 'Premier League' },
+    { id: 'CHAMPIONS_LEAGUE', name: 'Champions League' },
+    { id: 'LALIGA', name: 'LaLiga' },
+    { id: 'LIGUE1', name: 'Ligue 1' },
+    { id: 'SERIE_A', name: 'Serie A' },
+    { id: 'BUNDESLIGA', name: 'Bundesliga' },
+    { id: 'BUNDESLIGA2', name: 'Bundesliga 2' },
+    { id: 'EUROPA_LEAGUE', name: 'Europa League' },
+    { id: 'CONFERENCE_LEAGUE', name: 'Conference League' },
+    { id: 'CHAMPIONSHIP', name: 'Championship' },
   ];
 
   return (
@@ -60,13 +62,13 @@ export const TopLeaguesSidebar: React.FC<TopLeaguesSidebarProps> = ({
                 }`}
               >
                 <div className="flex items-center space-x-2.5 truncate">
-                  <span className="text-sm shrink-0">{league.flag}</span>
+                  <LeagueFlag league={league.id} />
                   <div className="text-left truncate">
                     <div className="truncate font-medium text-white group-hover:text-[#00d66c] transition-colors">
                       {league.name}
                     </div>
                     {league.id !== 'ALL' && (
-                      <div className="text-[10px] text-[#8c92a4]">{league.country}</div>
+                      <div className="text-[10px] text-[#8c92a4]">{leagueCountryLabel(league.id)}</div>
                     )}
                   </div>
                 </div>

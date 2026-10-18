@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Fixture, League } from '../types';
 import { CapeMatchRow } from './CapeMatchRow';
 import { ChevronDown, ChevronRight, Trophy } from 'lucide-react';
+import { LeagueFlag } from './LeagueFlag';
+import { leagueCountryLabel } from '../utils/leagueFlags';
 
 interface LeagueAccordionGroupProps {
   fixtures: Fixture[];
@@ -12,20 +14,19 @@ interface LeagueAccordionGroupProps {
 interface LeagueMeta {
   name: string;
   country: string;
-  flag: string;
 }
 
 const LEAGUE_META: Record<League, LeagueMeta> = {
-  EPL: { name: 'Premier League', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
-  CHAMPIONS_LEAGUE: { name: 'Champions League', country: 'Europe', flag: '⭐️' },
-  LALIGA: { name: 'LaLiga', country: 'Spain', flag: '🇪🇸' },
-  SERIE_A: { name: 'Serie A', country: 'Italy', flag: '🇮🇹' },
-  LIGUE1: { name: 'Ligue 1', country: 'France', flag: '🇫🇷' },
-  EUROPA_LEAGUE: { name: 'Europa League', country: 'Europe', flag: '🏆' },
-  CONFERENCE_LEAGUE: { name: 'Conference League', country: 'Europe', flag: '🛡️' },
-  CHAMPIONSHIP: { name: 'Championship', country: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
-  BUNDESLIGA: { name: 'Bundesliga', country: 'Germany', flag: '🇩🇪' },
-  BUNDESLIGA2: { name: 'Bundesliga 2', country: 'Germany', flag: '🇩🇪' },
+  EPL: { name: 'Premier League', country: 'England' },
+  CHAMPIONS_LEAGUE: { name: 'Champions League', country: 'Europe' },
+  LALIGA: { name: 'LaLiga', country: 'Spain' },
+  SERIE_A: { name: 'Serie A', country: 'Italy' },
+  LIGUE1: { name: 'Ligue 1', country: 'France' },
+  EUROPA_LEAGUE: { name: 'Europa League', country: 'Europe' },
+  CONFERENCE_LEAGUE: { name: 'Conference League', country: 'Europe' },
+  CHAMPIONSHIP: { name: 'Championship', country: 'England' },
+  BUNDESLIGA: { name: 'Bundesliga', country: 'Germany' },
+  BUNDESLIGA2: { name: 'Bundesliga 2', country: 'Germany' },
 };
 
 const LEAGUE_ORDER: League[] = [
@@ -80,7 +81,7 @@ export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
     <div className="space-y-4">
       {visibleLeagues.map(league => {
         const leagueFixtures = grouped[league] || [];
-        const meta = LEAGUE_META[league] || { name: league, country: 'Europe', flag: '⚽' };
+        const meta = LEAGUE_META[league] || { name: league, country: leagueCountryLabel(league) };
         const isCollapsed = !!collapsed[league];
 
         return (
@@ -91,10 +92,10 @@ export const LeagueAccordionGroup: React.FC<LeagueAccordionGroupProps> = ({
             {/* League Accordion Header */}
             <div
               onClick={() => toggleCollapse(league)}
-              className="flex items-center justify-between px-4 py-3 bg-[#1c1f26]/80 hover:bg-[#1c1f26] border-b border-[#252932] cursor-pointer transition-colors"
+              className="group flex items-center justify-between px-4 py-3 bg-[#1c1f26]/80 hover:bg-[#1c1f26] border-b border-[#252932] cursor-pointer transition-colors"
             >
               <div className="flex items-center space-x-2.5">
-                <span className="text-lg">{meta.flag}</span>
+                <LeagueFlag league={league} className="w-6 h-[18px]" />
                 <div>
                   <span className="text-xs font-bold text-white uppercase tracking-wider">
                     {meta.country} - {meta.name}

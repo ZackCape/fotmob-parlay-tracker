@@ -78,6 +78,39 @@ export function filterUpcomingFixtures<T = any>(fixtures: readonly T[] | null | 
 }
 
 /**
+ * True when the fixture is still ahead of kick-off *and* its scheduled start
+ * time is in the future.
+ *
+ * Providers occasionally leave a stale `TIMED` status on a match that has
+ * already begun, so the wall clock is checked on top of the status codes. A
+ * fixture without a parseable kick-off time is rejected: we cannot prove it has
+ * not already started, and a leg on a match that is under way or over would
+ * settle instantly against a score the user never saw.
+ */
+export function isPreKickoffFixture(fixture: any, now: number = Date.now()): boolean {
+  if (!isUpcomingFixture(fixture)) return false;
+
+  const raw = fixture?.kickoffTime ?? fixture?.date;
+  if (!raw) return false;
+  const kickoff = new Date(raw).getTime();
+  if (!Number.isFinite(kickoff)) return false;
+
+  return kickoff > now;
+}
+
+/**
+ * Keep only fixtures that are upcoming and have not yet kicked off. Used by
+ * every parlay generator (web API and Discord) so finished, in-play, halted and
+ * already-started matches can never become a leg.
+ */
+export function filterPreKickoffFixtures<T = any>(
+  fixtures: readonly T[] | null | undefined,
+  now: number = Date.now(),
+): T[] {
+  return (fixtures ?? []).filter((f) => isPreKickoffFixture(f as any, now));
+}
+
+/**
  * True when the match is being played right now — in play, at half-time or
  * temporarily paused. Finished, upcoming and postponed fixtures are excluded.
  */

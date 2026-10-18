@@ -517,8 +517,9 @@ export class DiscordBotService {
       const league = CP.getParlayLeague(ownerId);
       const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
       // Only matches that have not kicked off can carry a new leg: finished
-      // (FT/AET/PEN) and in-play (LIVE/IN_PLAY) fixtures are excluded.
-      return CP.filterUpcomingFixtures(fixtures);
+      // (FT/AET/PEN), in-play (LIVE/IN_PLAY) and already-started fixtures are
+      // all excluded by the pre-kickoff guard.
+      return CP.filterPreKickoffFixtures(fixtures);
     };
 
     const renderParlay = async (interaction: any, notice?: string) => {
@@ -2074,7 +2075,8 @@ export class DiscordBotService {
 
     const today = new Date().toISOString().substring(0, 10);
     const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-    const fixtures = allFixtures.filter(fx => isVerifiedFixture(fx));
+    // Never build a leg on a match that has already kicked off or finished.
+    const fixtures = CP.filterPreKickoffFixtures(allFixtures.filter(fx => isVerifiedFixture(fx)));
     const preds: MarketPrediction[] = [];
 
     for (const fx of fixtures) {
@@ -2083,7 +2085,7 @@ export class DiscordBotService {
     }
 
     if (preds.length === 0) {
-      return 'No verified live fixtures are available from the configured providers. Please try again later or check the web dashboard.';
+      return 'No pre-kickoff verified fixtures are available from the configured providers right now (matches already in play or finished are excluded). Please try another date or check the web dashboard.';
     }
 
     const parlay = buildStatisticalParlay(preds, {

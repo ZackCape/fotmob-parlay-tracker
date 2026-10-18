@@ -26,7 +26,7 @@ import {
   getParlay, clearParlay, addLeg, saveParlay,
   buildParlayMatchRow, buildParlayPayload,
 } from '../src/discord/parlayBuilder.js';
-import { isUpcomingFixture, filterUpcomingFixtures } from '../src/discord/fixtureStatus.js';
+import { isUpcomingFixture, filterUpcomingFixtures, isPreKickoffFixture, filterPreKickoffFixtures } from '../src/discord/fixtureStatus.js';
 import {
   saveParlayToDisk, clearSavedParlays,
   getSavedParlaysForUserChannel, getActiveSavedParlaysForUserChannel,
@@ -141,11 +141,55 @@ section('1) /customparlay match dropdown — upcoming fixtures only');
 
   // Wiring: the live fixture slate feeding /customparlay is filtered.
   check('bot filters the /customparlay fixture slate before rendering',
-    botSrc.includes('CP.filterUpcomingFixtures(fixtures)'));
+    botSrc.includes('CP.filterPreKickoffFixtures(fixtures)'));
   check('interactions re-exports the fixture-status helpers',
     fs.readFileSync(resolve(repoRoot, 'backend', 'src', 'discord', 'interactions.ts'), 'utf-8')
       .includes("from './fixtureStatus.js'"));
   clearParlay(u);
+}
+
+/* ================================================================== *
+ * 1b) Pre-kickoff wall-clock guard (web + Discord generators)
+ * ================================================================== */
+section('1b) pre-kickoff guard — already-started matches are rejected');
+{
+  const now = Date.now();
+  const FUTURE = new Date(now + 3 * 3600_000).toISOString();
+  const PAST = new Date(now - 5 * 60_000).toISOString();
+
+  const future = fixture('f-future', 'TIMED', { kickoffTime: FUTURE });
+  const staleTimed = fixture('f-stale', 'TIMED', { kickoffTime: PAST });
+  const noKickoff = fixture('f-nokick', 'TIMED', { kickoffTime: '' });
+  const live = fixture('f-live2', 'LIVE', { kickoffTime: PAST });
+  const finished = fixture('f-ft2', 'FINISHED', { kickoffTime: PAST });
+
+  check('future TIMED fixture passes the pre-kickoff guard', isPreKickoffFixture(future, now) === true);
+  check('stale TIMED fixture whose kick-off has passed is rejected', isPreKickoffFixture(staleTimed, now) === false);
+  check('fixture without a kick-off time is rejected (fail-closed)', isPreKickoffFixture(noKickoff, now) === false);
+  check('in-play fixture is rejected', isPreKickoffFixture(live, now) === false);
+  check('finished fixture is rejected', isPreKickoffFixture(finished, now) === false);
+
+  const kept = filterPreKickoffFixtures([future, staleTimed, noKickoff, live, finished], now).map((f) => f.id);
+  check('filter keeps only the not-yet-started match',
+    JSON.stringify(kept) === JSON.stringify(['f-future']), JSON.stringify(kept));
+
+  // The web generator rejects every "already started / over" status code.
+  const statuses = ['FT', 'AET', 'PEN', 'FINISHED', 'LIVE', 'IN_PLAY', 'HT', 'PAUSED', 'POSTPONED'];
+  const allRejected = statuses.every((code) => {
+    const normalised = ['FINISHED', 'LIVE', 'POSTPONED', 'TIMED'].includes(code) ? code : '';
+    const f = fixture(`f-${code}`, normalised, { statusShort: code, kickoffTime: FUTURE });
+    return isPreKickoffFixture(f, now) === false;
+  });
+  check('FT/AET/PEN/FINISHED/LIVE/IN_PLAY/HT/PAUSED/POSTPONED all rejected', allRejected);
+
+  // Wiring: both generators apply the guard.
+  const routeSrc = fs.readFileSync(resolve(repoRoot, 'backend', 'src', 'routes', 'parlays.ts'), 'utf-8');
+  check('web /api/parlays/generate filters fixtures with filterPreKickoffFixtures',
+    routeSrc.includes("import { filterPreKickoffFixtures } from '../discord/fixtureStatus.js'") &&
+    routeSrc.includes('filterPreKickoffFixtures(allFixtures)'));
+  check('web generator skips persisting an empty parlay', routeSrc.includes('if (parlay.legs.length > 0)'));
+  check('Discord /generateparlay applies the pre-kickoff guard',
+    botSrc.includes('CP.filterPreKickoffFixtures(allFixtures.filter(fx => isVerifiedFixture(fx)))'));
 }
 
 /* ================================================================== *
