@@ -351,7 +351,10 @@ export class DiscordBotService {
           await interaction.editReply(replyText);
         } else if (interaction.commandName === 'track') {
           await interaction.deferReply();
-          const reply = await this.generateLiveTrackerReply();
+          const reply = await this.generateLiveTrackerReply({
+            userId: interaction.user.id,
+            channelId: interaction.channelId,
+          });
           if (typeof reply === 'string') {
             await interaction.editReply(reply);
           } else {
@@ -512,7 +515,10 @@ export class DiscordBotService {
     /* ---------------- parlay ---------------- */
     const parlayFixtures = async (ownerId: string) => {
       const league = CP.getParlayLeague(ownerId);
-      return CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
+      const fixtures = await CP.fetchVerifiedFixtures(this.factory, todayStr(), league);
+      // Only matches that have not kicked off can carry a new leg: finished
+      // (FT/AET/PEN) and in-play (LIVE/IN_PLAY) fixtures are excluded.
+      return CP.filterUpcomingFixtures(fixtures);
     };
 
     const renderParlay = async (interaction: any, notice?: string) => {
@@ -919,7 +925,7 @@ export class DiscordBotService {
         if (id === 'cp:parlay:match') {
           const fixtureId = interaction.values?.[0];
           if (!fixtureId || fixtureId === 'none') {
-            await interaction.reply({ content: 'No verified matches available.', ephemeral: true });
+            await interaction.reply({ content: 'No upcoming matches available — every fixture today has already kicked off.', ephemeral: true });
             return;
           }
           const fixtures = await parlayFixtures(ownerId);
@@ -1274,7 +1280,10 @@ export class DiscordBotService {
         const replyText = await this.generateParlayReply({ legs: 5, mode: 'SAME_GAME_PARLAY', minProbability: 0.58 });
         await message.reply(replyText);
       } else if (content === '!track' || content === '/track') {
-        const reply = await this.generateLiveTrackerReply();
+        const reply = await this.generateLiveTrackerReply({
+          userId: message.author.id,
+          channelId: message.channel.id,
+        });
         if (typeof reply === 'string') {
           await message.reply(reply);
         } else {
@@ -2036,14 +2045,34 @@ export class DiscordBotService {
     );
   }
 
-  public async generateLiveTrackerReply(): Promise<EmbedBuilder | string> {
+  public async generateLiveTrackerReply(options: { userId?: string; channelId?: string } = {}): Promise<EmbedBuilder | string> {
+    // Saved slips take priority: `/track` reads `saved_parlays.json` for the
+    // (user, channel) pair and shows the legs' settlement status. A slip is
+    // flagged ACTIVE_TRACKING on Save & Share, so this works immediately.
+    if (options.userId && options.channelId) {
+      let activeSlips: any[] = [];
+      try {
+        activeSlips = CP.getActiveSavedParlaysForUserChannel(options.userId, options.channelId);
+      } catch { activeSlips = []; }
+
+      if (activeSlips.length > 0) {
+        const embed = CP.buildSavedSlipTrackerEmbed(activeSlips[0]);
+        if (activeSlips.length > 1) {
+          embed.setFooter({
+            text: `${BRAND.footer} • ${activeSlips.length} saved slips in this channel — showing the most recent`,
+          });
+        }
+        return embed;
+      }
+    }
+
     if (!this.trackerService) {
       return '⚠️ Live tracker service is not active.';
     }
 
     const trackedList = this.trackerService.getTrackedParlays();
     if (trackedList.length === 0) {
-      return 'No parlays are currently tracked! Generate one first using /generateparlay or /customparlay, or track one in the web dashboard at ' + DASHBOARD_URL + '.';
+      return 'No parlays are currently tracked! Save a slip with `/customparlay` → **💾 Save & Share**, or generate one with `/generateparlay`. The web dashboard is at ' + DASHBOARD_URL + '.';
     }
 
     const active = trackedList[0];

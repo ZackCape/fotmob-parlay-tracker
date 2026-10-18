@@ -6,6 +6,7 @@ import {
 import { MarketType } from '../types/football.js';
 import { BRAND } from './brand.js';
 import { LEAGUE_OPTIONS } from './leagues.js';
+import { filterUpcomingFixtures } from './fixtureStatus.js';
 
 /* ------------------------------------------------------------------ *
  * Custom parlay builder
@@ -383,7 +384,11 @@ export function buildParlayLeagueRow(current = 'ALL'): ActionRowBuilder<StringSe
 }
 
 export function buildParlayMatchRow(fixtures: any[], current?: string): ActionRowBuilder<StringSelectMenuBuilder> {
-  const options = fixtures.slice(0, 25).map((f) => {
+  // Only fixtures that have not kicked off can carry a new leg. Finished
+  // (FT/AET/PEN) and in-play (LIVE/IN_PLAY) matches are filtered out so a leg
+  // can never be placed against a result the user already knows.
+  const upcoming = filterUpcomingFixtures(fixtures ?? []);
+  const options = upcoming.slice(0, 25).map((f) => {
     const time = (() => {
       const d = new Date(f.kickoffTime);
       return isNaN(d.getTime()) ? 'TBC' : d.toISOString().slice(11, 16) + ' UTC';
@@ -397,12 +402,12 @@ export function buildParlayMatchRow(fixtures: any[], current?: string): ActionRo
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId('cp:parlay:match')
-    .setPlaceholder(options.length ? 'Select a match for your slip…' : 'No verified matches available')
+    .setPlaceholder(options.length ? 'Select an upcoming match for your slip…' : 'No upcoming matches available')
     .addOptions(options.length ? options : [
       new StringSelectMenuOptionBuilder()
-        .setLabel('No verified fixtures')
+        .setLabel('No upcoming fixtures')
         .setValue('none')
-        .setDescription('Providers unavailable right now'),
+        .setDescription('Every match today has kicked off'),
     ])
     .setDisabled(options.length === 0);
 

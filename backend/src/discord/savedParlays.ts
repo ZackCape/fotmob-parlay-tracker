@@ -45,6 +45,12 @@ export interface SavedParlay {
   combinedOdds: number | null;
   combinedProbability: number;
   savedAt: number;
+  /**
+   * Set on `[ 💾 Save & Share ]` so `/track` finds the slip immediately and
+   * renders its leg status. A newer slip for the same user + channel retires
+   * the previous one so `/track` always shows the live slip.
+   */
+  activeTracking: boolean;
   /** legKey -> settledResult, so a leg is announced exactly once. */
   settled: Record<string, 'HIT' | 'MISS'>;
 }
@@ -67,7 +73,12 @@ function load(): void {
     if (!Array.isArray(arr)) return;
     for (const item of arr as SavedParlay[]) {
       if (!item?.id || !item?.channelId || !item?.userId || !Array.isArray(item.legs)) continue;
-      savedParlays.set(item.id, { ...item, settled: item.settled ?? {} });
+      savedParlays.set(item.id, {
+        ...item,
+        // Records written before tracking existed were saved to be tracked.
+        activeTracking: item.activeTracking ?? true,
+        settled: item.settled ?? {},
+      });
     }
   } catch { /* no file yet - start empty */ }
 }
@@ -130,6 +141,11 @@ export function saveParlayToDisk(
   const combinedProbability = Number(
     legs.reduce((acc, l) => acc * Math.max(0.0001, l.probability), 1).toFixed(6),
   );
+  // Retire any earlier slip for this user + channel so /track shows the slip
+  // the user just saved rather than a stale one.
+  for (const other of getSavedParlaysForUserChannel(meta.userId, meta.channelId)) {
+    setSavedParlayActiveTracking(other.id, false);
+  }
   const saved: SavedParlay = {
     id: `sp-${Date.now()}-${++idCounter}`,
     userId: meta.userId,
@@ -140,6 +156,7 @@ export function saveParlayToDisk(
     combinedOdds: combinedMarketOdds(legs),
     combinedProbability,
     savedAt: Date.now(),
+    activeTracking: true,
     settled: {},
   };
   savedParlays.set(saved.id, saved);
@@ -191,6 +208,90 @@ export function markSavedLegSettled(
 
 export function countSettledLegs(saved: SavedParlay): number {
   return Object.keys(saved.settled).length;
+}
+
+/* ------------------------------------------------------------------ *
+ * /track lookup — a saved slip is owned by a (userId, channelId) pair
+ * ------------------------------------------------------------------ */
+
+/** Saved slips belonging to a user in a specific channel. */
+export function getSavedParlaysForUserChannel(userId: string, channelId: string): SavedParlay[] {
+  return [...savedParlays.values()].filter(
+    (p) => p.userId === userId && p.channelId === channelId,
+  );
+}
+
+/** Saved slips still listed by `/track`, newest first. */
+export function getActiveSavedParlaysForUserChannel(userId: string, channelId: string): SavedParlay[] {
+  return getSavedParlaysForUserChannel(userId, channelId)
+    .filter((p) => p.activeTracking)
+    .sort((a, b) => b.savedAt - a.savedAt);
+}
+
+/** Flip the ACTIVE_TRACKING flag on a saved slip. */
+export function setSavedParlayActiveTracking(savedId: string, active: boolean): void {
+  const saved = savedParlays.get(savedId);
+  if (!saved || saved.activeTracking === active) return;
+  saved.activeTracking = active;
+  persist();
+}
+
+/** PENDING / HIT / MISS for one leg, from the live worker's settlement map. */
+export function savedLegStatus(saved: SavedParlay, leg: SavedParlayLeg): 'HIT' | 'MISS' | 'PENDING' {
+  return saved.settled[legKey(leg)] ?? 'PENDING';
+}
+
+const LEG_STATUS_ICON: Record<'HIT' | 'MISS' | 'PENDING', string> = {
+  HIT: '🟢 HIT',
+  MISS: '🔴 MISSED',
+  PENDING: '⏳ PENDING',
+};
+
+/**
+ * The `/track` card for a saved slip: every leg with its settlement status so
+ * the user can see at a glance what has landed and what is still open.
+ */
+export function buildSavedSlipTrackerEmbed(saved: SavedParlay): EmbedBuilder {
+  const settledCount = countSettledLegs(saved);
+  const hits = Object.values(saved.settled).filter((s) => s === 'HIT').length;
+  const misses = Object.values(saved.settled).filter((s) => s === 'MISS').length;
+  const pending = Math.max(0, saved.legs.length - settledCount);
+  const complete = saved.legs.length > 0 && pending === 0;
+
+  const embed = new EmbedBuilder()
+    .setColor(complete ? (misses === 0 ? BRAND.positive : BRAND.negative) : BRAND.accent)
+    .setAuthor({ name: BRAND.author })
+    .setTitle(`🎯 Tracked Parlay — ${saved.legs.length} Leg${saved.legs.length === 1 ? '' : 's'}`)
+    .setTimestamp(new Date());
+
+  const lines = saved.legs.map((leg, i) => {
+    const status = LEG_STATUS_ICON[savedLegStatus(saved, leg)];
+    return `\`${i + 1}\` ${status} — **${leg.description}**\n     ${leg.selection}`;
+  });
+  embed.setDescription(
+    (lines.join('\n') || 'No legs on this slip.').slice(0, 4096),
+  );
+
+  embed.addFields(
+    {
+      name: 'Tracking',
+      value: `${saved.activeTracking ? '**ACTIVE_TRACKING**' : 'Closed'} • ${settledCount}/${saved.legs.length} legs settled`,
+      inline: true,
+    },
+    {
+      name: 'Status',
+      value: `🟢 ${hits} Hit • 🔴 ${misses} Missed • ⏳ ${pending} Pending`,
+      inline: true,
+    },
+    {
+      name: 'Slip',
+      value: `Stake $${saved.stake.toFixed(2)}${saved.combinedOdds ? ` • combined ${saved.combinedOdds.toFixed(2)}x` : ''}`,
+      inline: true,
+    },
+  );
+
+  embed.setFooter({ text: `${BRAND.footer} • Leg status from live match data` });
+  return embed;
 }
 
 /* ------------------------------------------------------------------ *
@@ -382,12 +483,17 @@ export default {
   getSavedParlays,
   getSavedParlaysByChannel,
   getSavedParlaysByUser,
+  getSavedParlaysForUserChannel,
+  getActiveSavedParlaysForUserChannel,
+  setSavedParlayActiveTracking,
   getSavedParlaysForFixture,
   clearSavedParlays,
   legKey,
+  savedLegStatus,
   isSavedLegSettled,
   markSavedLegSettled,
   countSettledLegs,
   evaluateSavedLeg,
   buildParlayUpdateEmbed,
+  buildSavedSlipTrackerEmbed,
 };
