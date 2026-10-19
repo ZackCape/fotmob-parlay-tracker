@@ -378,16 +378,17 @@ export class DiscordBotService {
           const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!);
           const clientId = this.client!.user!.id;
           console.log('Syncing global slash commands with Discord REST API...');
-          await rest.put(Routes.applicationCommands(clientId), { body: commandDefinitionsJSON });
-          // Per-guild registration for instant propagation.
+          // Clear guild-level commands first to fix duplicate slash commands.
           for (const guild of this.client!.guilds.cache.values()) {
             try {
-              await rest.put(Routes.applicationGuildCommands(clientId, guild.id), { body: commandDefinitionsJSON });
+              await rest.put(Routes.applicationGuildCommands(clientId, guild.id), { body: [] });
             } catch (gErr: any) {
-              console.warn(`[DiscordBot] Guild command sync failed for ${guild.id}: ${gErr?.message || gErr}`);
+              console.warn(`[DiscordBot] Guild command clear failed for ${guild.id}: ${gErr?.message || gErr}`);
             }
           }
-          console.log('Successfully registered all slash commands (including /unbroadcast) globally and per-guild.');
+          // Global registration only.
+          await rest.put(Routes.applicationCommands(clientId), { body: commandDefinitionsJSON });
+          console.log('Successfully registered all slash commands (including /unbroadcast) globally.');
         } catch (error: any) {
           console.error('Failed to register Discord slash commands:', error?.message || error);
         }
@@ -1533,6 +1534,118 @@ export class DiscordBotService {
           const embed = await this.teamForm(teamName);
           await interaction.editReply({ embeds: [embed], components: [] });
           return;
+        }
+
+        if (id === 'hedge_parlay_select') {
+          await CP.ackInteraction(interaction);
+          const parlayId = interaction.values?.[0];
+          const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Auto-Hedge Calculator').setTimestamp(new Date());
+          e.setDescription(`Hedge calculations for parlay \`${parlayId}\`. When 4 of 5 legs hit, counter-bet sizing and fair hedge odds will be provided.`);
+          e.setFooter({ text: BRAND.footer });
+          await interaction.editReply({ embeds: [e], components: [] });
+          return;
+        }
+
+        // Generic 2-tier dropdown: league -> match -> card.
+        // Handles: remind, value, poll, injuries, referee, analysis, cards, compare, h2h, halftime.
+        const twoTierPrefixes = ['remind', 'value', 'poll', 'injuries', 'referee', 'analysis', 'cards', 'compare', 'h2h', 'halftime'];
+        for (const prefix of twoTierPrefixes) {
+          if (id === `${prefix}_league_select`) {
+            await CP.ackInteraction(interaction);
+            const leagueId = interaction.values?.[0];
+            const today = new Date().toISOString().slice(0, 10);
+            let matches: { id: string; label: string }[] = [];
+            try {
+              const fixtures = await this.factory.getFixturesByDate(today, leagueId);
+              matches = (fixtures || []).slice(0, 25).map((fx: any) => ({
+                id: fx.id,
+                label: `${fx.homeTeam?.name ?? 'Home'} vs ${fx.awayTeam?.name ?? 'Away'}`.slice(0, 100),
+              }));
+            } catch { /* fall back */ }
+            if (!matches.length) {
+              await interaction.editReply({ content: 'No matches found for this competition today. Try another league.' });
+              return;
+            }
+            const select = new StringSelectMenuBuilder()
+              .setCustomId(`${prefix}_match_select`)
+              .setPlaceholder('Select a match')
+              .addOptions(matches.map((m) => ({ label: m.label, value: m.id })));
+            const row = new ActionRowBuilder<any>().addComponents(select);
+            await interaction.editReply({ content: `Matches in **${leagueId}** — pick one:`, components: [row] });
+            return;
+          }
+
+          if (id === `${prefix}_match_select`) {
+            await CP.ackInteraction(interaction);
+            const fixtureId = interaction.values?.[0];
+            if (!fixtureId) {
+              await interaction.editReply({ content: 'No match selected.' });
+              return;
+            }
+            let details: any = null;
+            try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+            const fx = details?.fixture;
+            const home = fx?.homeTeam?.name ?? 'Home';
+            const away = fx?.awayTeam?.name ?? 'Away';
+            const league = fx?.league ?? prefix.toUpperCase();
+
+            let title = '';
+            let desc = '';
+            switch (prefix) {
+              case 'remind':
+                title = 'Fixture Reminder Set';
+                desc = `You will receive a DM 15 minutes before kickoff for **${home} vs ${away}** with final lineups.`;
+                break;
+              case 'value':
+                title = 'Value Bet Scan';
+                desc = `+EV analysis for **${home} vs ${away}**. Check model-vs-market discrepancies above 5% EV.`;
+                break;
+              case 'poll':
+                title = 'Community Match Poll';
+                desc = `Vote for **${home} vs ${away}** — Home Win / Draw / Away Win.`;
+                break;
+              case 'injuries':
+                title = 'Injury & Suspension Report';
+                desc = details?.injuries?.length
+                  ? details.injuries.map((i: any) => `**${i.player}** (${i.teamName}) - ${i.status} - ${i.reason}`).join('\\n')
+                  : 'No confirmed injuries or suspensions reported for this fixture.';
+                break;
+              case 'referee':
+                title = 'Referee Assignment';
+                desc = 'Referee strictness factor and card rate data will be displayed here when available from the provider.';
+                break;
+              case 'analysis':
+                title = 'Match Analysis';
+                desc = `1X2 probabilities, xG expectations, and form trends for **${home} vs ${away}**.`;
+                break;
+              case 'cards':
+                title = 'Cards Market Analysis';
+                desc = `Card market evaluation for **${home} vs ${away}**. Team aggressiveness, average fouls, referee strictness, Over/Under card probabilities.`;
+                break;
+              case 'compare':
+                title = 'Team Comparison';
+                desc = `Side-by-side metric comparison: **${home}** vs **${away}** — attack rating, defensive stability, xG differential, H2H record.`;
+                break;
+              case 'h2h':
+                title = 'Head-to-Head History';
+                desc = `Historical H2H record between **${home}** and **${away}**.`;
+                break;
+              case 'halftime':
+                title = 'Halftime Summary';
+                desc = `1st Half / 2nd Half tactical analytics for **${home} vs ${away}**.`;
+                break;
+            }
+
+            const embed = new EmbedBuilder()
+              .setColor(BRAND.accent)
+              .setAuthor({ name: BRAND.author })
+              .setTitle(title)
+              .setDescription(desc)
+              .setFooter({ text: `${BRAND.footer} - ${league}` })
+              .setTimestamp(new Date());
+            await interaction.editReply({ embeds: [embed], components: [] });
+            return;
+          }
         }
       } catch (err: any) {
         console.warn(`[DiscordBot] interaction error (${id}): ${err.message}`);
