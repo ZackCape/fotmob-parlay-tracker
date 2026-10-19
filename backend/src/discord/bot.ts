@@ -307,6 +307,14 @@ export class DiscordBotService {
             .setName('broadcast')
             .setDescription('Trigger a live odds & team news briefing right now in this channel'),
           new SlashCommandBuilder()
+            .setName('unbroadcast')
+            .setDescription('Disable automated morning briefings and predictions for a channel')
+            .addChannelOption(opt =>
+              opt
+                .setName('channel')
+                .setDescription('Channel to unsubscribe (defaults to current channel)')
+                .setRequired(false)),
+          new SlashCommandBuilder()
             .setName('setbrief')
             .setDescription('Set the daily morning briefing time (HH:MM, local tz)')
             .addStringOption(opt =>
@@ -420,7 +428,27 @@ export class DiscordBotService {
           await interaction.editReply(`✅ **Briefing broadcast delivered.** The morning briefing was posted to the configured channel${this.config.webhookUrl ? ' and webhook' : ''}.`);
         }
 
-        else if (interaction.commandName === 'setbrief') {
+        else if (interaction.commandName === 'unbroadcast') {
+          await interaction.deferReply();
+          const ch = interaction.options.getChannel('channel');
+          const targetId = (ch as any)?.id ?? interaction.channelId;
+          const wasSubscribed = this.config.channelId === targetId;
+          if (wasSubscribed) {
+            this.config.channelId = undefined;
+            if (this.cronJob) { this.cronJob.stop(); this.cronJob = undefined; }
+          }
+          const e = new EmbedBuilder()
+            .setColor(BRAND.positive)
+            .setAuthor({ name: BRAND.author })
+            .setTitle('Channel Unsubscribed')
+            .setDescription(wasSubscribed
+              ? `Automated briefings and predictions will no longer be posted in <#${targetId}>.`
+              : `Channel <#${targetId}> was not previously subscribed to broadcasts. No changes made.`)
+            .setFooter({ text: `${BRAND.footer} - Broadcast management` })
+            .setTimestamp(new Date());
+          await interaction.editReply({ embeds: [e] });
+          return;
+        } else if (interaction.commandName === 'setbrief') {
           const time = interaction.options.getString('time', true);
           if (!/^\d{2}:\d{2}$/.test(time)) {
             await interaction.reply({ content: '⚠️ Please use HH:MM format (e.g. 08:00).', ephemeral: true });
@@ -2382,5 +2410,7 @@ export class DiscordBotService {
     };
   }
 }
+
+
 
 

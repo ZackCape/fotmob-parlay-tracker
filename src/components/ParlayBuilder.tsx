@@ -19,6 +19,7 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
   const [error, setError] = useState<string | null>(null);
   const [bestAvailableLoading, setBestAvailableLoading] = useState<boolean>(false);
   const [tomorrowLoading, setTomorrowLoading] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
 
   const handleGenerate = async () => {
     setLoading(true);
