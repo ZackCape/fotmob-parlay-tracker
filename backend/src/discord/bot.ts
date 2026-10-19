@@ -13,6 +13,7 @@ import {
 } from '../utils/competitionPriority.js';
 import * as CP from './interactions.js';
 import { BRAND } from './brand.js';
+import { safeToFixed } from '../utils/formatters.js';
 
 export type UpdateInterval = '5m' | '15m' | '30m' | '45m' | '1h';
 
@@ -2754,8 +2755,15 @@ export class DiscordBotService {
     }
 
     const trackedList = this.trackerService.getTrackedParlays();
-    if (trackedList.length === 0) {
-      return 'No parlays are currently tracked! Save a slip with `/customparlay` → **💾 Save & Share**, or generate one with `/generateparlay`. Press **⚡ Track Match** on `/live` to follow a single match. The web dashboard is at ' + DASHBOARD_URL + '.';
+    if (trackedList.length === 0 && (!options.userId || !options.channelId || embeds.length === 0)) {
+      const emptyEmbed = new EmbedBuilder()
+        .setColor(BRAND.neutral)
+        .setAuthor({ name: BRAND.author })
+        .setTitle('No Active Tracked Matches Found')
+        .setDescription('You currently have no live matches or saved parlays being tracked.\nUse /analysis or the Web Dashboard to track a match or save a parlay slip!')
+        .setFooter({ text: BRAND.footer })
+      return [emptyEmbed];
+      return [emptyEmbed];
     }
 
     const active = trackedList[0];
@@ -2773,7 +2781,7 @@ export class DiscordBotService {
       .setDescription(
         `**Status**: ${updated.overallStatus === 'WON' ? '🏆 PARLAY WON!' : updated.overallStatus === 'BUSTED' ? '❌ PARLAY BUSTED' : '⏱️ IN PROGRESS (LIVE)'}\n` +
         `• **Legs Progress**: 🟢 **${updated.legsHitCount}** Hit | 🟡 **${updated.legsLiveCount}** Live | ⏳ **${updated.legsPendingCount}** Pending | 🔴 **${updated.legsMissedCount}** Lost\n` +
-        `• **Current Cashout / Equity Index**: \`${(updated.cashoutProbabilityIndex * 100).toFixed(1)}%\``
+        `• **Current Cashout / Equity Index**: \`${safeToFixed(updated.cashoutProbabilityIndex * 100, 1)}%\``
       );
 
     for (const leg of updated.liveLegs.slice(0, 8)) {

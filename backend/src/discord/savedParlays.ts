@@ -4,6 +4,7 @@ import { EmbedBuilder } from 'discord.js';
 import { Fixture, FixtureStatistics, FixtureStatus, MarketType } from '../types/football.js';
 import { evaluateActualOutcome } from '../engine/market-calculator.js';
 import { BRAND } from './brand.js';
+import { safeToFixed } from '../utils/formatters.js';
 import type { CustomParlay, ParlayLeg } from './parlayBuilder.js';
 
 /* ------------------------------------------------------------------ *
@@ -318,7 +319,7 @@ export function buildSavedSlipTrackerEmbed(saved: SavedParlay): EmbedBuilder {
     },
     {
       name: 'Slip',
-      value: `Stake $${saved.stake.toFixed(2)}${saved.combinedOdds ? ` • combined ${saved.combinedOdds.toFixed(2)}x` : ''}`,
+      value: `Stake $${safeToFixed(saved.stake, 2, '0.00')}${saved.combinedOdds ? ` • combined ${safeToFixed(saved.combinedOdds, 2, 'n/a')}x` : ''}`,
       inline: true,
     },
   );
@@ -503,7 +504,7 @@ export function buildParlayUpdateEmbed(opts: {
   e.addFields(
     { name: 'Match', value: leg.description, inline: true },
     { name: 'Market', value: leg.selection, inline: true },
-    { name: 'Slip', value: `${settledCount}/${totalLegs} legs settled • stake $${saved.stake.toFixed(2)}`, inline: true },
+    { name: 'Slip', value: `${settledCount}/${totalLegs} legs settled • stake $${safeToFixed(saved.stake, 2, '0.00')}`, inline: true },
   );
 
   e.setFooter({ text: `${BRAND.footer} • Live parlay tracking` });
