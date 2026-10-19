@@ -406,6 +406,48 @@ function fixtureLeague(f: Fixture): string {
   return f.league;
 }
 
+/**
+ * Calculate a 5-minute pressure index from live match statistics.
+ *
+ * Returns a value 0-100 representing how much one side is dominating. A value
+ * above 75 triggers a "High Pressure Alert" in tracked channels.
+ */
+export function calculatePressureIndex(stats: any): { index: number; team: 'home' | 'away' | null } {
+  if (!stats) return { index: 0, team: null };
+  const possHome = Number(stats.possessionHome ?? 50);
+  const possAway = Number(stats.possessionAway ?? 50);
+  const shotsHome = Number(stats.shotsOnTargetHome ?? 0);
+  const shotsAway = Number(stats.shotsOnTargetAway ?? 0);
+  const cornersHome = Number(stats.cornersHome ?? 0);
+  const cornersAway = Number(stats.cornersAway ?? 0);
+
+  // Home pressure
+  const homePressure = Math.min(100, (possHome * 0.4) + (shotsHome * 8) + (cornersHome * 3));
+  // Away pressure
+  const awayPressure = Math.min(100, (possAway * 0.4) + (shotsAway * 8) + (cornersAway * 3));
+
+  if (homePressure >= awayPressure && homePressure >= 75) return { index: Math.round(homePressure), team: 'home' };
+  if (awayPressure > homePressure && awayPressure >= 75) return { index: Math.round(awayPressure), team: 'away' };
+  return { index: Math.max(homePressure, awayPressure), team: null };
+}
+
+export function buildPressureAlert(fixture: Fixture, pressure: { index: number; team: 'home' | 'away' | null }): EmbedBuilder {
+  const home = fixture.homeTeam.name;
+  const away = fixture.awayTeam.name;
+  const teamName = pressure.team === 'home' ? home : away;
+  const e = new EmbedBuilder()
+    .setColor(BRAND.negative)
+    .setAuthor({ name: BRAND.author })
+    .setTitle('⚡ High Pressure Alert')
+    .setDescription(
+      `**${home} ${fixture.homeScore ?? 0} - ${fixture.awayScore ?? 0} ${away}**\n` +
+      `**${teamName}** is applying sustained pressure (${pressure.index}% pressure index).`
+    )
+    .setFooter({ text: `${BRAND.footer} - Live pressure alert` })
+    .setTimestamp(new Date());
+  return e;
+}
+
 export default {
   subscribeLive,
   unsubscribeLive,
@@ -419,4 +461,6 @@ export default {
   buildGoalAlert,
   buildRedCardAlert,
   buildHalftimeReport,
+  calculatePressureIndex,
+  buildPressureAlert,
 };

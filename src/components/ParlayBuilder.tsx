@@ -59,6 +59,12 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
     }
   };
 
+  const handleCopySlip = async () => {
+    if (!parlay) return;
+    const text = parlay.legs.map((l, i) => (i + 1) + '. ' + l.fixtureDescription + ' - ' + l.selection + ' (' + (l.estimatedProbability * 100).toFixed(1) + '%)' + (l.marketOdds ? ' @ ' + Number(l.marketOdds).toFixed(2) + 'x' : '')).join('\\n') + '\\nCombined: ' + (parlay.combinedProbability * 100).toFixed(2) + '% | ' + parlay.compoundOddsDecimal + 'x';
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { setError('Clipboard not available'); }
+  };
+
   const handleGenerateBestAvailable = async () => {
     if (!parlay) return;
     const target = (parlay.actualLegsCount && parlay.actualLegsCount > 0 ? parlay.actualLegsCount : parlay.legs.length) || 1;
@@ -328,6 +334,15 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
                   </div>
                 </div>
 
+                {/* One-Click Copy Slip Text */}
+                <button
+                  type="button"
+                  onClick={handleCopySlip}
+                  className="w-full sm:w-auto py-3.5 px-5 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-2 border border-white/10 transition-all cursor-pointer"
+                >
+                  <span>{copied ? 'Copied!' : 'Copy Slip Text'}</span>
+                </button>
+
                 {/* Direct 1-Click Track Live Match Feature */}
                 <button
                   onClick={handleTrackParlay}
@@ -412,3 +427,4 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
     </div>
   );
 };
+

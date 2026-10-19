@@ -1614,6 +1614,40 @@ export class DiscordBotService {
   /**
    * Extract h2h prices from an odds snapshot (local helper for valuePicks).
    */
+
+  public async buildShareCard(parlayId?: string): Promise<EmbedBuilder> {
+    const slips = CP.getSavedParlays();
+    const target = parlayId ? slips.find((s: any) => s.id === parlayId) : slips[slips.length - 1];
+    const code = '#CP-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    const e = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle('Shareable Parlay Slip')
+      .setTimestamp(new Date());
+
+    if (!target) {
+      e.setDescription('No saved parlay slip found. Build one with /customparlay and press Save & Share first.');
+      e.setFooter({ text: `${BRAND.footer} - Shareable slip` });
+      return e;
+    }
+
+    const combined = target.combinedProbability ?? 0;
+    const odds = target.combinedOdds;
+    const lines = (target.legs || []).map((l: any, i: number) => {
+      const price = l.marketOdds ? ' @ ' + Number(l.marketOdds).toFixed(2) + 'x' : '';
+      return (i + 1) + '. ' + l.description + ' -> ' + l.selection + ' (' + (l.probability * 100).toFixed(1) + '%)' + price;
+    }).join('\\n');
+
+    e.setDescription('Slip code: **' + code + '**\\n\\n' + lines);
+    e.addFields({
+      name: 'Snapshot',
+      value: 'Combined **' + (combined * 100).toFixed(2) + '%** | fair **' + (odds ? odds.toFixed(2) : 'n/a') + 'x** | stake **' + target.stake + '** | ' + target.legs.length + ' leg(s)',
+      inline: false,
+    });
+    e.setFooter({ text: `${BRAND.footer} - ${code} - Shareable slip` });
+    return e;
+  }
+
   private extractH2hPricesLocal(odds: any): { home: number | null; draw: number | null; away: number | null } {
     let market: any = null;
     for (const b of odds.bookmakers || []) {
@@ -2348,3 +2382,5 @@ export class DiscordBotService {
     };
   }
 }
+
+
