@@ -22,6 +22,7 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
   const [bestAvailableLoading, setBestAvailableLoading] = useState<boolean>(false);
   const [tomorrowLoading, setTomorrowLoading] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+  const [isTracking, setIsTracking] = useState<boolean>(false);
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -98,6 +99,9 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
       if (onTrackLive) {
         onTrackLive(live);
       }
+      setIsTracking(true);
+      // Show confirmation toast
+      setError(null);
     } catch (err: any) {
       setError(err.message || 'Failed to initiate live tracking');
     } finally {
@@ -320,7 +324,7 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
               </div>
 
               {/* Combined Probability, Compound Odds, and Track Live CTA */}
-              <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                 <div className="flex items-center gap-5 bg-[#1c1f26] p-4 rounded-2xl border border-[#252932] shrink-0">
                   <div>
                     <div className="text-[10px] text-[#8c92a4] uppercase font-bold tracking-wider">Combined Prob</div>
@@ -341,20 +345,30 @@ export const ParlayBuilder: React.FC<ParlayBuilderProps> = ({ selectedDate, sele
                 <button
                   type="button"
                   onClick={handleCopySlip}
-                  className="w-full sm:w-auto py-3.5 px-5 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-2 border border-white/10 transition-all cursor-pointer"
+                  className="shrink-0 bg-slate-800/80 hover:bg-slate-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs border border-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>{copied ? 'Copied!' : 'Copy Slip Text'}</span>
                 </button>
 
                 {/* Direct 1-Click Track Live Match Feature */}
-                <button
-                  onClick={handleTrackParlay}
-                  disabled={trackingLoading}
-                  className="w-full sm:w-auto py-3.5 px-5 rounded-2xl bg-[#00d66c] hover:bg-[#00b85c] text-black font-black text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-lg shadow-[#00d66c]/25 active:scale-95 transition-all cursor-pointer"
-                >
+                {isTracking ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 font-semibold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shrink-0"
+                  >
+                    <span>🟢 Live Tracking Active</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleTrackParlay}
+                    disabled={trackingLoading}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                  >
                   <Activity className={`w-4 h-4 ${trackingLoading ? 'animate-spin' : ''}`} />
                   <span>{trackingLoading ? 'Initializing Live Tracker...' : '🎯 Track Parlay Live'}</span>
                 </button>
+                )}
               </div>
             </div>
 

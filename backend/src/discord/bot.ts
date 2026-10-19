@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import axios from 'axios';
 import cron from 'node-cron';
 import { DataProviderFactory } from '../providers/provider-factory.js';
@@ -337,8 +337,8 @@ export class DiscordBotService {
             .addStringOption(opt =>
               opt
                 .setName('name')
-                .setDescription('Team name')
-                .setRequired(true)),
+                .setDescription('Team name (optional - leave blank for interactive selection)')
+                .setRequired(false)),
           new SlashCommandBuilder()
             .setName('value')
             .setDescription('Highlight +EV model-vs-market picks for today'),
@@ -359,16 +359,23 @@ export class DiscordBotService {
         console.log('[DiscordBot] Slash commands (/info, /fixtures, /generateparlay, /customparlay, /track, /channel, /interval, /broadcast) registered!');
 
         // Force-register slash commands (including /unbroadcast) via the REST
-        // API so Discord picks them up immediately on deploy.
+        // API so Discord picks them up immediately on deploy. Register per-guild
+        // for instant propagation, plus globally as a fallback.
         try {
           const commandDefinitionsJSON = commands.map((c: any) => c.toJSON());
-          console.log('Syncing global slash commands with Discord REST API...');
           const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!);
-          await rest.put(
-            Routes.applicationCommands(this.client!.user!.id),
-            { body: commandDefinitionsJSON }
-          );
-          console.log('Successfully registered all slash commands (including /unbroadcast).');
+          const clientId = this.client!.user!.id;
+          console.log('Syncing global slash commands with Discord REST API...');
+          await rest.put(Routes.applicationCommands(clientId), { body: commandDefinitionsJSON });
+          // Per-guild registration for instant propagation.
+          for (const guild of this.client!.guilds.cache.values()) {
+            try {
+              await rest.put(Routes.applicationGuildCommands(clientId, guild.id), { body: commandDefinitionsJSON });
+            } catch (gErr: any) {
+              console.warn(`[DiscordBot] Guild command sync failed for ${guild.id}: ${gErr?.message || gErr}`);
+            }
+          }
+          console.log('Successfully registered all slash commands (including /unbroadcast) globally and per-guild.');
         } catch (error: any) {
           console.error('Failed to register Discord slash commands:', error?.message || error);
         }
@@ -515,10 +522,22 @@ export class DiscordBotService {
           await interaction.editReply({ embeds: [h2h] });
           return;
         } else if (interaction.commandName === 'team') {
-          await interaction.deferReply();
-          const teamName = interaction.options.getString('name', true);
-          const embed = await this.teamForm(teamName);
-          await interaction.editReply({ embeds: [embed] });
+          const teamName = interaction.options.getString('name');
+          if (teamName) {
+            await interaction.deferReply();
+            const embed = await this.teamForm(teamName);
+            await interaction.editReply({ embeds: [embed] });
+            return;
+          }
+          // Interactive flow: league select -> team select -> profile.
+          await CP.ackInteraction(interaction, { ephemeral: true });
+          const leagues = CP.LEAGUE_OPTIONS;
+          const select = new StringSelectMenuBuilder()
+            .setCustomId('team_league_select')
+            .setPlaceholder('Select a competition')
+            .addOptions(leagues.slice(0, 25).map((l: any) => ({ label: l.label, value: l.id })));
+          const row = new ActionRowBuilder<any>().addComponents(select);
+          await interaction.editReply({ content: 'Select a competition to view team stats:', components: [row] });
           return;
         } else if (interaction.commandName === 'value') {
           await interaction.deferReply();
@@ -1246,6 +1265,46 @@ export class DiscordBotService {
           } else {
             await interaction.editReply({ content: 'No parlay slip to copy.' }).catch(() => {});
           }
+          return;
+        }
+
+        // Interactive /team flow: league -> team -> profile.
+        if (id === 'team_league_select') {
+          await CP.ackInteraction(interaction);
+          const leagueId = interaction.values?.[0];
+          // Fetch fixtures for the league to extract team names.
+          const today = new Date().toISOString().slice(0, 10);
+          let teams: string[] = [];
+          try {
+            const fixtures = await this.factory.getFixturesByDate(today, leagueId);
+            const seen = new Set<string>();
+            for (const fx of fixtures || []) {
+              if (fx.homeTeam?.name && !seen.has(fx.homeTeam.name)) { seen.add(fx.homeTeam.name); teams.push(fx.homeTeam.name); }
+              if (fx.awayTeam?.name && !seen.has(fx.awayTeam.name)) { seen.add(fx.awayTeam.name); teams.push(fx.awayTeam.name); }
+            }
+          } catch { /* fall back to empty */ }
+          if (!teams.length) {
+            await interaction.editReply({ content: 'No teams found for this competition today. Try another league.' });
+            return;
+          }
+          const teamSelect = new StringSelectMenuBuilder()
+            .setCustomId('team_select')
+            .setPlaceholder('Select a team')
+            .addOptions(teams.slice(0, 25).map((t: string) => ({ label: t, value: t })));
+          const row = new ActionRowBuilder<any>().addComponents(teamSelect);
+          await interaction.editReply({ content: `Teams in **${leagueId}** — pick one:`, components: [row] });
+          return;
+        }
+
+        if (id === 'team_select') {
+          await CP.ackInteraction(interaction);
+          const teamName = interaction.values?.[0];
+          if (!teamName) {
+            await interaction.editReply({ content: 'No team selected.' });
+            return;
+          }
+          const embed = await this.teamForm(teamName);
+          await interaction.editReply({ embeds: [embed], components: [] });
           return;
         }
       } catch (err: any) {
