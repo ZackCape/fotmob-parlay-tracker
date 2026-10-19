@@ -543,7 +543,7 @@ export class DiscordBotService {
             return;
           }
           // Interactive flow: league select -> team select -> profile.
-          await CP.ackInteraction(interaction, { ephemeral: true });
+          await interaction.deferReply({ ephemeral: true });
           const leagues = CP.LEAGUE_OPTIONS;
           const select = new StringSelectMenuBuilder()
             .setCustomId('team_league_select')
@@ -801,7 +801,7 @@ export class DiscordBotService {
      */
     const rerenderParlayMessage = async (interaction: any, notice?: string) => {
       const ownerId = interaction.user.id;
-      await CP.ackInteraction(interaction);
+      await interaction.deferUpdate();
       const payload = await buildParlayView(ownerId, notice);
       await CP.editOrFollowUp(interaction, { ...payload });
     };
@@ -999,7 +999,7 @@ export class DiscordBotService {
           if (enabled) this.dmAlerts.add(userId); else this.dmAlerts.delete(userId);
           // Acknowledge first, like every other button in this file, so the row
           // swap is applied to an already-open interaction.
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           try {
             await interaction.editReply({ components: [CP.buildDmAlertsRow(userId, enabled)] });
           } catch {
@@ -1101,7 +1101,7 @@ export class DiscordBotService {
           // fixture sweep plus a match-details lookup, either of which can outlive
           // Discord's 3-second interaction window; deferring first keeps the
           // button instant and lets the tracker message be edited in place.
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
 
           const found = await analysisFor(tracker.fixtureId);
 
@@ -1181,7 +1181,7 @@ export class DiscordBotService {
           // Changing league changes the fixture slate, so the staged match/market reset.
           CP.clearParlayPending(ownerId);
           // Acknowledge before the slate fetch so the panel never times out.
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           await CP.editOrFollowUp(interaction, await buildParlayView(
             ownerId,
             `Filtering by **${CP.leagueLabel(league)}**. Slip retained — ${CP.getParlay(ownerId).legs.length} leg(s).`,
@@ -1197,7 +1197,7 @@ export class DiscordBotService {
             return;
           }
           // Acknowledge before the slate fetch so the panel never times out.
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           const fixtures = await parlayFixtures(ownerId);
           const fx = fixtures.find((f: any) => f.id === fixtureId);
           const label = fx ? `${fx.homeTeam.name} v ${fx.awayTeam.name}` : undefined;
@@ -1215,7 +1215,7 @@ export class DiscordBotService {
           CP.setParlayPendingMarket(ownerId, market);
           const staged = CP.getParlayPendingMatch(ownerId);
           // Acknowledge before the slate fetch so the panel never times out.
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           await CP.editOrFollowUp(interaction, await buildParlayView(
             ownerId,
             staged
@@ -1236,7 +1236,7 @@ export class DiscordBotService {
 
           // Acknowledge before the match analysis and odds lookups: both are
           // network calls and can outlive Discord's 3-second window.
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
 
           const found = await analysisFor(fixtureId);
           if (!found) { await rerenderParlayMessage(interaction, 'That match is no longer available.'); return; }
@@ -1348,7 +1348,7 @@ export class DiscordBotService {
 
         // Handle generated parlay action buttons.
         if (id.startsWith('track_parlay_')) {
-          await CP.ackInteraction(interaction, { ephemeral: true });
+          await interaction.deferReply({ ephemeral: true });
           const parlayId = id.replace('track_parlay_', '');
           // Find the most recent saved parlay for this user/channel.
           const slips = CP.getSavedParlaysForUserChannel(interaction.user.id, interaction.channelId);
@@ -1378,7 +1378,7 @@ export class DiscordBotService {
         }
 
         if (id.startsWith('copy_parlay_')) {
-          await CP.ackInteraction(interaction, { ephemeral: true });
+          await interaction.deferReply({ ephemeral: true });
           const slips = CP.getSavedParlaysForUserChannel(interaction.user.id, interaction.channelId);
           const target = slips[slips.length - 1];
           if (target) {
@@ -1392,7 +1392,7 @@ export class DiscordBotService {
 
         // Interactive /team flow: league -> team -> profile.
         if (id === 'team_league_select') {
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           const leagueId = interaction.values?.[0];
           // Fetch fixtures for the league to extract team names.
           const today = new Date().toISOString().slice(0, 10);
@@ -1419,7 +1419,7 @@ export class DiscordBotService {
         }
 
         if (id === 'team_select') {
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           const teamName = interaction.values?.[0];
           if (!teamName) {
             await interaction.editReply({ content: 'No team selected.' });
@@ -1431,7 +1431,7 @@ export class DiscordBotService {
         }
 
         if (id === 'hedge_parlay_select') {
-          await CP.ackInteraction(interaction);
+          await interaction.deferUpdate();
           const parlayId = interaction.values?.[0];
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Auto-Hedge Calculator').setTimestamp(new Date());
           e.setDescription(`Hedge calculations for parlay \`${parlayId}\`. When 4 of 5 legs hit, counter-bet sizing and fair hedge odds will be provided.`);
@@ -1445,7 +1445,7 @@ export class DiscordBotService {
         const twoTierPrefixes = ['remind', 'value', 'poll', 'injuries', 'referee', 'analysis', 'cards', 'compare', 'h2h', 'halftime'];
         for (const prefix of twoTierPrefixes) {
           if (id === `${prefix}_league_select`) {
-            await CP.ackInteraction(interaction);
+            await interaction.deferUpdate();
             const leagueId = interaction.values?.[0];
             const today = new Date().toISOString().slice(0, 10);
             let matches: { id: string; label: string }[] = [];
@@ -1470,7 +1470,7 @@ export class DiscordBotService {
           }
 
           if (id === `${prefix}_match_select`) {
-            await CP.ackInteraction(interaction);
+            await interaction.deferUpdate();
             const fixtureId = interaction.values?.[0];
             if (!fixtureId) {
               await interaction.editReply({ content: 'No match selected.' });
