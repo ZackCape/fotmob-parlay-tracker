@@ -75,9 +75,9 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
-      <div className="relative bg-slate-950/95 backdrop-blur-md border border-emerald-500/20 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="relative bg-slate-950 border border-slate-800/60 shadow-2xl rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
         {/* Hero Header — emerald / cyan glassmorphism */}
-        <div className="p-5 sm:p-6 bg-slate-950/95 backdrop-blur-md border-b border-emerald-500/20 flex items-center justify-between shrink-0">
+        <div className="p-5 sm:p-6 bg-slate-950 border-b border-slate-800/60 flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-4 flex-wrap gap-2">
             <div className="flex items-center space-x-2.5">
               <img src={fixture.homeTeam.logo} alt={fixture.homeTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-emerald-500/30" />
@@ -88,7 +88,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               <img src={fixture.awayTeam.logo} alt={fixture.awayTeam.name} className="w-9 h-9 object-contain rounded-full p-0.5 bg-slate-900 border border-cyan-500/30" />
               <span className="font-extrabold text-base sm:text-xl text-white">{fixture.awayTeam.name}</span>
             </div>
-            <span className="hidden sm:inline-block text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+            <span className="hidden sm:inline-block text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800/60 text-slate-300 border border-slate-700/50">
               {fixture.league}
             </span>
           </div>
@@ -125,8 +125,8 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           </div>
         </div>
 
-        {/* Tab Switcher — pill buttons */}
-        <div className="px-6 border-b border-emerald-500/10 flex space-x-2 py-2 shrink-0 bg-slate-950/50 overflow-x-auto">
+        {/* Tab Switcher — pill design */}
+        <div className="px-4 py-2 shrink-0 bg-slate-900/60 border border-slate-800/60 rounded-xl mx-4 mt-2 flex space-x-1 overflow-x-auto">
           {([
             { id: 'markets', label: 'Market Predictions', icon: <TrendingUp className="w-4 h-4 text-emerald-400" /> },
             { id: 'stats', label: 'Match Stats', icon: <BarChart3 className="w-4 h-4" /> },
@@ -137,10 +137,10 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === tab.id
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                  : 'bg-slate-900/60 text-slate-400 border border-white/10 hover:text-slate-200'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-transparent text-slate-400 border border-transparent hover:text-slate-200'
               }`}
             >
               {tab.icon}
@@ -175,11 +175,11 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               ? `${fixture.awayTeam.name} Win`
               : 'Draw';
             return (
-              <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-4 space-y-3">
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-white">Match Outcome (Predicted)</span>
                   {!res.tied && (
-                    <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.35)]">
+                    <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.5)]">
                       🏆 Most Likely: {mostLikelyLabel}
                     </span>
                   )}
@@ -194,9 +194,9 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                           {isFinite(r.value) ? `${(r.value * 100).toFixed(1)}%` : 'N/A'}
                         </span>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div className="w-full rounded-full h-2.5 bg-slate-800/80 overflow-hidden">
                         <div
-                          className={`${isTop ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-slate-700 to-slate-600'} h-2 rounded-full transition-all duration-700 ease-out`}
+                          className={`${isTop ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-slate-700 to-slate-800'} h-2.5 rounded-full transition-all duration-700 ease-out`}
                           style={{ width: `${Math.min(100, r.value * 100)}%` }}
                         />
                       </div>
@@ -215,7 +215,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             <div className="text-xs text-slate-400">Loading odds...</div>
           )}
           {!oddsLoading && oddsData && oddsData.available && (
-            <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-4 space-y-3">
+            <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-bold text-white">Odds & Market (1X2)</span>
                 <span className="text-[10px] text-slate-400">
@@ -235,7 +235,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                       : <span className="text-[10px] font-bold text-slate-400 bg-slate-800/60 border border-white/10 px-1.5 py-0.5 rounded-full">{ev.toFixed(1)}pp</span>)
                     : null;
                   return (
-                    <div key={i} className="bg-slate-900/60 border border-emerald-500/10 rounded-xl p-3 space-y-1">
+                    <div key={i} className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-xl p-3 space-y-1">
                       <div className="text-[10px] text-slate-400 truncate">{r.label}</div>
                       <div className="font-mono font-bold text-white">{r.odds != null ? Number(r.odds).toFixed(2) : 'n/a'}</div>
                       <div className="text-[10px] text-emerald-400">Fair: {r.fair != null ? Number(r.fair).toFixed(2) : 'n/a'}</div>
@@ -250,7 +250,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             </div>
           )}
           {!oddsLoading && oddsData && !oddsData.available && (
-            <div className="text-xs text-slate-400 bg-slate-950/70 border border-emerald-500/20 rounded-2xl p-3">
+            <div className="text-xs text-slate-400 bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-3">
               Odds unavailable: {oddsData.reason || 'unknown'}.
             </div>
           )}
@@ -258,7 +258,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           {/* TAB 1: MARKET PREDICTIONS */}
           {activeTab === 'markets' && (
             <div className="space-y-4">
-              <div className="bg-gradient-to-r from-emerald-500/10 via-slate-900 to-cyan-500/5 border border-emerald-500/20 rounded-2xl p-3.5 text-xs text-emerald-200/90 flex items-center justify-between">
+              <div className="bg-gradient-to-r from-emerald-500/10 via-slate-900 to-cyan-500/5 border border-slate-800/50 rounded-2xl p-3.5 text-xs text-emerald-200/90 flex items-center justify-between">
                 <span>
                   <strong>Strict Non-Betting-Odds Methodology:</strong> Probabilities derived exclusively from attack intensity, defense vulnerability, Dixon-Coles low-score correction, and Bayesian shrinkage.
                 </span>
@@ -271,7 +271,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                 {marketPredictions.map(pred => (
                   <div
                     key={pred.id}
-                    className="bg-slate-950/70 border border-emerald-500/10 rounded-2xl p-4 flex flex-col justify-between hover:border-emerald-400/30 transition-colors shadow-sm"
+                    className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-4 flex flex-col justify-between hover:border-emerald-400/30 transition-colors shadow-sm"
                   >
                     <div>
                       <div className="flex items-center justify-between mb-2">
@@ -327,7 +327,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                 Joint scoreline probability distribution calculated via Dixon-Coles bivariate Poisson with low-score correlation adjustment factor <span className="font-mono text-emerald-400 font-bold">ρ = -0.11</span>.
               </p>
 
-              <div className="overflow-x-auto rounded-2xl border border-emerald-500/20">
+              <div className="overflow-x-auto rounded-2xl border border-slate-800/50">
                 <table className="w-full border-collapse text-center text-xs">
                   <thead>
                     <tr>
@@ -376,7 +376,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               {fixture.statistics ? (
                 <>
                   {/* Possession */}
-                  <div className="bg-slate-950/70 border border-emerald-500/20 rounded-2xl p-4">
+                  <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-4">
                     <div className="text-sm font-bold text-white mb-3">Possession</div>
                     <div className="flex items-center gap-3">
                       <span className="font-mono font-bold text-white text-sm w-12 text-right">
@@ -399,7 +399,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   </div>
 
                   {/* Stat rows */}
-                  <div className="bg-slate-950/70 border border-emerald-500/20 rounded-2xl overflow-hidden">
+                  <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl overflow-hidden">
                     {[
                       { label: 'Total shots', home: fixture.statistics.shotsHome, away: fixture.statistics.shotsAway },
                       { label: 'Shots on target', home: fixture.statistics.shotsOnTargetHome, away: fixture.statistics.shotsOnTargetAway },
@@ -433,7 +433,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   </p>
                 </>
               ) : (
-                <div className="bg-slate-950/70 border border-emerald-500/20 rounded-2xl p-6 text-center">
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-6 text-center">
                   <AlertCircle className="w-6 h-6 mx-auto mb-2 text-slate-500" />
                   <p className="text-sm text-slate-300 font-semibold">Match statistics unavailable</p>
                   <p className="text-xs text-slate-500 mt-1">
@@ -449,7 +449,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Home Form */}
-                <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.homeTeam.name} (Home)</span>
                     <div className="flex space-x-1.5">
@@ -477,7 +477,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                 </div>
 
                 {/* Away Form */}
-                <div className="bg-slate-950/70 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-5">
+                <div className="bg-slate-900/40 backdrop-blur-md backdrop-blur-md border border-cyan-500/20 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.awayTeam.name} (Away)</span>
                     <div className="flex space-x-1.5">
@@ -506,7 +506,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
               </div>
 
               {/* Head-to-Head */}
-              <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-5">
                 <h4 className="font-extrabold text-white text-sm mb-3">Head-to-Head Records</h4>
                 {headToHead.totalMeetings > 0 ? (
                   <div className="space-y-2">
@@ -534,7 +534,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           {activeTab === 'lineups' && (
             <div className="space-y-6">
               {/* Injuries */}
-              <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-5">
                 <h4 className="font-extrabold text-white text-sm mb-3 flex items-center space-x-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
                   <span>Reported Injuries & Suspensions</span>
@@ -564,7 +564,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
 
               {/* Lineups */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-slate-950/70 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-5">
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.homeTeam.name} Lineup</span>
                     <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
@@ -585,7 +585,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
                   )}
                 </div>
 
-                <div className="bg-slate-950/70 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-5">
+                <div className="bg-slate-900/40 backdrop-blur-md backdrop-blur-md border border-cyan-500/20 rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-extrabold text-white text-sm">{fixture.awayTeam.name} Lineup</span>
                     <span className="text-[10px] text-cyan-400 font-mono bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/30">
@@ -610,7 +610,7 @@ export const MatchAnalysisModal: React.FC<MatchAnalysisModalProps> = ({ analysis
           )}
 
           {/* Data Quality & Integrity Footer */}
-          <div className="bg-slate-950/70 backdrop-blur-md p-4 rounded-2xl border border-emerald-500/20 text-[11px] text-slate-400 space-y-1">
+          <div className="bg-slate-900/40 backdrop-blur-md p-4 rounded-2xl border border-slate-800/50 text-[11px] text-slate-400 space-y-1">
             <div className="font-bold text-emerald-300">Data Integrity Policy:</div>
             {dataQualityNotes.map((note, i) => (
               <div key={i}>• {note}</div>
