@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { StatisticalParlay, ParlayLegCount, ParlayMode, LiveTrackedParlay } from '../types';
+
+const BUILD_VER = '2.0.1';
 import { generateParlay, trackParlay } from '../api';
 import { Layers, AlertCircle, ShieldAlert, CheckCircle2, TrendingUp, HelpCircle, Trophy, Zap, Activity, AlertTriangle } from 'lucide-react';
 

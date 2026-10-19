@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes } from 'discord.js';
 import axios from 'axios';
 import cron from 'node-cron';
 import { DataProviderFactory } from '../providers/provider-factory.js';
@@ -357,6 +357,21 @@ export class DiscordBotService {
 
         await this.client?.application?.commands.set(commands);
         console.log('[DiscordBot] Slash commands (/info, /fixtures, /generateparlay, /customparlay, /track, /channel, /interval, /broadcast) registered!');
+
+        // Force-register slash commands (including /unbroadcast) via the REST
+        // API so Discord picks them up immediately on deploy.
+        try {
+          const commandDefinitionsJSON = commands.map((c: any) => c.toJSON());
+          console.log('Syncing global slash commands with Discord REST API...');
+          const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!);
+          await rest.put(
+            Routes.applicationCommands(this.client!.user!.id),
+            { body: commandDefinitionsJSON }
+          );
+          console.log('Successfully registered all slash commands (including /unbroadcast).');
+        } catch (error: any) {
+          console.error('Failed to register Discord slash commands:', error?.message || error);
+        }
       } catch (err: any) {
         console.warn(`[DiscordBot] Slash command registration notice: ${err.message}`);
       }
