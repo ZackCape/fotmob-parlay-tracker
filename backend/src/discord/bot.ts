@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import axios from 'axios';
 import cron from 'node-cron';
 import { DataProviderFactory } from '../providers/provider-factory.js';
@@ -309,6 +309,7 @@ export class DiscordBotService {
           new SlashCommandBuilder()
             .setName('unbroadcast')
             .setDescription('Disable automated morning briefings and predictions for a channel')
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
             .addChannelOption(opt =>
               opt
                 .setName('channel')
