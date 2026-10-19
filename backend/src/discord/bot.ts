@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import axios from 'axios';
 import cron from 'node-cron';
 import { DataProviderFactory } from '../providers/provider-factory.js';
@@ -404,13 +404,39 @@ export class DiscordBotService {
             : commandMode === 'correlated'
             ? 'CORRELATED_ALLOWED'
             : 'ANTI_CORRELATED';
+
+          // Generate the parlay (reuse existing logic).
           const replyText = await this.generateParlayReply({
             legs,
             mode,
             league,
             minProbability: minPct ? minPct / 100 : undefined,
+            userId: interaction.user.id,
+            channelId: interaction.channelId,
           });
-          await interaction.editReply(replyText);
+
+          // Build an embed + interactive action row so the user can one-click
+          // save/track or copy the slip.
+          const embed = new EmbedBuilder()
+            .setColor(BRAND.accent)
+            .setAuthor({ name: BRAND.author })
+            .setTitle('Generated Parlay')
+            .setDescription(replyText.slice(0, 4000))
+            .setTimestamp(new Date());
+
+          const parlayId = `gen-${Date.now()}`;
+          const actionRow = new ActionRowBuilder<any>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`track_parlay_${parlayId}`)
+              .setLabel('Save & Track Parlay')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`copy_parlay_${parlayId}`)
+              .setLabel('Copy Parlay Slip')
+              .setStyle(ButtonStyle.Secondary),
+          );
+
+          await interaction.editReply({ embeds: [embed], components: [actionRow] });
         } else if (interaction.commandName === 'track') {
           await interaction.deferReply();
           const reply = await this.generateLiveTrackerReply({
@@ -1176,6 +1202,50 @@ export class DiscordBotService {
           CP.clearParlay(ownerId);
           const parlay = CP.getParlay(ownerId);
           await rerenderParlayMessage(interaction, 'Slip cleared.');
+          return;
+        }
+
+        // Handle generated parlay action buttons.
+        if (id.startsWith('track_parlay_')) {
+          await CP.ackInteraction(interaction, { ephemeral: true });
+          const parlayId = id.replace('track_parlay_', '');
+          // Find the most recent saved parlay for this user/channel.
+          const slips = CP.getSavedParlaysForUserChannel(interaction.user.id, interaction.channelId);
+          const target = slips[slips.length - 1];
+          if (target) {
+            CP.setSavedParlayActiveTracking(target.id, true);
+            CP.subscribeLive(interaction.user.id, interaction.channelId, target.legs[0]?.fixtureId ?? '');
+            try {
+              await interaction.editReply({
+                content: '✅ **Parlay Tracking Activated!** You will receive real-time notifications as legs hit or miss.',
+              });
+            } catch {
+              await interaction.followUp({ content: '✅ **Parlay Tracking Activated!** You will receive real-time notifications as legs hit or miss.', ephemeral: true }).catch(() => {});
+            }
+          } else {
+            await interaction.editReply({ content: 'No saved parlay found to track. Generate one first with /generateparlay.' }).catch(() => {});
+          }
+          // Update button to disabled "Tracking Active".
+          try {
+            const row = new ActionRowBuilder<any>().addComponents(
+              new ButtonBuilder().setCustomId(`track_parlay_${parlayId}`).setLabel('Tracking Active').setStyle(ButtonStyle.Success).setDisabled(true),
+              new ButtonBuilder().setCustomId(`copy_parlay_${parlayId}`).setLabel('Copy Parlay Slip').setStyle(ButtonStyle.Secondary),
+            );
+            await interaction.message?.edit({ components: [row] }).catch(() => {});
+          } catch { /* best effort */ }
+          return;
+        }
+
+        if (id.startsWith('copy_parlay_')) {
+          await CP.ackInteraction(interaction, { ephemeral: true });
+          const slips = CP.getSavedParlaysForUserChannel(interaction.user.id, interaction.channelId);
+          const target = slips[slips.length - 1];
+          if (target) {
+            const text = (target.legs || []).map((l: any, i: number) => `${i + 1}. ${l.description} -> ${l.selection} (${(l.probability * 100).toFixed(1)}%)`).join('\\n');
+            await interaction.editReply({ content: '```\n' + text + '\n```' }).catch(() => {});
+          } else {
+            await interaction.editReply({ content: 'No parlay slip to copy.' }).catch(() => {});
+          }
           return;
         }
       } catch (err: any) {
@@ -2184,6 +2254,8 @@ export class DiscordBotService {
     mode?: ParlayMode;
     league?: string;
     minProbability?: number;
+    userId?: string;
+    channelId?: string;
   } = {}): Promise<string> {
     const valid = [5, 10, 15, 20, 25];
     const requested = typeof opts.legs === 'number' && Number.isFinite(opts.legs) ? opts.legs : 5;
@@ -2222,6 +2294,23 @@ export class DiscordBotService {
     });
     if (this.trackerService) {
       await this.trackerService.trackParlay(parlay);
+    }
+
+    // Persist to disk immediately so /track and restarts see the slip.
+    if (opts.userId && opts.channelId && parlay.legs.length > 0) {
+      try {
+        const saved = CP.saveParlayToDisk(parlay as any, {
+          userId: opts.userId,
+          channelId: opts.channelId,
+          guildId: null,
+        });
+        // Auto-subscribe the generating user/channel to every leg's fixture.
+        for (const leg of parlay.legs) {
+          try { CP.subscribeLive(opts.userId, opts.channelId, leg.fixtureId); } catch { /* best effort */ }
+        }
+      } catch (e: any) {
+        console.warn('[DiscordBot] Failed to persist generated parlay:', e.message);
+      }
     }
 
     const isSgp = mode === 'SAME_GAME_PARLAY';
