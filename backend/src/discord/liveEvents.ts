@@ -275,7 +275,7 @@ export function buildGoalAlert(event: DetectedEvent, fixture: Fixture): EmbedBui
   const e = new EmbedBuilder()
     .setColor(isOwn ? BRAND.negative : BRAND.positive)
     .setAuthor({ name: BRAND.author })
-    .setTitle(`${isOwn ? '🫣 OWN GOAL' : '⚽ GOAL ALERT'}`)
+    .setTitle(`${isOwn ? 'OWN GOAL' : 'GOAL'}! ${fixture.homeTeam.name} ${scoreLine(fixture)} ${fixture.awayTeam.name} | ${event.minute ?? '?'}' ${event.player ?? ''}`.trim())
     .setDescription(
       `**${event.player ?? 'Unknown scorer'}**${isOwn ? ' (own goal)' : ''}` +
       ` scored for **${event.team ?? 'Unknown team'}** at **${event.minute ?? '?'}**'\n` +

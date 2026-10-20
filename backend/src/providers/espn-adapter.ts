@@ -236,6 +236,8 @@ export interface EspnMatchEvent {
 
 export interface EspnMatchStats {
   eventId: string;
+  homeScore: number | null;
+  awayScore: number | null;
   statistics: FixtureStatistics | null;
   /**
    * Normalised match events.
@@ -400,6 +402,13 @@ export class EspnAdapter implements IFootballDataProvider {
       const data = res.data;
       if (!data) return null;
 
+      // ---- Score from header ----
+      const headerComp = data.header?.competitions?.[0];
+      const headerHome = headerComp?.competitors?.find((c: any) => c.homeAway === 'home');
+      const headerAway = headerComp?.competitors?.find((c: any) => c.homeAway === 'away');
+      const homeScore = num(headerHome?.score);
+      const awayScore = num(headerAway?.score);
+
       // ---- Team statistics ----
       const teams = data.boxscore?.teams || [];
       const homeStats: Record<string, any> = {};
@@ -563,7 +572,7 @@ export class EspnAdapter implements IFootballDataProvider {
         recentGoals[side] = scorelines.slice(-5);
       }
 
-      return { eventId: String(eventId), statistics, events, lineups, form, recentGoals };
+      return { eventId: String(eventId), homeScore, awayScore, statistics, events, lineups, form, recentGoals };
     } catch (err: any) {
       console.warn(`[EspnAdapter] getMatchStats error for ${eventId}:`, err.message);
       return null;

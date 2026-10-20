@@ -1840,6 +1840,10 @@ export class DiscordBotService {
         const stats = await this.factory.getEspnMatchStats(eventId);
         if (!stats) continue;
 
+        // Sync post-event score before building any alert payload.
+        if (stats.homeScore !== null && stats.homeScore !== undefined) fx.homeScore = stats.homeScore;
+        if (stats.awayScore !== null && stats.awayScore !== undefined) fx.awayScore = stats.awayScore;
+
         const prevStats = this.liveEventPrevStats.get(fx.id);
         this.liveEventPrevStats.set(fx.id, stats);
 
