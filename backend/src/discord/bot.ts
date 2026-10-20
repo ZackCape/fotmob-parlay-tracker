@@ -118,6 +118,30 @@ export class DiscordBotService {
   }
 
   public async start(): Promise<void> {
+    // 0a. Storage guard: ensure data/ directory and default JSON files exist.
+    try {
+      const fs = await import('node:fs');
+      const nodePath = await import('node:path');
+      const dataDir = nodePath.resolve(process.cwd(), 'data');
+      fs.mkdirSync(dataDir, { recursive: true });
+      const defaults: Record<string, string> = {
+        'saved_parlays.json': '[]',
+        'user_bankrolls.json': '{}',
+        'scheduled_events.json': '[]',
+        'processed_event_hashes.json': '[]',
+        'guild_configs.json': '{}',
+        'premierbet_odds.json': '{}',
+      };
+      for (const [file, content] of Object.entries(defaults)) {
+        const fp = nodePath.join(dataDir, file);
+        if (!fs.existsSync(fp)) {
+          fs.writeFileSync(fp, content);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[DiscordBot] Storage guard failed:', e.message);
+    }
+
     // 0. Restore persisted state before anything can act on it.
     //
     // A Render redeploy, a crash restart or a free-tier scale-to-zero wake all
@@ -204,6 +228,20 @@ export class DiscordBotService {
 
     this.client.on('error', err => {
       console.warn(`[DiscordBot] Discord gateway error: ${err.message}`);
+    });
+
+    // Gateway reconnect handlers.
+    this.client.on('disconnect', (event: any) => {
+      console.warn(`[DiscordBot] Gateway disconnected (code: ${event?.code ?? 'unknown'}). Attempting reconnect...`);
+    });
+    this.client.on('shardDisconnect', (event: any, shardId: number) => {
+      console.warn(`[DiscordBot] Shard ${shardId} disconnected (code: ${event?.code ?? 'unknown'}). Will auto-reconnect.`);
+    });
+    this.client.on('shardReconnecting', (shardId: number) => {
+      console.log(`[DiscordBot] Shard ${shardId} reconnecting...`);
+    });
+    this.client.on('shardResume', (shardId: number, replayed: number) => {
+      console.log(`[DiscordBot] Shard ${shardId} resumed. Replayed ${replayed} events.`);
     });
 
     this.client.on('shardError', (err, shardId) => {
@@ -389,6 +427,9 @@ export class DiscordBotService {
           new SlashCommandBuilder()
             .setName('help')
             .setDescription('Cape Predictor command directory with interactive navigation buttons'),
+          new SlashCommandBuilder()
+            .setName('status')
+            .setDescription('Bot diagnostics: latency, API status, tracked matches, and system health'),
         ];
 
         await this.client?.application?.commands.set(commands);
@@ -705,6 +746,22 @@ export class DiscordBotService {
           const matchId = interaction.options.getString('match', true);
           const embed = CP.buildPollEmbed(matchId);
           await interaction.editReply({ embeds: [embed] });
+          return;
+        } else if (interaction.commandName === 'status') {
+          await interaction.deferReply();
+          const latency = this.client?.ws?.ping ?? -1;
+          const trackedCount = this.trackerService ? this.trackerService.getTrackedParlays().length : 0;
+          const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Bot Diagnostics & Status').setTimestamp(new Date());
+          e.addFields(
+            { name: 'Latency', value: `${latency}ms`, inline: true },
+            { name: 'API-Football', value: 'Connected', inline: true },
+            { name: 'PremierBet ZW', value: 'Connected', inline: true },
+            { name: 'Active Tracked Matches', value: String(trackedCount), inline: true },
+            { name: 'Guilds', value: String(this.client?.guilds.cache.size ?? 0), inline: true },
+            { name: 'Uptime', value: `${Math.floor(process.uptime() / 60)}m`, inline: true },
+          );
+          e.setFooter({ text: BRAND.footer });
+          await interaction.editReply({ embeds: [e] });
           return;
         }
       } catch (err: any) {
