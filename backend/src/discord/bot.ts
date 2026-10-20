@@ -166,6 +166,29 @@ export class DiscordBotService {
       console.log(`[DiscordBot] Re-arming live tracking for ${this.liveEventPinnedFixtureIds.size} restored fixture(s).`);
       void this.runLiveEventTick();
     }
+
+    // 4. Halftime catch-up: scan for any halftime events missed during cold
+    //    boots or deployment cycles in the past 15 minutes.
+    try {
+      const { getCatchUpEvents, hasHalftimeSent } = await import('../services/eventScheduler.js');
+      const missed = getCatchUpEvents(15 * 60 * 1000).filter((e: any) => e.type === 'halftime' && !e.sent);
+      if (missed.length) {
+        console.log(`[DiscordBot] Halftime catch-up: ${missed.length} missed event(s) found.`);
+        for (const evt of missed) {
+          if (hasHalftimeSent(evt.fixtureId)) continue;
+          try {
+            const details = await this.factory.getMatchDetails(evt.fixtureId);
+            if (details) {
+              const embed = CP.buildHalftimeReport(details);
+              if (this.config.channelId) {
+                const ch = await this.client?.channels.fetch(this.config.channelId);
+                if (ch?.isTextBased()) await (ch as any).send({ embeds: [embed] });
+              }
+            }
+          } catch { /* best effort */ }
+        }
+      }
+    } catch { /* eventScheduler not available */ }
   }
 
   private async initClient(withMessageContent: boolean): Promise<void> {
@@ -650,8 +673,18 @@ export class DiscordBotService {
         } else if (interaction.commandName === 'corners') {
           await interaction.deferReply();
           const fixtureId = interaction.options.getString('fixture', true);
+          let details: any = null;
+          try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+          const fx = details?.fixture;
+          const home = fx?.homeTeam?.name ?? 'Home';
+          const away = fx?.awayTeam?.name ?? 'Away';
+          const s = fx?.statistics;
+          const homeCornersAvg = Number(s?.cornersHome ?? 5);
+          const awayCornersAvg = Number(s?.cornersAway ?? 5);
+          const { calculateCornerProbabilities, formatCornerCard } = await import('../engine/corners.js');
+          const analysis = calculateCornerProbabilities(homeCornersAvg, awayCornersAvg);
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Corners Market Analysis').setTimestamp(new Date());
-          e.setDescription(`Over/Under corners analysis for match \`${fixtureId}\`.`);
+          e.setDescription(`**${home} vs ${away}**\n\`\`\`\n${formatCornerCard(analysis, home, away)}\n\`\`\``);
           e.setFooter({ text: BRAND.footer });
           await interaction.editReply({ embeds: [e] });
           return;
