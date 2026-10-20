@@ -1644,7 +1644,8 @@ export class DiscordBotService {
      * `runLiveEventTick()` so boot can fire it once immediately for fixtures
      * that were restored from disk.
      * ================================================================ */
-    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 60_000);
+    // Ultra-fast 15s live ticker for in-play matches (separate from daily fixture fetches).
+    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 15_000);
 
     // Never keep the process alive just for the alert loop.
     (this.liveEventTimer as any)?.unref?.();
@@ -2406,16 +2407,28 @@ export class DiscordBotService {
         }
       }
 
-      // Auto-discover first available text channel if no explicit channel ID is set
+      // Auto-discover first available text channel if no explicit channel ID is set.
+      // Dynamic guild channel fallback: prefer named channels, then system channel,
+      // then any writable text channel.
       if (!channel) {
         for (const guild of this.client.guilds.cache.values()) {
-          const found = guild.channels.cache.find(
-            (c: any) => c.isTextBased() && c.viewable
-          );
-          if (found) {
-            channel = found;
-            break;
+          const preferredNames = ['general', 'updates', 'predictions', 'announcements'];
+          let found: any = null;
+          for (const name of preferredNames) {
+            found = guild.channels.cache.find(
+              (c: any) => c.isTextBased() && c.name?.toLowerCase() === name && c.viewable
+            );
+            if (found) break;
           }
+          if (!found && guild.systemChannelId) {
+            try { found = await this.client.channels.fetch(guild.systemChannelId); } catch { /* skip */ }
+          }
+          if (!found) {
+            found = guild.channels.cache.find(
+              (c: any) => c.isTextBased() && c.viewable && c.permissionsFor?.(guild.members.me)?.has('SendMessages')
+            );
+          }
+          if (found) { channel = found; break; }
         }
       }
 

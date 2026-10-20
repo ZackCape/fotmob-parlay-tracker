@@ -3,6 +3,7 @@ import nodePath from 'node:path';
 
 const DATA_DIR = nodePath.resolve(process.cwd(), 'data');
 const EVENTS_FILE = nodePath.join(DATA_DIR, 'scheduled_events.json');
+const DEDUP_FILE = nodePath.join(DATA_DIR, 'processed_event_hashes.json');
 
 export interface ScheduledEvent {
   id: string;
@@ -14,6 +15,21 @@ export interface ScheduledEvent {
 }
 
 let events: ScheduledEvent[] = [];
+let processedHashes: Set<string> = new Set();
+
+function loadHashes(): void {
+  try {
+    const raw = fs.readFileSync(DEDUP_FILE, 'utf8');
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) processedHashes = new Set(arr);
+  } catch { processedHashes = new Set(); }
+}
+
+function persistHashes(): void {
+  try { fs.writeFileSync(DEDUP_FILE, JSON.stringify([...processedHashes])); } catch { /* best effort */ }
+}
+
+loadHashes();
 
 function ensureDataDir(): void {
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { /* exists */ }
@@ -76,4 +92,17 @@ export function clearCompleted(): void {
   persist();
 }
 
-export default { scheduleEvent, markSent, getPendingEvents, getEventsForFixture, hasHalftimeSent, markHalftimeSent, getCatchUpEvents, clearCompleted };
+export function isEventProcessed(hash: string): boolean {
+  return processedHashes.has(hash);
+}
+
+export function markEventProcessed(hash: string): void {
+  processedHashes.add(hash);
+  persistHashes();
+}
+
+export function generateEventHash(fixtureId: string, eventType: string, detail: string): string {
+  return `${fixtureId}_${eventType}_${detail}`.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+}
+
+export default { scheduleEvent, markSent, getPendingEvents, getEventsForFixture, hasHalftimeSent, markHalftimeSent, getCatchUpEvents, clearCompleted, isEventProcessed, markEventProcessed, generateEventHash };
