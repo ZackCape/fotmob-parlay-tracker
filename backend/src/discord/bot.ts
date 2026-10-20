@@ -265,8 +265,10 @@ export class DiscordBotService {
             .addStringOption(opt =>
               opt
                 .setName('fixture')
-                .setDescription('Match ID (press 📊 Analyze on a fixture to copy one)')
-                .setRequired(true)),
+                .setDescription('Search match by team name (e.g. Arsenal, Real Madrid)')
+                .setAutocomplete(true)
+                .setRequired(false)),
+
           new SlashCommandBuilder()
             .setName('customparlay')
             .setDescription('Build your own custom parlay: pick matches and markets, then save it'),
@@ -395,16 +397,15 @@ export class DiscordBotService {
                 .setRequired(true)),
           new SlashCommandBuilder().setName('compare').setDescription('Side-by-side comparison of two teams (attack, defense, xG, H2H)').addStringOption(opt => opt.setName('teams').setDescription('Two teams separated by " vs "').setRequired(true)),
           new SlashCommandBuilder().setName('bankroll').setDescription('Personal unit management with Kelly Criterion stake recommendations'),
-          new SlashCommandBuilder().setName('remind').setDescription('Set a fixture reminder DM 15 minutes before kickoff').addStringOption(opt => opt.setName('fixture').setDescription('Match ID to be reminded about').setRequired(true)),
-          new SlashCommandBuilder().setName('injuries').setDescription('Real-time missing players, suspensions, and severity impact ratings').addStringOption(opt => opt.setName('fixture').setDescription('Match ID').setRequired(true)),
+          new SlashCommandBuilder().setName('remind').setDescription('Set a fixture reminder DM 15 minutes before kickoff').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+          new SlashCommandBuilder().setName('injuries').setDescription('Real-time missing players, suspensions, and severity impact ratings').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
           new SlashCommandBuilder().setName('streak').setDescription('Team win/loss/unbeaten streak tracker').addStringOption(opt => opt.setName('team').setDescription('Team name').setRequired(true)),
-          new SlashCommandBuilder().setName('referee').setDescription('Referee assignment card with card rates and strictness').addStringOption(opt => opt.setName('fixture').setDescription('Match ID').setRequired(true)),
+          new SlashCommandBuilder().setName('referee').setDescription('Referee assignment card with card rates and strictness').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
           new SlashCommandBuilder().setName('leaderboard').setDescription('Monthly tipster rankings by prediction accuracy and units gained'),
           new SlashCommandBuilder().setName('hedge').setDescription('Auto-hedge calculator for 4/5 hit parlay legs').addStringOption(opt => opt.setName('parlay_id').setDescription('Parlay ID to hedge').setRequired(true)),
           new SlashCommandBuilder().setName('config').setDescription('Guild configuration dashboard for channels, prefixes, and themes'),
-          new SlashCommandBuilder().setName('halftime').setDescription('Mid-match tactical summary and second-half goal probability').addStringOption(opt => opt.setName('fixture').setDescription('Match ID').setRequired(true)),
-          new SlashCommandBuilder().setName('corners').setDescription('Dedicated market analyzer for Over/Under match corners').addStringOption(opt => opt.setName('fixture').setDescription('Match ID').setRequired(true)),
-          new SlashCommandBuilder().setName('cards').setDescription('Card market evaluator for team aggressiveness and referee card probabilities').addStringOption(opt => opt.setName('fixture').setDescription('Match ID').setRequired(true)),
+          new SlashCommandBuilder().setName('halftime').setDescription('Mid-match tactical summary and second-half goal probability').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+          new SlashCommandBuilder().setName('cards').setDescription('Card market evaluator for team aggressiveness and referee card probabilities').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
           new SlashCommandBuilder()
             .setName('team')
             .setDescription('Team form and recent stats')
@@ -422,8 +423,9 @@ export class DiscordBotService {
             .addStringOption(opt =>
               opt
                 .setName('match')
-                .setDescription('Match ID (press 📊 Analyze on a fixture to copy one)')
-                .setRequired(true)),
+                .setDescription('Search match by team name')
+                .setAutocomplete(true)
+                .setRequired(false)),
           new SlashCommandBuilder()
             .setName('help')
             .setDescription('Cape Predictor command directory with interactive navigation buttons'),
@@ -467,6 +469,36 @@ export class DiscordBotService {
         }
       } catch (err: any) {
         console.warn(`[DiscordBot] Slash command registration notice: ${err.message}`);
+      }
+    });
+
+    // Handle Autocomplete Interactions
+    this.client.on('interactionCreate', async interaction => {
+      if (!interaction.isAutocomplete()) return;
+      try {
+        const focused = interaction.options.getFocused(true);
+        if (focused.name !== 'fixture' && focused.name !== 'match') return;
+        const query = String(focused.value || '').toLowerCase();
+        const today = new Date().toISOString().slice(0, 10);
+        let fixtures: any[] = [];
+        try {
+          fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+        } catch { fixtures = []; }
+        const choices = fixtures
+          .filter((f: any) => {
+            if (!query) return true;
+            const home = (f.homeTeam?.name || '').toLowerCase();
+            const away = (f.awayTeam?.name || '').toLowerCase();
+            return home.includes(query) || away.includes(query);
+          })
+          .slice(0, 25)
+          .map((f: any) => ({
+            name: `${f.homeTeam?.name ?? 'Home'} vs ${f.awayTeam?.name ?? 'Away'} (${f.league})`.slice(0, 100),
+            value: f.id,
+          }));
+        await interaction.respond(choices);
+      } catch (err: any) {
+        console.warn('[DiscordBot] Autocomplete error:', err.message);
       }
     });
 
@@ -644,18 +676,34 @@ export class DiscordBotService {
           await interaction.editReply({ embeds: [e] });
           return;
         } else if (interaction.commandName === 'remind') {
+          const fixtureId = interaction.options.getString('fixture');
+          if (!fixtureId) {
+            await CP.ackInteraction(interaction, { ephemeral: true });
+            const leagues = CP.LEAGUE_OPTIONS;
+            const select = new StringSelectMenuBuilder().setCustomId('remind_league_select').setPlaceholder('Select a competition').addOptions(leagues.slice(0, 25).map((l: any) => ({ label: l.label, value: l.id })));
+            const row = new ActionRowBuilder<any>().addComponents(select);
+            await interaction.editReply({ content: 'Select a competition to set a reminder:', components: [row] });
+            return;
+          }
           await interaction.deferReply();
-          const fixtureId = interaction.options.getString('fixture', true);
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Fixture Reminder Set').setTimestamp(new Date());
           e.setDescription(`You will receive a DM 15 minutes before kickoff for match \`${fixtureId}\` with final lineups.`);
           e.setFooter({ text: BRAND.footer });
           await interaction.editReply({ embeds: [e] });
           return;
         } else if (interaction.commandName === 'injuries') {
+          const fixtureId = interaction.options.getString('fixture');
+          if (!fixtureId) {
+            await CP.ackInteraction(interaction, { ephemeral: true });
+            const leagues = CP.LEAGUE_OPTIONS;
+            const select = new StringSelectMenuBuilder().setCustomId('injuries_league_select').setPlaceholder('Select a competition').addOptions(leagues.slice(0, 25).map((l: any) => ({ label: l.label, value: l.id })));
+            const row = new ActionRowBuilder<any>().addComponents(select);
+            await interaction.editReply({ content: 'Select a competition to view injuries:', components: [row] });
+            return;
+          }
           await interaction.deferReply();
-          const fixtureId = interaction.options.getString('fixture', true);
           let details: any = null;
-          try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+          try { if (fixtureId) details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Injury & Suspension Report').setTimestamp(new Date());
           if (details?.injuries?.length) {
             e.setDescription(details.injuries.map((i: any) => `**${i.player}** (${i.teamName}) - ${i.status} - ${i.reason}`).join('\\n'));
@@ -675,9 +723,9 @@ export class DiscordBotService {
           return;
         } else if (interaction.commandName === 'referee') {
           await interaction.deferReply();
-          const fixtureId = interaction.options.getString('fixture', true);
+          const fixtureId = interaction.options.getString('fixture');
           let details: any = null;
-          try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+          try { if (fixtureId) details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Referee Assignment').setTimestamp(new Date());
           e.setDescription('Referee strictness factor and card rate data will be displayed here when available from the provider.');
           e.setFooter({ text: BRAND.footer });
@@ -707,9 +755,9 @@ export class DiscordBotService {
           return;
         } else if (interaction.commandName === 'halftime') {
           await interaction.deferReply();
-          const fixtureId = interaction.options.getString('fixture', true);
+          const fixtureId = interaction.options.getString('fixture');
           let details: any = null;
-          try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+          try { if (fixtureId) details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Halftime Summary').setTimestamp(new Date());
           if (details) {
             e.setDescription(`Halftime stats for match \`${fixtureId}\`: xG, Shots on Target, Possession, Corners, Cards.`);
@@ -721,9 +769,9 @@ export class DiscordBotService {
           return;
         } else if (interaction.commandName === 'corners') {
           await interaction.deferReply();
-          const fixtureId = interaction.options.getString('fixture', true);
+          const fixtureId = interaction.options.getString('fixture');
           let details: any = null;
-          try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+          try { if (fixtureId) details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
           const fx = details?.fixture;
           const home = fx?.homeTeam?.name ?? 'Home';
           const away = fx?.awayTeam?.name ?? 'Away';
@@ -739,7 +787,7 @@ export class DiscordBotService {
           return;
         } else if (interaction.commandName === 'cards') {
           await interaction.deferReply();
-          const fixtureId = interaction.options.getString('fixture', true);
+          const fixtureId = interaction.options.getString('fixture');
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Cards Market Analysis').setTimestamp(new Date());
           e.setDescription(`Card market evaluation for match \`${fixtureId}\`.`);
           e.setFooter({ text: BRAND.footer });
@@ -951,7 +999,7 @@ export class DiscordBotService {
         }
 
         if (name === 'analysis') {
-          const fixtureId = interaction.options.getString('fixture', true);
+          const fixtureId = interaction.options.getString('fixture');
           await interaction.deferReply();
           await showAnalysis(interaction, fixtureId, 'stats');
           return;
@@ -1603,7 +1651,7 @@ export class DiscordBotService {
               return;
             }
             let details: any = null;
-            try { details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+            try { if (fixtureId) details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
             const fx = details?.fixture;
             const home = fx?.homeTeam?.name ?? 'Home';
             const away = fx?.awayTeam?.name ?? 'Away';
