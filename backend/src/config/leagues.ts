@@ -45,22 +45,25 @@ export const LEAGUES: LeagueConfig[] = [
   { id: 'ACL', name: 'AFC Champions League', country: 'Asia', flagCode: 'eu', category: 'continental', priority: false, espn: 'afc.champions', apiFootball: 17, oddsApi: null },
 
   // === Women's ===
-  { id: 'WSL', name: "Women's Super League", country: 'England', flagCode: 'gb-eng', category: 'womens', priority: false, espn: 'eng.w.1', apiFootball: 1095, oddsApi: null },
+  { id: 'WSL', name: "Women's Super League", country: 'England', flagCode: 'gb-eng', category: 'womens', priority: false, espn: 'eng.w.1', apiFootball: 44, oddsApi: null },
   { id: 'NWSL', name: 'NWSL', country: 'USA', flagCode: 'us', category: 'womens', priority: false, espn: 'usa.nwsl', apiFootball: 254, oddsApi: null },
-  { id: 'UWCL', name: "UEFA Women's Champions League", country: 'Europe', flagCode: 'eu', category: 'womens', priority: false, espn: 'uefa.w.champions', apiFootball: 2, oddsApi: null },
-  { id: 'LIGA_F', name: 'Liga F (Women)', country: 'Spain', flagCode: 'es', category: 'womens', priority: false, espn: 'esp.w.1', apiFootball: 141, oddsApi: null },
-  { id: 'FRAUEN_BL', name: "Frauen-Bundesliga", country: 'Germany', flagCode: 'de', category: 'womens', priority: false, espn: 'ger.w.1', apiFootball: 256, oddsApi: null },
-  { id: 'PL_WOMEN', name: 'Premiere Ligue (Women)', country: 'France', flagCode: 'fr', category: 'womens', priority: false, espn: 'fra.w.1', apiFootball: 257, oddsApi: null },
+  { id: 'UWCL', name: "UEFA Women's Champions League", country: 'Europe', flagCode: 'eu', category: 'womens', priority: false, espn: 'uefa.w.champions', apiFootball: 525, oddsApi: null },
+  { id: 'LIGA_F', name: 'Liga F (Women)', country: 'Spain', flagCode: 'es', category: 'womens', priority: false, espn: 'esp.w.1', apiFootball: 142, oddsApi: null },
+  { id: 'FRAUEN_BL', name: "Frauen-Bundesliga", country: 'Germany', flagCode: 'de', category: 'womens', priority: false, espn: 'ger.w.1', apiFootball: 82, oddsApi: null },
+  { id: 'PL_WOMEN', name: 'Premiere Ligue (Women)', country: 'France', flagCode: 'fr', category: 'womens', priority: false, espn: 'fra.w.1', apiFootball: 64, oddsApi: null },
 
   // === International (Men & Women) ===
-  { id: 'UEFA_NATIONS_LEAGUE', name: 'UEFA Nations League', country: 'Europe', flagCode: 'eu', category: 'international', priority: false, espn: 'uefa.nations', apiFootball: 5, oddsApi: null },
-  { id: 'FIFA_WC_QUAL', name: 'FIFA World Cup Qualifiers', country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.worldq', apiFootball: 32, oddsApi: null },
-  { id: 'FIFA_WC', name: 'FIFA World Cup', country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.world', apiFootball: 1, oddsApi: null },
-  { id: 'UEFA_EUROS', name: 'UEFA European Championship', country: 'Europe', flagCode: 'eu', category: 'international', priority: false, espn: 'uefa.euro', apiFootball: 4, oddsApi: null },
+  { id: 'UNL', name: 'UEFA Nations League', country: 'Europe', flagCode: 'eu', category: 'international', priority: false, espn: 'uefa.nations', apiFootball: 5, oddsApi: null },
+  { id: 'UNL_W', name: 'UEFA Nations League Women', country: 'Europe', flagCode: 'eu', category: 'international', priority: false, espn: 'uefa.nations.w', apiFootball: 1040, oddsApi: null },
+  { id: 'WC', name: 'FIFA World Cup', country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.world', apiFootball: 1, oddsApi: null },
+  { id: 'WC_W', name: "FIFA Women's World Cup", country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.world.w', apiFootball: 8, oddsApi: null },
+  { id: 'WC_QUAL', name: 'FIFA World Cup Qualifiers', country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.worldq', apiFootball: 32, oddsApi: null },
+  { id: 'EURO', name: 'UEFA European Championship', country: 'Europe', flagCode: 'eu', category: 'international', priority: false, espn: 'uefa.euro', apiFootball: 4, oddsApi: null },
+  { id: 'EURO_W', name: "UEFA Women's Euro", country: 'Europe', flagCode: 'eu', category: 'international', priority: false, espn: 'uefa.euro.w', apiFootball: 487, oddsApi: null },
   { id: 'AFCON', name: 'Africa Cup of Nations', country: 'Africa', flagCode: 'eu', category: 'international', priority: false, espn: 'caf.nations', apiFootball: 6, oddsApi: null },
-  { id: 'CONCACAF_GOLD_CUP', name: 'CONCACAF Gold Cup', country: 'North America', flagCode: 'eu', category: 'international', priority: false, espn: 'concacaf.gold', apiFootball: 22, oddsApi: null },
+  { id: 'CONCACAF', name: 'CONCACAF Gold Cup & Nations League', country: 'North America', flagCode: 'eu', category: 'international', priority: false, espn: 'concacaf.gold', apiFootball: 22, oddsApi: null },
   { id: 'COPA_AMERICA', name: 'Copa América', country: 'South America', flagCode: 'eu', category: 'international', priority: false, espn: 'conmebol.america', apiFootball: 9, oddsApi: null },
-  { id: 'INTL_FRIENDLIES', name: 'International Friendlies', country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.friendly', apiFootball: 10, oddsApi: null },
+  { id: 'FRIENDLY', name: 'International Friendlies', country: 'International', flagCode: 'eu', category: 'international', priority: false, espn: 'fifa.friendly', apiFootball: 10, oddsApi: null },
 ];
 
 export function getLeagueById(id: string): LeagueConfig | undefined {
