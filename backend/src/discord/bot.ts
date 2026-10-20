@@ -428,6 +428,14 @@ export class DiscordBotService {
             .setName('help')
             .setDescription('Cape Predictor command directory with interactive navigation buttons'),
           new SlashCommandBuilder()
+            .setName('news')
+            .setDescription('Get the latest breaking football news and team updates')
+            .addStringOption(opt =>
+              opt
+                .setName('team')
+                .setDescription('Search news for a specific team, e.g. Chelsea, Real Madrid')
+                .setRequired(false)),
+          new SlashCommandBuilder()
             .setName('status')
             .setDescription('Bot diagnostics: latency, API status, tracked matches, and system health'),
         ];
@@ -746,6 +754,33 @@ export class DiscordBotService {
           const matchId = interaction.options.getString('match', true);
           const embed = CP.buildPollEmbed(matchId);
           await interaction.editReply({ embeds: [embed] });
+          return;
+        } else if (interaction.commandName === 'news') {
+          await interaction.deferReply();
+          const team = interaction.options.getString('team');
+          try {
+            const { getLatestNews } = await import('../services/newsService.js');
+            const factory = this.factory;
+            const articles = await getLatestNews(factory, false);
+            let filtered = articles;
+            if (team) {
+              const lower = team.toLowerCase();
+              filtered = articles.filter((a: any) =>
+                (a.title || '').toLowerCase().includes(lower) ||
+                (a.tag || '').toLowerCase().includes(lower)
+              );
+            }
+            const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Latest Football News').setTimestamp(new Date());
+            if (filtered.length === 0) {
+              e.setDescription(team ? `No news found for "${team}".` : 'No news available right now.');
+            } else {
+              e.setDescription(filtered.slice(0, 10).map((a: any) => `**${a.title}** (${a.source})`).join('\\n'));
+            }
+            e.setFooter({ text: BRAND.footer });
+            await interaction.editReply({ embeds: [e] });
+          } catch (err: any) {
+            await interaction.editReply({ content: `Failed to fetch news: ${err.message}` });
+          }
           return;
         } else if (interaction.commandName === 'status') {
           await interaction.deferReply();
