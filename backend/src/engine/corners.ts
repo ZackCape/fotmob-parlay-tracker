@@ -47,6 +47,21 @@ export function calculateCornerProbabilities(
   };
 }
 
+/**
+ * Scale corner line for live matches based on current corners and remaining time.
+ */
+export function scaleLiveCornerLine(
+  currentCorners: number,
+  remainingMinutes: number,
+  baseline: number = 9.5,
+): number {
+  const projected = currentCorners + (remainingMinutes / 90) * baseline;
+  // Round to nearest 0.5
+  const rounded = Math.round(projected * 2) / 2;
+  // Floor at 7.5
+  return Math.max(7.5, rounded);
+}
+
 export function formatCornerCard(analysis: CornerAnalysis, homeTeam: string, awayTeam: string): string {
   const lines = analysis.lines.map((l) =>
     `Over ${l.line}: ${(l.overProb * 100).toFixed(1)}% | Under ${l.line}: ${(l.underProb * 100).toFixed(1)}%`
@@ -54,4 +69,4 @@ export function formatCornerCard(analysis: CornerAnalysis, homeTeam: string, awa
   return `Expected Total Corners: ${analysis.expectedTotal}\nPrimary Line: Over ${analysis.primaryLine} (${(analysis.primaryOverProb * 100).toFixed(1)}%)\n\n${lines}`;
 }
 
-export default { calculateCornerProbabilities, formatCornerCard };
+export default { calculateCornerProbabilities, formatCornerCard, scaleLiveCornerLine };

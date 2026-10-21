@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import { resolve } from 'node:path';
 
-import { calculateCornerProbabilities } from '../src/engine/corners.js';
+import { calculateCornerProbabilities, scaleLiveCornerLine } from '../src/engine/corners.js';
 
 let failures = 0;
 let checks = 0;
@@ -32,7 +32,6 @@ section('1) Goal alert post-score sync');
 {
   const liveEvents = fs.readFileSync(resolve(process.cwd(), 'backend/src/discord/liveEvents.ts'), 'utf8');
   check('buildGoalAlert uses scoreLine(fixture)', liveEvents.includes('scoreLine(fixture)'));
-  check('goal alert title includes scoreline', liveEvents.includes("scoreLine(fixture)"));
   const botSrc = fs.readFileSync(resolve(process.cwd(), 'backend/src/discord/bot.ts'), 'utf8');
   check('runLiveEventTick syncs fx.homeScore from stats', botSrc.includes('fx.homeScore = stats.homeScore'));
   check('runLiveEventTick syncs fx.awayScore from stats', botSrc.includes('fx.awayScore = stats.awayScore'));
@@ -51,14 +50,21 @@ section('2) Corner predictions never below 7.5');
   check('high-tempo scales up', highAnalysis.primaryLine >= 9.5);
   const lowAnalysis = calculateCornerProbabilities(2, 1);
   check('low-corner floors at 7.5', lowAnalysis.lines[0].line === 7.5);
+  // Live scaling
+  const liveLine = scaleLiveCornerLine(3, 45, 9.5);
+  check('live scaling produces valid line', liveLine >= 7.5);
+  const liveLine2 = scaleLiveCornerLine(0, 90, 9.5);
+  check('live scaling floors at 7.5', liveLine2 >= 7.5);
+  // Verify market-calculator no longer has OVER_5_5_CORNERS
+  const mc = fs.readFileSync(resolve(process.cwd(), 'backend/src/engine/market-calculator.ts'), 'utf8');
+  check('OVER_5_5_CORNERS removed from priors', !mc.includes('OVER_5_5_CORNERS:'));
+  check('OVER_5_5_CORNERS removed from markets', !mc.includes("market: 'OVER_5_5_CORNERS'"));
 }
 
 section('3) Halftime alert structured stats');
 {
   const liveEvents = fs.readFileSync(resolve(process.cwd(), 'backend/src/discord/liveEvents.ts'), 'utf8');
   check('buildHalftimeReport exists', liveEvents.includes('buildHalftimeReport'));
-  const botSrc = fs.readFileSync(resolve(process.cwd(), 'backend/src/discord/bot.ts'), 'utf8');
-  check('halftime event hash uses MATCH_ID_HT_ANALYSIS pattern', true);
   check('halftime report includes stats', liveEvents.includes('Halftime statistical snapshot') || liveEvents.includes('halftime'));
 }
 

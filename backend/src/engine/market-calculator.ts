@@ -22,7 +22,6 @@ const LEAGUE_PRIORS = {
   AWAY_OVER_0_5: 0.68,
   HT_OVER_0_5: 0.70,
   HT_DRAW: 0.42,
-  OVER_5_5_CORNERS: 0.88,
   OVER_7_5_CORNERS: 0.75,
   OVER_8_5_CORNERS: 0.63,
   UNDER_8_5_CORNERS: 0.37,
@@ -96,7 +95,7 @@ export function deriveMarketPredictions(
     awayCornersFor: (fixture.statistics as any)?.cornersAway ?? null,
   });
   const lambdaCorners = cornersModel.lambda;
-  const probOver55Corners = 1 - poissonCdf(5, lambdaCorners);
+  // probOver55Corners removed - minimum corner line is now 7.5
   const probOver75Corners = 1 - poissonCdf(7, lambdaCorners);
   const probOver85Corners = cornersModel.over8_5;
   const probUnder85Corners = cornersModel.under8_5;
@@ -267,14 +266,6 @@ export function deriveMarketPredictions(
       rawProb: probOver05,
       prior: LEAGUE_PRIORS.OVER_0_5,
       extraRisks: ['Extremely rare 0-0 goalless draw would void selection'],
-    },
-    {
-      market: 'OVER_5_5_CORNERS',
-      label: 'Match Corners',
-      selection: 'Over 5.5 Corners',
-      rawProb: probOver55Corners,
-      prior: LEAGUE_PRIORS.OVER_5_5_CORNERS,
-      extraRisks: [],
     },
     {
       market: 'OVER_7_5_CORNERS',
