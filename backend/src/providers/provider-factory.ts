@@ -26,6 +26,7 @@ interface CacheEntry<T> {
   data: T;
   cachedAt: number;
   ttlMs: number;
+  version?: number;
 }
 
 /**
@@ -108,6 +109,8 @@ export class DataProviderFactory {
   private cache = new Map<string, CacheEntry<any>>();
   private inFlight = new Map<string, Promise<any>>();
   private defaultTtlMs: number;
+  /** Cache version - bump to invalidate stale cached data. */
+  private static readonly CACHE_VERSION = 2;
   /** Short TTL used for fixture data that is still live (see ACTIVE_FIXTURE_TTL_MS). */
   private activeTtlMs: number = ACTIVE_FIXTURE_TTL_MS;
 
@@ -299,6 +302,10 @@ export class DataProviderFactory {
   private getCached<T>(key: string): T | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
+    if ((entry as any).version !== DataProviderFactory.CACHE_VERSION) {
+      this.cache.delete(key);
+      return null;
+    }
     if (Date.now() - entry.cachedAt > entry.ttlMs) {
       this.cache.delete(key);
       return null;
@@ -311,7 +318,8 @@ export class DataProviderFactory {
       data,
       cachedAt: Date.now(),
       ttlMs,
-    });
+      version: DataProviderFactory.CACHE_VERSION,
+    } as any);
   }
 
   /** Cache TTL for a fixture date: 30s while the date's fixtures can still change. */
@@ -352,6 +360,7 @@ export class DataProviderFactory {
       if (!fs.existsSync(this.FILE_CACHE)) return null;
       const raw = JSON.parse(fs.readFileSync(this.FILE_CACHE, 'utf8'));
       if (!raw || !raw.cachedAt || !raw.data) return null;
+      if (raw.version !== DataProviderFactory.CACHE_VERSION) return null;
       if (Date.now() - raw.cachedAt > 30 * 60 * 1000) return null;
       return raw;
     } catch { return null; }
@@ -360,7 +369,7 @@ export class DataProviderFactory {
     if (process.env.NODE_ENV !== 'production') return;
     try {
       fs.mkdirSync(nodePath.dirname(this.FILE_CACHE), { recursive: true });
-      fs.writeFileSync(this.FILE_CACHE, JSON.stringify({ cachedAt: Date.now(), data }));
+      fs.writeFileSync(this.FILE_CACHE, JSON.stringify({ cachedAt: Date.now(), version: DataProviderFactory.CACHE_VERSION, data }));
     } catch {}
   }
 
