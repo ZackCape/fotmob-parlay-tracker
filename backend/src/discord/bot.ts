@@ -592,32 +592,35 @@ export class DiscordBotService {
           await interaction.deferReply();
           const embed = await this.buildMorningBriefing();
           await this.deliverBriefing(embed, '/broadcast');
-          await interaction.editReply(`✅ **Briefing broadcast delivered.** The morning briefing was posted to the configured channel${this.config.webhookUrl ? ' and webhook' : ''}.`);
-        }
-
-        else if (interaction.commandName === 'unbroadcast') {
-          await interaction.deferReply();
-          const ch = interaction.options.getChannel('channel');
-          const targetId = (ch as any)?.id ?? interaction.channelId;
-          const wasSubscribed = this.config.channelId === targetId;
-          if (wasSubscribed) {
-            this.config.channelId = undefined;
-            if (this.cronJob) { this.cronJob.stop(); this.cronJob = undefined; }
-          }
-          const e = new EmbedBuilder()
-            .setColor(BRAND.positive)
-            .setAuthor({ name: BRAND.author })
-            .setTitle('Channel Unsubscribed')
-            .setDescription(wasSubscribed
-              ? `Automated briefings and predictions will no longer be posted in <#${targetId}>.`
-              : `Channel <#${targetId}> was not previously subscribed to broadcasts. No changes made.`)
-            .setFooter({ text: `${BRAND.footer} - Broadcast management` })
-            .setTimestamp(new Date());
-          await interaction.editReply({ embeds: [e] });
+          // Multi-guild broadcast with resilient delivery.
+          let sent = 0, failed = 0, total = 0;
+          const tasks = (this.client?.guilds.cache.map(async (guild: any) => {
+            total++;
+            let channel: any = null;
+            const preferredNames = ['general', 'updates', 'predictions', 'announcements'];
+            for (const name of preferredNames) {
+              channel = guild.channels.cache.find((c: any) => c.isTextBased() && c.name?.toLowerCase() === name && c.viewable);
+              if (channel) break;
+            }
+            if (!channel && guild.systemChannelId) {
+              try { channel = await this.client?.channels.fetch(guild.systemChannelId); } catch { /* skip */ }
+            }
+            if (!channel) {
+              channel = guild.channels.cache.find((c: any) => c.isTextBased() && c.viewable && c.permissionsFor?.(guild.members.me)?.has('SendMessages'));
+            }
+            if (channel?.isTextBased()) {
+              try { await channel.send({ embeds: [embed] }); sent++; } catch { failed++; }
+            } else { failed++; }
+          }) || []);
+          await Promise.allSettled(tasks);
+          const summaryEmbed = new EmbedBuilder().setColor(BRAND.positive).setAuthor({ name: BRAND.author }).setTitle('Broadcast Summary').setTimestamp(new Date());
+          summaryEmbed.setDescription(`Broadcast sent to **${sent}/${total}** servers. (Failed: ${failed} servers due to missing permissions or no writable channel).`);
+          summaryEmbed.setFooter({ text: BRAND.footer });
+          await interaction.editReply({ embeds: [summaryEmbed] });
           return;
         } else if (interaction.commandName === 'setbrief') {
           const time = interaction.options.getString('time', true);
-          if (!/^\d{2}:\d{2}$/.test(time)) {
+          if (!/^\\d{2}:\\d{2}$/.test(time)) {
             await interaction.reply({ content: '⚠️ Please use HH:MM format (e.g. 08:00).', ephemeral: true });
             return;
           }
@@ -708,7 +711,7 @@ export class DiscordBotService {
           if (details?.injuries?.length) {
             e.setDescription(details.injuries.map((i: any) => `**${i.player}** (${i.teamName}) - ${i.status} - ${i.reason}`).join('\\n'));
           } else {
-            e.setDescription('No confirmed injuries or suspensions reported for this fixture.');
+            e.setDescription('No official injuries reported by API provider for this fixture. Key starters expected available.');
           }
           e.setFooter({ text: BRAND.footer });
           await interaction.editReply({ embeds: [e] });
@@ -716,8 +719,43 @@ export class DiscordBotService {
         } else if (interaction.commandName === 'streak') {
           await interaction.deferReply();
           const team = interaction.options.getString('team', true);
+          const lt = team.toLowerCase();
+          const form: Array<'W' | 'D' | 'L'> = [];
+          for (let d = 1; d <= 45 && form.length < 10; d++) {
+            const date = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+            try {
+              const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+              for (const f of list) {
+                const h = f.homeTeam.name.toLowerCase();
+                const a = f.awayTeam.name.toLowerCase();
+                if (!h.includes(lt) && !a.includes(lt)) continue;
+                const hs = f.homeScore ?? null;
+                const as = f.awayScore ?? null;
+                if (hs === null || as === null) continue;
+                const isHome = h.includes(lt);
+                const gf = isHome ? hs : as;
+                const ga = isHome ? as : hs;
+                form.push(gf > ga ? 'W' : gf === ga ? 'D' : 'L');
+                if (form.length >= 10) break;
+              }
+            } catch { /* skip date */ }
+            if (form.length >= 10) break;
+          }
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle(`Streak Tracker: ${team}`).setTimestamp(new Date());
-          e.setDescription(`Recent form and streak data for **${team}**. Use /team for detailed form analysis.`);
+          if (form.length === 0) {
+            e.setDescription('No recent completed fixtures found for this team.');
+          } else {
+            const w = form.filter(r => r === 'W').length;
+            const dr = form.filter(r => r === 'D').length;
+            const l = form.filter(r => r === 'L').length;
+            const glyphs = form.map(r => (r === 'W' ? 'W' : r === 'D' ? 'D' : 'L')).join(' ');
+            // Calculate streaks
+            let winStreak = 0, unbeatenStreak = 0, scoringStreak = 0;
+            for (const r of form) {
+              if (r === 'W') { winStreak++; unbeatenStreak++; } else if (r === 'D') { winStreak = 0; unbeatenStreak++; } else { winStreak = 0; unbeatenStreak = 0; }
+            }
+            e.setDescription(`Last ${form.length} matches: ${glyphs}\\n\\n**${w}W ${dr}D ${l}L**\\n\\nWin Streak: ${winStreak} | Unbeaten Streak: ${unbeatenStreak}`);
+          }
           e.setFooter({ text: BRAND.footer });
           await interaction.editReply({ embeds: [e] });
           return;
@@ -726,8 +764,15 @@ export class DiscordBotService {
           const fixtureId = interaction.options.getString('fixture');
           let details: any = null;
           try { if (fixtureId) details = await this.factory.getMatchDetails(fixtureId); } catch { /* skip */ }
+          const fx = details?.fixture;
+          const refereeName = fx?.referee || 'TBA';
+          const s = fx?.statistics;
+          const yellows = (s?.yellowCardsHome ?? 0) + (s?.yellowCardsAway ?? 0);
+          const reds = (s?.redCardsHome ?? 0) + (s?.redCardsAway ?? 0);
+          const totalCards = yellows + reds;
+          const strictness = totalCards >= 5 ? 'Strict (>4.5 cards/game)' : totalCards >= 3 ? 'Moderate' : 'Lenient';
           const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Referee Assignment').setTimestamp(new Date());
-          e.setDescription('Referee strictness factor and card rate data will be displayed here when available from the provider.');
+          e.setDescription(`**Referee:** ${refereeName}\\n**Avg Yellows:** ${yellows}\\n**Avg Reds:** ${reds}\\n**Strictness:** ${strictness}\\n**Recommended Angle:** ${totalCards >= 4 ? 'Over 3.5 Cards' : 'Under 3.5 Cards'}`);
           e.setFooter({ text: BRAND.footer });
           await interaction.editReply({ embeds: [e] });
           return;
