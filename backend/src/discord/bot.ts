@@ -2811,7 +2811,7 @@ export class DiscordBotService {
     }
 
     if (preds.length === 0) {
-      return 'No pre-kickoff verified fixtures are available from the configured providers right now (matches already in play or finished are excluded). Please try another date or check the web dashboard.';
+      return '📅 **No Scheduled Fixtures**\n\nNo active fixtures were found for this date. Check back closer to matchday kickoffs or select another date.';
     }
 
     const parlay = buildStatisticalParlay(preds, {

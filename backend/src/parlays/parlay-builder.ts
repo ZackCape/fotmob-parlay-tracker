@@ -40,46 +40,69 @@ export function buildStatisticalParlay(
 
   const isHighProb = minProbability >= 0.85;
 
-  // Filter candidates by league, probability threshold, market filters, and bans.
-  let filtered = candidatePredictions.filter(p => {
-    if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
-    if (p.estimatedProbability < minProbability) return false;
-    if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
-    if (BANNED_MARKETS.has(p.market)) {
-      // High-prob expansion: allow Team Total Over 0.5 only when xG >= 1.85
-      if (isHighProb && (p.market === 'HOME_OVER_0_5' || p.market === 'AWAY_OVER_0_5')) {
-        const xg = p.market === 'HOME_OVER_0_5'
-          ? (p.supportingStatistics?.homeXgAverage ?? 0)
-          : (p.supportingStatistics?.awayXgAverage ?? 0);
-        const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
-        if (xg >= 1.85 && fairOdds >= 1.20) {
-          // Allow this leg
+  // Helper: filter candidates at a given threshold.
+  function filterAtThreshold(threshold: number): MarketPrediction[] {
+    const highProb = threshold >= 0.85;
+    let result = candidatePredictions.filter(p => {
+      if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
+      if (p.estimatedProbability < threshold) return false;
+      if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
+      if (BANNED_MARKETS.has(p.market)) {
+        // High-prob expansion: allow Team Total Over 0.5 only when xG >= 1.85
+        if (highProb && (p.market === 'HOME_OVER_0_5' || p.market === 'AWAY_OVER_0_5')) {
+          const xg = p.market === 'HOME_OVER_0_5'
+            ? (p.supportingStatistics?.homeXgAverage ?? 0)
+            : (p.supportingStatistics?.awayXgAverage ?? 0);
+          const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
+          if (xg >= 1.85 && fairOdds >= 1.20) {
+            // Allow this leg
+          } else {
+            return false;
+          }
         } else {
           return false;
         }
-      } else {
-        return false;
       }
-    }
-    // Corner floor: reject anything below Over 8.5 Corners
-    if (p.market === 'OVER_7_5_CORNERS') return false;
-    // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
-    if (isHighProb && p.market === 'OVER_1_5') {
-      const xgTotal = (p.supportingStatistics?.homeXgAverage ?? 0) + (p.supportingStatistics?.awayXgAverage ?? 0);
-      if (xgTotal < 2.80) return false;
-    }
-    return true;
-  });
+      // Corner floor: reject anything below Over 8.5 Corners
+      if (p.market === 'OVER_7_5_CORNERS') return false;
+      // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
+      if (highProb && p.market === 'OVER_1_5') {
+        const xgTotal = (p.supportingStatistics?.homeXgAverage ?? 0) + (p.supportingStatistics?.awayXgAverage ?? 0);
+        if (xgTotal < 2.80) return false;
+      }
+      return true;
+    });
 
-  // Odds value range filter: 1.30x - 2.25x per leg (fair odds = 1 / estimatedProbability).
-  // Filters out useless micro-odds (1.02-1.20x) and extreme longshots, but only
-  // when enough candidates survive to fill the requested leg count.
-  const oddsFiltered = filtered.filter(p => {
-    const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
-    return fairOdds >= 1.30 && fairOdds <= 2.25;
-  });
-  if (oddsFiltered.length >= targetLegsCount) {
-    filtered = oddsFiltered;
+    // Odds value range filter: 1.30x - 2.25x per leg.
+    const oddsFiltered = result.filter(p => {
+      const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
+      return fairOdds >= 1.30 && fairOdds <= 2.25;
+    });
+    if (oddsFiltered.length >= targetLegsCount) {
+      result = oddsFiltered;
+    } else if (oddsFiltered.length >= 5) {
+      result = oddsFiltered;
+    }
+
+    return result;
+  }
+
+  // Auto-relaxing threshold: step down in 5% decrements until enough candidates.
+  let effectiveMinProb = minProbability;
+  let filtered = filterAtThreshold(effectiveMinProb);
+  let thresholdRelaxed = false;
+  const minThreshold = 0.70;
+
+  while (filtered.length < 5 && effectiveMinProb > minThreshold) {
+    const prevProb = effectiveMinProb;
+    effectiveMinProb = Math.max(minThreshold, effectiveMinProb - 0.05);
+    if (effectiveMinProb === prevProb) break;
+    const newFiltered = filterAtThreshold(effectiveMinProb);
+    if (newFiltered.length >= filtered.length) {
+      filtered = newFiltered;
+      thresholdRelaxed = true;
+    }
+    if (filtered.length >= 5) break;
   }
 
   // Competition priority (EPL / UCL first) over the eligible pool, with the
@@ -171,14 +194,10 @@ export function buildStatisticalParlay(
   let fallbackNotice = '';
   const truncated = actualCount < targetLegsCount && actualCount > 0;
 
-  if (truncated) {
+  if (thresholdRelaxed) {
+    fallbackNotice = `⚠️ Threshold Adjusted: Lowered minimum leg probability from ${(minProbability * 100).toFixed(0)}% to ${(effectiveMinProb * 100).toFixed(0)}% to deliver a valid ${actualCount}-leg ticket with available matchday fixtures.`;
+  } else if (truncated) {
     fallbackNotice = `Only ${actualCount} fixtures met the strict ${(minProbability * 100).toFixed(0)}%+ probability threshold today. Parlay capped at ${actualCount} legs for maximum ticket reliability.`;
-  }
-
-  // Secondary fallback: if fewer than 5 legs meet the threshold, note it.
-  if (actualCount < 5 && actualCount > 0 && minProbability >= 0.85) {
-    const lowerMinProb = Math.max(0.80, minProbability - 0.10);
-    fallbackNotice = `Adjusted minimum leg probability from ${(minProbability * 100).toFixed(0)}% to ${(lowerMinProb * 100).toFixed(0)}% to deliver a complete ticket. Only ${actualCount} legs met the original threshold.`;
   }
 
   // Map to ParlayLeg format
