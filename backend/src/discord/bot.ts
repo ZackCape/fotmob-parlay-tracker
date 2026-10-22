@@ -1829,8 +1829,8 @@ export class DiscordBotService {
      * `runLiveEventTick()` so boot can fire it once immediately for fixtures
      * that were restored from disk.
      * ================================================================ */
-    // Ultra-fast 15s live ticker for in-play matches (separate from daily fixture fetches).
-    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 15_000);
+    // Near-instant 3s live ticker for in-play matches (separate from daily fixture fetches).
+    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 3_000);
 
     // Never keep the process alive just for the alert loop.
     (this.liveEventTimer as any)?.unref?.();
@@ -1957,6 +1957,42 @@ export class DiscordBotService {
 
         const mentions = subs.map((s) => `<@${s.userId}>`).join(' ');
 
+        // Score rollback detection (disallowed goal) - after subs are resolved.
+        const prevStatsForRollback = this.liveEventPrevStats.get(fx.id);
+        // Note: prevStatsForRollback is the PREVIOUS poll's stats (before this update)
+        // We need to compare against the score BEFORE this poll's update.
+        // Since we already updated fx.homeScore above, we compare against prevStats.
+        // But prevStats was already overwritten. Let's use the stored previous.
+        // Actually, we stored prevStats before overwriting. Let me re-check.
+        // The code above did: this.liveEventPrevStats.set(fx.id, stats) BEFORE this point.
+        // So prevStats variable (from line ~1830) is still in scope and has the old value.
+
+        // Score rollback detection using the previous poll's score.
+        const oldHomeScore = prevStats?.homeScore ?? null;
+        const oldAwayScore = prevStats?.awayScore ?? null;
+        if (oldHomeScore !== null && oldHomeScore !== undefined && fx.homeScore !== null && fx.homeScore < oldHomeScore) {
+          // Home score decreased - disallowed goal
+          const rollbackEvent: any = { id: `rollback-home-${Date.now()}`, type: 'var', minute: fx.liveClock ?? null, team: fx.homeTeam?.name, player: null, assist: null, text: 'Goal disallowed (VAR Review)' };
+          const rollbackEmbed = CP.buildDisallowedGoalAlert(rollbackEvent, fx);
+          for (const sub of subs) {
+            try {
+              const ch = await this.client.channels.fetch(sub.channelId);
+              if (ch?.isTextBased()) await (ch as any).send({ content: `<@${sub.userId}>`, embeds: [rollbackEmbed] });
+            } catch { /* skip */ }
+          }
+        }
+        if (oldAwayScore !== null && oldAwayScore !== undefined && fx.awayScore !== null && fx.awayScore < oldAwayScore) {
+          // Away score decreased - disallowed goal
+          const rollbackEvent: any = { id: `rollback-away-${Date.now()}`, type: 'var', minute: fx.liveClock ?? null, team: fx.awayTeam?.name, player: null, assist: null, text: 'Goal disallowed (VAR Review)' };
+          const rollbackEmbed = CP.buildDisallowedGoalAlert(rollbackEvent, fx);
+          for (const sub of subs) {
+            try {
+              const ch = await this.client.channels.fetch(sub.channelId);
+              if (ch?.isTextBased()) await (ch as any).send({ content: `<@${sub.userId}>`, embeds: [rollbackEmbed] });
+            } catch { /* skip */ }
+          }
+        }
+
         for (const ev of newEvents) {
           // On the very first poll for a fixture, seed seen events without
           // alerting, so historical events don't trigger alert storms.
@@ -1980,6 +2016,17 @@ export class DiscordBotService {
               fx.awayScore = Math.max(fx.awayScore ?? 0, prevAway + 1);
             }
             embed = CP.buildGoalAlert(ev, fx);
+          } else if (ev.text && /disallowed|cancelled|var.*review/i.test(ev.text)) {
+            // Disallowed goal / VAR alert
+            const prevStats = this.liveEventPrevStats.get(fx.id);
+            // Roll back score if needed
+            if (prevStats?.homeScore !== null && prevStats?.homeScore !== undefined) {
+              fx.homeScore = prevStats.homeScore;
+            }
+            if (prevStats?.awayScore !== null && prevStats?.awayScore !== undefined) {
+              fx.awayScore = prevStats.awayScore;
+            }
+            embed = CP.buildDisallowedGoalAlert(ev, fx);
           } else if (ev.type === 'red-card') {
             embed = CP.buildRedCardAlert(ev, fx);
           } else if (ev.type === 'halftime') {

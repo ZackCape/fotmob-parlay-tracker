@@ -288,6 +288,25 @@ export function buildGoalAlert(event: DetectedEvent, fixture: Fixture): EmbedBui
   return e;
 }
 
+export function buildDisallowedGoalAlert(event: DetectedEvent, fixture: Fixture): EmbedBuilder {
+  const home = fixture.homeTeam.name;
+  const away = fixture.awayTeam.name;
+  const h = fixture.homeScore ?? 0;
+  const a = fixture.awayScore ?? 0;
+  const reason = event.text || 'VAR Review';
+  const e = new EmbedBuilder()
+    .setColor(0xFF4B4B)
+    .setAuthor({ name: BRAND.author })
+    .setTitle(`GOAL DISALLOWED! ${home} ${h} - ${a} ${away}`)
+    .setDescription(
+      `Goal for **${event.team ?? 'Unknown team'}** disallowed at **${event.minute ?? '?'}'** (${reason}).\n` +
+      `Score restored to: **${home} ${h} - ${a} ${away}**`
+    )
+    .setFooter({ text: `${BRAND.footer} - Disallowed goal alert` })
+    .setTimestamp(new Date());
+  return e;
+}
+
 export function buildRedCardAlert(event: DetectedEvent, fixture: Fixture): EmbedBuilder {
   const e = new EmbedBuilder()
     .setColor(BRAND.negative)
@@ -459,6 +478,7 @@ export default {
   markEventSeen,
   detectNewEvents,
   buildGoalAlert,
+  buildDisallowedGoalAlert,
   buildRedCardAlert,
   buildHalftimeReport,
   calculatePressureIndex,
