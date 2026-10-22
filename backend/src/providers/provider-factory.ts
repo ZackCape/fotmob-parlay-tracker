@@ -140,6 +140,9 @@ export class DataProviderFactory {
     this.backupProvider = config.footballDataOrgKey ? new FootballDataOrgAdapter(config.footballDataOrgKey) : null;
     this.defaultTtlMs = config.cacheTtlMinutes * 60 * 1000;
 
+    // Force-clear any stale cached data on startup (e.g. old corner lines).
+    this.cache.clear();
+
     // Invalidate match details cache when engine learns from a finished match!
     this.adaptiveLearning.subscribe(() => {
       this.cache.clear();
