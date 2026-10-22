@@ -61,11 +61,11 @@ describe('parlay builder — competition priority', () => {
   });
 
   it('returns the strongest pool when prioritisation is switched off', () => {
-    const candidates = [...pool('LALIGA', 20, 0.9), ...pool('EPL', 5, 0.62)];
+    const candidates = [...pool('LALIGA', 20, 0.65), ...pool('EPL', 5, 0.55)];
 
     const parlay = buildStatisticalParlay(candidates, {
       targetLegsCount: 5,
-      minProbability: 0.6,
+      minProbability: 0.5,
       prioritizePriorityLeagues: false,
     });
 
@@ -163,11 +163,11 @@ describe('parlay builder — competition priority', () => {
   });
 
   it('ranks priority leagues first in correlated-allowed mode too', () => {
-    const candidates = [...pool('LALIGA', 6, 0.9), ...pool('EPL', 2, 0.65)];
+    const candidates = [...pool('LALIGA', 6, 0.65), ...pool('EPL', 2, 0.55)];
 
     const parlay = buildStatisticalParlay(candidates, {
       targetLegsCount: 4 as ParlayLegCount,
-      minProbability: 0.6,
+      minProbability: 0.5,
       mode: 'CORRELATED_ALLOWED',
     });
 

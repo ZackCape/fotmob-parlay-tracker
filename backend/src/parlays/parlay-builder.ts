@@ -35,13 +35,24 @@ export function buildStatisticalParlay(
     prioritizePriorityLeagues = true,
   } = options;
 
-  // Filter candidates by league, probability threshold, and market filters
+  // Filter candidates by league, probability threshold, and market filters.
   let filtered = candidatePredictions.filter(p => {
     if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
     if (p.estimatedProbability < minProbability) return false;
     if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
     return true;
   });
+
+  // Odds value range filter: 1.35x - 2.25x per leg (fair odds = 1 / estimatedProbability).
+  // Filters out useless micro-odds (1.02-1.20x) and extreme longshots, but only
+  // when enough candidates survive to fill the requested leg count.
+  const oddsFiltered = filtered.filter(p => {
+    const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
+    return fairOdds >= 1.35 && fairOdds <= 2.25;
+  });
+  if (oddsFiltered.length >= targetLegsCount) {
+    filtered = oddsFiltered;
+  }
 
   // Competition priority (EPL / UCL first) over the eligible pool, with the
   // strength of each leg as the in-tier ranking. Everything below consumes this
