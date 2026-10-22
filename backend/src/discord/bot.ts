@@ -520,48 +520,60 @@ export class DiscordBotService {
           return;
         } else if (interaction.commandName === 'generateparlay') {
           await interaction.deferReply();
-          const legs = interaction.options.getInteger('legs') || 5;
-          const minPct = interaction.options.getInteger('min_probability');
-          const league = interaction.options.getString('league') || 'ALL';
-          const commandMode = interaction.options.getString('mode') || 'anti_correlated';
-          const mode: ParlayMode = commandMode === 'same_game'
-            ? 'SAME_GAME_PARLAY'
-            : commandMode === 'correlated'
-            ? 'CORRELATED_ALLOWED'
-            : 'ANTI_CORRELATED';
+          try {
+            const legs = interaction.options.getInteger('legs') || 5;
+            const minPct = interaction.options.getInteger('min_probability');
+            const league = interaction.options.getString('league') || 'ALL';
+            const commandMode = interaction.options.getString('mode') || 'anti_correlated';
+            const mode: ParlayMode = commandMode === 'same_game'
+              ? 'SAME_GAME_PARLAY'
+              : commandMode === 'correlated'
+              ? 'CORRELATED_ALLOWED'
+              : 'ANTI_CORRELATED';
 
-          // Generate the parlay (reuse existing logic).
-          const replyText = await this.generateParlayReply({
-            legs,
-            mode,
-            league,
-            minProbability: minPct ? minPct / 100 : undefined,
-            userId: interaction.user.id,
-            channelId: interaction.channelId,
-          });
+            // Generate the parlay with a 5-second timeout guard on market checks.
+            const replyText = await Promise.race([
+              this.generateParlayReply({
+                legs,
+                mode,
+                league,
+                minProbability: minPct ? minPct / 100 : undefined,
+                userId: interaction.user.id,
+                channelId: interaction.channelId,
+              }),
+              new Promise<string>((_, reject) =>
+                setTimeout(() => reject(new Error('Parlay generation timed out')), 5000)
+              ),
+            ]);
 
-          // Build an embed + interactive action row so the user can one-click
-          // save/track or copy the slip.
-          const embed = new EmbedBuilder()
-            .setColor(BRAND.accent)
-            .setAuthor({ name: BRAND.author })
-            .setTitle('Generated Parlay')
-            .setDescription(replyText.slice(0, 4000))
-            .setTimestamp(new Date());
+            // Build an embed + interactive action row so the user can one-click
+            // save/track or copy the slip.
+            const embed = new EmbedBuilder()
+              .setColor(BRAND.accent)
+              .setAuthor({ name: BRAND.author })
+              .setTitle('Generated Parlay')
+              .setDescription(replyText.slice(0, 4000))
+              .setTimestamp(new Date());
 
-          const parlayId = `gen-${Date.now()}`;
-          const actionRow = new ActionRowBuilder<any>().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`track_parlay_${parlayId}`)
-              .setLabel('Save & Track Parlay')
-              .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-              .setCustomId(`copy_parlay_${parlayId}`)
-              .setLabel('Copy Parlay Slip')
-              .setStyle(ButtonStyle.Secondary),
-          );
+            const parlayId = `gen-${Date.now()}`;
+            const actionRow = new ActionRowBuilder<any>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`track_parlay_${parlayId}`)
+                .setLabel('Save & Track Parlay')
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`copy_parlay_${parlayId}`)
+                .setLabel('Copy Parlay Slip')
+                .setStyle(ButtonStyle.Secondary),
+            );
 
-          await interaction.editReply({ embeds: [embed], components: [actionRow] });
+            await interaction.editReply({ embeds: [embed], components: [actionRow] });
+          } catch (error: any) {
+            console.error(`Error executing generateparlay:`, error);
+            if (interaction.deferred) {
+              await interaction.editReply({ content: '⚠️ Unable to generate parlay ticket right now. Please try again in a moment or adjust your filters.' });
+            }
+          }
         } else if (interaction.commandName === 'track') {
           await interaction.deferReply();
           const reply = await this.generateLiveTrackerReply({
