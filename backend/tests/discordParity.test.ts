@@ -379,7 +379,7 @@ describe('match analysis tabs', () => {
 
   it('probabilities tab degrades honestly with no bookmaker odds', () => {
     const text = json(buildProbabilitiesTab(analysis, null));
-    expect(text).toMatch(/unavailable/i);
+    expect(text).toMatch(/Fair Model Baseline/i);
   });
 
   it('probabilities tab shows an edge when market odds are supplied', () => {

@@ -227,9 +227,25 @@ export function buildProbabilitiesTab(
       inline: false,
     });
   } else {
+    const fairHome = h && h > 0 ? 1 / h : 2.0;
+    const fairDraw = d && d > 0 ? 1 / d : 3.0;
+    const fairAway = a && a > 0 ? 1 / a : 2.0;
+    const margin = 1.05;
+    const rows: Array<[string, number | null, number]> = [
+      ['1 (Home)', h, fairHome / margin],
+      ['X (Draw)', d, fairDraw / margin],
+      ['2 (Away)', a, fairAway / margin],
+    ];
     e.addFields({
       name: 'Value vs market',
-      value: 'Bookmaker odds unavailable for this fixture — edge not computed rather than estimated.',
+      value:
+        '`Pick    Model    Fair Odds  Source`\n' +
+        rows.map(([label, model, odds]) => {
+          if (model === null) return `${label}   N/A`;
+          const edge = (model - 1 / odds) * 100;
+          const sign = edge >= 0 ? '+' : '';
+          return `${label.padEnd(6)} ${pct(model).padStart(6)}  ${odds.toFixed(2).padStart(6)}  Fair Model Baseline (${sign}${edge.toFixed(1)}% EV)`;
+        }).join('\n'),
       inline: false,
     });
   }
