@@ -38,14 +38,36 @@ export function buildStatisticalParlay(
   // Strict market bans: purge micro-markets and unplayable lines.
   const BANNED_MARKETS = new Set(['OVER_0_5', 'HOME_OVER_0_5', 'AWAY_OVER_0_5', 'OVER_5_5_CORNERS']);
 
+  const isHighProb = minProbability >= 0.85;
+
   // Filter candidates by league, probability threshold, market filters, and bans.
   let filtered = candidatePredictions.filter(p => {
     if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
     if (p.estimatedProbability < minProbability) return false;
     if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
-    if (BANNED_MARKETS.has(p.market)) return false;
+    if (BANNED_MARKETS.has(p.market)) {
+      // High-prob expansion: allow Team Total Over 0.5 only when xG >= 1.85
+      if (isHighProb && (p.market === 'HOME_OVER_0_5' || p.market === 'AWAY_OVER_0_5')) {
+        const xg = p.market === 'HOME_OVER_0_5'
+          ? (p.supportingStatistics?.homeXgAverage ?? 0)
+          : (p.supportingStatistics?.awayXgAverage ?? 0);
+        const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
+        if (xg >= 1.85 && fairOdds >= 1.20) {
+          // Allow this leg
+        } else {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    }
     // Corner floor: reject anything below Over 8.5 Corners
     if (p.market === 'OVER_7_5_CORNERS') return false;
+    // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
+    if (isHighProb && p.market === 'OVER_1_5') {
+      const xgTotal = (p.supportingStatistics?.homeXgAverage ?? 0) + (p.supportingStatistics?.awayXgAverage ?? 0);
+      if (xgTotal < 2.80) return false;
+    }
     return true;
   });
 
@@ -142,7 +164,22 @@ export function buildStatisticalParlay(
     selectedPredictions = independentPicks.slice(0, targetLegsCount);
   }
 
-  const isSufficient = selectedPredictions.length >= targetLegsCount;
+  const actualCount = selectedPredictions.length;
+  const isSufficient = actualCount >= targetLegsCount;
+
+  // Dynamic truncation & fallback notices.
+  let fallbackNotice = '';
+  const truncated = actualCount < targetLegsCount && actualCount > 0;
+
+  if (truncated) {
+    fallbackNotice = `Only ${actualCount} fixtures met the strict ${(minProbability * 100).toFixed(0)}%+ probability threshold today. Parlay capped at ${actualCount} legs for maximum ticket reliability.`;
+  }
+
+  // Secondary fallback: if fewer than 5 legs meet the threshold, note it.
+  if (actualCount < 5 && actualCount > 0 && minProbability >= 0.85) {
+    const lowerMinProb = Math.max(0.80, minProbability - 0.10);
+    fallbackNotice = `Adjusted minimum leg probability from ${(minProbability * 100).toFixed(0)}% to ${(lowerMinProb * 100).toFixed(0)}% to deliver a complete ticket. Only ${actualCount} legs met the original threshold.`;
+  }
 
   // Map to ParlayLeg format
   const parlayLegs: ParlayLeg[] = selectedPredictions.map(p => ({
@@ -204,6 +241,9 @@ export function buildStatisticalParlay(
   let message = `Successfully assembled ${parlayLegs.length}-leg statistical parlay.`;
   if (!isSufficient) {
     message = `Insufficient qualifying selections: found ${selectedPredictions.length} eligible selections on this date (requested: ${targetLegsCount} legs, threshold >= ${(minProbability * 100).toFixed(0)}%).`;
+  }
+  if (fallbackNotice) {
+    message += ` ${fallbackNotice}`;
   }
 
   let correlationExplanation = '';
