@@ -1829,8 +1829,8 @@ export class DiscordBotService {
      * `runLiveEventTick()` so boot can fire it once immediately for fixtures
      * that were restored from disk.
      * ================================================================ */
-    // Near-instant 3s live ticker for in-play matches (separate from daily fixture fetches).
-    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 3_000);
+    // Sub-second 500ms micro-loop for in-play matches (separate from daily fixture fetches).
+    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 500);
 
     // Never keep the process alive just for the alert loop.
     (this.liveEventTimer as any)?.unref?.();
@@ -2001,6 +2001,17 @@ export class DiscordBotService {
             continue;
           }
           if (CP.isSeenEvent(ev.id)) continue;
+
+          // Atomic deduplication lock (60s TTL) to prevent double-posting
+          // during high-frequency sub-second checks.
+          const eventHash = `${fx.id}_${ev.team ?? 'unknown'}_${ev.minute ?? '0'}_${ev.type}`.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+          // Check if already processed
+          const dedupSet = (global as any).__dedupSet || new Set<string>();
+          if (! (global as any).__dedupSet) (global as any).__dedupSet = dedupSet;
+          if (dedupSet.has(eventHash)) continue;
+          dedupSet.add(eventHash);
+          setTimeout(() => dedupSet.delete(eventHash), 60_000);
+
           CP.markEventSeen(ev.id);
 
           let embed: any = null;
@@ -2041,9 +2052,17 @@ export class DiscordBotService {
           for (const sub of subs) {
             try {
               const ch = await this.client.channels.fetch(sub.channelId);
-              if (ch?.isTextBased()) {
-                await (ch as any).send({ content: mentions, embeds: [embed] });
+              const sendTasks: Promise<any>[] = [];
+              // Direct webhook dispatch for instant delivery (parallel).
+              if (this.config.webhookUrl) {
+                sendTasks.push(
+                  axios.post(this.config.webhookUrl, { username: 'Cape Predictor', embeds: [embed] }).catch(() => {})
+                );
               }
+              if (ch?.isTextBased()) {
+                sendTasks.push((ch as any).send({ content: mentions, embeds: [embed] }));
+              }
+              await Promise.all(sendTasks);
             } catch (e: any) {
               console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e.message}`);
             }
