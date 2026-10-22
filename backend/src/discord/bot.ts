@@ -1969,6 +1969,16 @@ export class DiscordBotService {
 
           let embed: any = null;
           if (ev.type === 'goal' || ev.type === 'own-goal') {
+            // Calculate post-goal score before building the alert.
+            const prevStats = this.liveEventPrevStats.get(fx.id);
+            const prevHome = prevStats?.homeScore ?? fx.homeScore ?? 0;
+            const prevAway = prevStats?.awayScore ?? fx.awayScore ?? 0;
+            const isHome = ev.team === fx.homeTeam?.name;
+            if (isHome) {
+              fx.homeScore = Math.max(fx.homeScore ?? 0, prevHome + 1);
+            } else {
+              fx.awayScore = Math.max(fx.awayScore ?? 0, prevAway + 1);
+            }
             embed = CP.buildGoalAlert(ev, fx);
           } else if (ev.type === 'red-card') {
             embed = CP.buildRedCardAlert(ev, fx);
