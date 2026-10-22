@@ -77,6 +77,7 @@ section('2) Parlay odds filter (1.35-2.25x)');
     prediction('long-1', 'EPL', 'HOME_WIN', 0.3),    // 3.33x - should be filtered
     prediction('good-3', 'EPL', 'HOME_WIN', 0.5),    // 2.0x - should pass
     prediction('good-4', 'EPL', 'HOME_WIN', 0.45),   // 2.22x - should pass (just under 2.25)
+    prediction('good-5', 'EPL', 'HOME_WIN', 0.60),   // 1.67x - should pass
   ];
 
   const parlay = buildStatisticalParlay(candidates, { targetLegsCount: 5, minProbability: 0.4 });
@@ -109,6 +110,40 @@ section('4) PremierBet odds integration');
   check('fetchPremierBetOdds exists', pbSrc.includes('fetchPremierBetOdds'));
   check('calculateEV exists', pbSrc.includes('calculateEV'));
   check('5-min cache TTL', pbSrc.includes('5 * 60 * 1000'));
+}
+
+section('3) Ban Over 0.5 Goals in parlays');
+{
+  const candidates = [
+    prediction('over05-1', 'EPL', 'OVER_0_5', 0.95),
+    prediction('over15-1', 'EPL', 'OVER_1_5', 0.75),
+    prediction('over25-1', 'EPL', 'OVER_2_5', 0.65),
+    prediction('btts-1', 'EPL', 'BTTS_YES', 0.70),
+    prediction('dc-1', 'EPL', 'DOUBLE_CHANCE_1X', 0.80),
+    prediction('over85c-1', 'EPL', 'OVER_8_5_CORNERS', 0.70),
+  ];
+
+  const parlay10 = buildStatisticalParlay(candidates, { targetLegsCount: 10, minProbability: 0.5 });
+  check('Over 0.5 Goals never appears in 10-leg parlay', !parlay10.legs.some((l: any) => l.market === 'OVER_0_5' || l.selection?.includes('Over 0.5')), json(parlay10.legs.map((l: any) => l.market)));
+  check('parlay generated without crashing', parlay10.legs.length > 0, String(parlay10.legs.length));
+
+  const parlay25 = buildStatisticalParlay(candidates, { targetLegsCount: 25, minProbability: 0.5 });
+  check('Over 0.5 Goals never appears in 25-leg parlay', !parlay25.legs.some((l: any) => l.market === 'OVER_0_5' || l.selection?.includes('Over 0.5')), json(parlay25.legs.map((l: any) => l.market)));
+}
+
+section('4) Trabzonspor vs Hearts snaps to Over 1.5+');
+{
+  const candidates = [
+    prediction('trabzon-1', 'EPL', 'OVER_1_5', 0.82),
+    prediction('trabzon-2', 'EPL', 'OVER_2_5', 0.65),
+    prediction('trabzon-3', 'EPL', 'BTTS_YES', 0.70),
+    prediction('trabzon-4', 'EPL', 'DOUBLE_CHANCE_1X', 0.78),
+  ];
+
+  const parlay = buildStatisticalParlay(candidates, { targetLegsCount: 5, minProbability: 0.5 });
+  const markets = parlay.legs.map((l: any) => l.market);
+  check('no Over 0.5 Goals in result', !markets.includes('OVER_0_5'), json(markets));
+  check('corner lines >= 8.5 if present', parlay.legs.filter((l: any) => l.market?.includes('CORNERS')).every((l: any) => !l.selection?.includes('5.5') && !l.selection?.includes('7.5')), json(markets));
 }
 
 section('SUMMARY');

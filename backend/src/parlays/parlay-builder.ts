@@ -35,20 +35,26 @@ export function buildStatisticalParlay(
     prioritizePriorityLeagues = true,
   } = options;
 
-  // Filter candidates by league, probability threshold, and market filters.
+  // Strict market bans: purge micro-markets and unplayable lines.
+  const BANNED_MARKETS = new Set(['OVER_0_5', 'HOME_OVER_0_5', 'AWAY_OVER_0_5', 'OVER_5_5_CORNERS']);
+
+  // Filter candidates by league, probability threshold, market filters, and bans.
   let filtered = candidatePredictions.filter(p => {
     if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
     if (p.estimatedProbability < minProbability) return false;
     if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
+    if (BANNED_MARKETS.has(p.market)) return false;
+    // Corner floor: reject anything below Over 8.5 Corners
+    if (p.market === 'OVER_7_5_CORNERS') return false;
     return true;
   });
 
-  // Odds value range filter: 1.35x - 2.25x per leg (fair odds = 1 / estimatedProbability).
+  // Odds value range filter: 1.30x - 2.25x per leg (fair odds = 1 / estimatedProbability).
   // Filters out useless micro-odds (1.02-1.20x) and extreme longshots, but only
   // when enough candidates survive to fill the requested leg count.
   const oddsFiltered = filtered.filter(p => {
     const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
-    return fairOdds >= 1.35 && fairOdds <= 2.25;
+    return fairOdds >= 1.30 && fairOdds <= 2.25;
   });
   if (oddsFiltered.length >= targetLegsCount) {
     filtered = oddsFiltered;

@@ -61,8 +61,8 @@ describe('Anti-Correlation & Parlay Engine', () => {
     const preds: MarketPrediction[] = [
       createMockPrediction('match-1', 'HOME_WIN', 0.70),
       createMockPrediction('match-2', 'OVER_1_5', 0.75),
-      createMockPrediction('match-3', 'DOUBLE_CHANCE_1X', 0.80),
-      createMockPrediction('match-4', 'HOME_OVER_0_5', 0.82),
+      createMockPrediction('match-3', 'DOUBLE_CHANCE_1X', 0.72),
+      createMockPrediction('match-4', 'OVER_2_5', 0.68),
       createMockPrediction('match-5', 'BTTS_YES', 0.65),
       createMockPrediction('match-6', 'DRAW', 0.30),
     ];
@@ -74,7 +74,7 @@ describe('Anti-Correlation & Parlay Engine', () => {
 
     expect(parlay.status).toBe('SUFFICIENT_SELECTIONS');
     expect(parlay.legs.length).toBe(5);
-    expect(parlay.combinedProbability).toBeCloseTo(0.70 * 0.75 * 0.80 * 0.82 * 0.65, 3);
+    expect(parlay.combinedProbability).toBeCloseTo(0.75 * 0.72 * 0.70 * 0.68 * 0.65, 3);
   });
 
   it('honestly reports INSUFFICIENT_SELECTIONS instead of inventing picks when matches are scarce', () => {
@@ -100,7 +100,7 @@ describe('Anti-Correlation & Parlay Engine', () => {
     // Create 30 mock distinct matches
     const preds: MarketPrediction[] = [];
     for (let i = 1; i <= 30; i++) {
-      preds.push(createMockPrediction(`match-${i}`, 'HOME_OVER_0_5', 0.75));
+      preds.push(createMockPrediction(`match-${i}`, 'HOME_WIN', 0.65));
     }
 
     const parlay25 = buildStatisticalParlay(preds, {
