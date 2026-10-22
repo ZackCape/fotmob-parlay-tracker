@@ -119,7 +119,7 @@ describe('parlay builder — competition priority', () => {
     const candidates = [
       prediction('epl-1', 'EPL', 'HOME_WIN', 0.8),
       prediction('epl-1', 'EPL', 'OVER_1_5', 0.7),
-      prediction('laliga-1', 'LALIGA', 'HOME_WIN', 0.9),
+      prediction('laliga-1', 'LALIGA', 'HOME_WIN', 0.65),
     ];
 
     const parlay = buildStatisticalParlay(candidates, { targetLegsCount: 5, minProbability: 0.5 });

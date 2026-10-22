@@ -19,6 +19,12 @@ export interface ParlayBuilderOptions {
    * that failed the threshold. Set false for a pure probability ranking.
    */
   prioritizePriorityLeagues?: boolean;
+  /**
+   * Bookmaker-published markets for this fixture. When provided, only
+   * markets present in this list are allowed (Market Existence Check).
+   * If omitted, all markets pass (backwards compat).
+   */
+  publishedMarkets?: string[];
 }
 
 export function buildStatisticalParlay(
@@ -33,6 +39,7 @@ export function buildStatisticalParlay(
     mode = 'ANTI_CORRELATED',
     targetFixtureId,
     prioritizePriorityLeagues = true,
+    publishedMarkets,
   } = options;
 
   // Dynamic bookmaker-verified line filter: no hardcoded bans.
@@ -51,6 +58,8 @@ export function buildStatisticalParlay(
       if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
       if (p.estimatedProbability < threshold) return false;
       if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
+      // Market Existence Check: reject markets not published by the bookmaker.
+      if (publishedMarkets && publishedMarkets.length > 0 && !publishedMarkets.includes(p.market)) return false;
       // Corner floor: reject anything below Over 7.5 Corners (absolute minimum)
       if (p.market === 'OVER_5_5_CORNERS') return false;
       // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
@@ -62,15 +71,15 @@ export function buildStatisticalParlay(
     });
 
     // Odds value range filter: 1.15x - 2.25x per leg (fair odds = 1 / estimatedProbability).
-    // Filters out useless micro-odds (1.02-1.12x) and extreme longshots, but only
-    // when enough candidates survive to fill the requested leg count.
+    // Filters out useless micro-odds (1.02-1.12x) and extreme longshots.
     const oddsFiltered = result.filter(p => {
       const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
       return fairOdds >= 1.15 && fairOdds <= 2.25;
     });
-    if (oddsFiltered.length >= targetLegsCount) {
+    // Apply filter when it removes at least one candidate (always filter micro-odds)
+    if (oddsFiltered.length > 0 && oddsFiltered.length < result.length) {
       result = oddsFiltered;
-    } else if (oddsFiltered.length >= 5) {
+    } else if (oddsFiltered.length >= targetLegsCount) {
       result = oddsFiltered;
     }
 

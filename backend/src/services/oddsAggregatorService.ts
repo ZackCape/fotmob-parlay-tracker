@@ -17,6 +17,7 @@ export interface AggregatedOdds {
   away: number;
   over25: number | null;
   under25: number | null;
+  publishedMarkets: string[];
 }
 
 export async function getOddsForFixture(fixtureId: string, homeTeam: string, awayTeam: string, modelHomeProb: number, modelDrawProb: number, modelAwayProb: number): Promise<AggregatedOdds> {
@@ -25,6 +26,10 @@ export async function getOddsForFixture(fixtureId: string, homeTeam: string, awa
     const { fetchPremierBetOdds } = await import('./premierbetService.js');
     const pb = await fetchPremierBetOdds(fixtureId, homeTeam, awayTeam);
     if (pb && pb.homeOdds && pb.awayOdds) {
+      // Build published markets from available odds
+      const markets: string[] = ['HOME_WIN', 'DRAW', 'AWAY_WIN'];
+      if (pb.over25Odds) markets.push('OVER_2_5');
+      if (pb.under25Odds) markets.push('UNDER_2_5');
       return {
         source: 'PremierBet ZW',
         home: pb.homeOdds,
@@ -32,6 +37,7 @@ export async function getOddsForFixture(fixtureId: string, homeTeam: string, awa
         away: pb.awayOdds,
         over25: pb.over25Odds,
         under25: pb.under25Odds,
+        publishedMarkets: markets,
       };
     }
   } catch { /* fall through */ }
@@ -45,6 +51,8 @@ export async function getOddsForFixture(fixtureId: string, homeTeam: string, awa
   const drawFair = modelDrawProb > 0 ? 1 / modelDrawProb : 3.0;
   // Apply bookmaker margin (~5%)
   const margin = 1.05;
+  // Tier 3: All standard markets published (synthetic baseline)
+  const markets: string[] = ['HOME_WIN', 'DRAW', 'AWAY_WIN', 'OVER_0_5', 'OVER_1_5', 'OVER_2_5', 'OVER_3_5', 'UNDER_2_5', 'UNDER_3_5', 'BTTS_YES', 'BTTS_NO', 'DOUBLE_CHANCE_1X', 'DOUBLE_CHANCE_X2', 'DOUBLE_CHANCE_12', 'OVER_7_5_CORNERS', 'OVER_8_5_CORNERS', 'OVER_9_5_CORNERS', 'UNDER_8_5_CORNERS', 'UNDER_11_5_CORNERS', 'OVER_2_5_CARDS', 'OVER_3_5_CARDS', 'OVER_4_5_CARDS'];
   return {
     source: 'Fair Model Baseline',
     home: Number((homeFair / margin).toFixed(2)),
@@ -52,6 +60,7 @@ export async function getOddsForFixture(fixtureId: string, homeTeam: string, awa
     away: Number((awayFair / margin).toFixed(2)),
     over25: null,
     under25: null,
+    publishedMarkets: markets,
   };
 }
 
