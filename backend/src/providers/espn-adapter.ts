@@ -604,6 +604,25 @@ export class EspnAdapter implements IFootballDataProvider {
     fixture.homeLineup = stats?.lineups.home || null;
     fixture.awayLineup = stats?.lineups.away || null;
 
+    // Extract goal scorers with assists from key events
+    const goalScorers: Array<{ player: string; minute: string; team: string; assist: string | null }> = [];
+    if (stats?.events) {
+      for (const ev of stats.events) {
+        if (ev.type === 'goal') {
+          const isOwn = (ev.text || '').toLowerCase().includes('own goal');
+          goalScorers.push({
+            player: ev.player || 'Unknown',
+            minute: ev.minute || '?',
+            team: ev.team || 'Unknown',
+            assist: isOwn ? null : (ev.assist || null),
+          });
+        }
+      }
+    }
+
+    // Top shots on target leaders (from boxscore if available)
+    const topShotsOnTarget = { home: null as { player: string; count: number } | null, away: null as { player: string; count: number } | null };
+
     // Build form from ESPN last-five (or neutral defaults when unavailable)
     const st = fixture.statistics;
     const homeForm = this.buildForm(stats?.form.home || [], st || null, 'home');
@@ -670,6 +689,8 @@ export class EspnAdapter implements IFootballDataProvider {
       marketPredictions,
       injuries: null,
       lineups: { home: stats?.lineups.home || null, away: stats?.lineups.away || null },
+      goalScorers: goalScorers.length > 0 ? goalScorers : undefined,
+      topShotsOnTarget,
       dataQualityNotes: [
         'Live data feed: ESPN public scoreboard/summary (no API key).',
         fixture.statistics

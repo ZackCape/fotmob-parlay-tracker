@@ -222,6 +222,8 @@ export interface MatchAnalysis {
     home: Lineup | null;
     away: Lineup | null;
   };
+  goalScorers?: Array<{ player: string; minute: string; team: string; assist: string | null }>;
+  topShotsOnTarget?: { home: { player: string; count: number } | null; away: { player: string; count: number } | null };
   dataQualityNotes: string[];
 }
 

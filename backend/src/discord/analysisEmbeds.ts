@@ -124,7 +124,27 @@ export function buildStatsTab(analysis: MatchAnalysis): EmbedBuilder {
     },
   );
 
-  e.setFooter({ text: `${BRAND.footer} • ${home} — ${away}` });
+  // Goal scorers and assists
+  if (analysis.goalScorers && analysis.goalScorers.length > 0) {
+    const homeGoals = analysis.goalScorers.filter((g: any) => g.team === home).map((g: any) => g.player + ' ' + g.minute + (g.assist ? ' (Assist: ' + g.assist + ')' : '')).join(', ');
+    const awayGoals = analysis.goalScorers.filter((g: any) => g.team === away).map((g: any) => g.player + ' ' + g.minute + (g.assist ? ' (Assist: ' + g.assist + ')' : '')).join(', ');
+    e.addFields(
+      { name: 'Goal Scorers - ' + home, value: homeGoals || 'No goals', inline: true },
+      { name: 'Goal Scorers - ' + away, value: awayGoals || 'No goals', inline: true },
+    );
+  }
+
+  // Top shots on target leaders
+  if (analysis.topShotsOnTarget) {
+    const homeTop = analysis.topShotsOnTarget.home;
+    const awayTop = analysis.topShotsOnTarget.away;
+    e.addFields(
+      { name: 'Top Shots on Target - ' + home, value: homeTop ? homeTop.player + ' (' + homeTop.count + ' on target)' : 'Stats populate live during / post-match', inline: true },
+      { name: 'Top Shots on Target - ' + away, value: awayTop ? awayTop.player + ' (' + awayTop.count + ' on target)' : 'Stats populate live during / post-match', inline: true },
+    );
+  }
+
+  e.setFooter({ text: `${BRAND.footer} - ${home} vs ${away}` });
   return e;
 }
 
