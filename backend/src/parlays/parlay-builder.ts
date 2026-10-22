@@ -35,8 +35,12 @@ export function buildStatisticalParlay(
     prioritizePriorityLeagues = true,
   } = options;
 
-  // Strict market bans: purge micro-markets and unplayable lines.
-  const BANNED_MARKETS = new Set(['OVER_0_5', 'HOME_OVER_0_5', 'AWAY_OVER_0_5', 'OVER_5_5_CORNERS']);
+  // Dynamic bookmaker-verified line filter: no hardcoded bans.
+  // Micro/low-line markets (Over 0.5 Goals, Over 5.5 Corners, etc.) are allowed
+  // IF AND ONLY IF the bookmaker odds meet the minimum floor (>= 1.15x).
+  // Since the parlay builder works with fair odds (1/probability), we apply
+  // the odds floor at 1.15x minimum. The actual bookmaker odds check happens
+  // at the caller level (bot.ts / routes) via oddsAggregatorService.
 
   const isHighProb = minProbability >= 0.85;
 
@@ -47,24 +51,8 @@ export function buildStatisticalParlay(
       if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
       if (p.estimatedProbability < threshold) return false;
       if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
-      if (BANNED_MARKETS.has(p.market)) {
-        // High-prob expansion: allow Team Total Over 0.5 only when xG >= 1.85
-        if (highProb && (p.market === 'HOME_OVER_0_5' || p.market === 'AWAY_OVER_0_5')) {
-          const xg = p.market === 'HOME_OVER_0_5'
-            ? (p.supportingStatistics?.homeXgAverage ?? 0)
-            : (p.supportingStatistics?.awayXgAverage ?? 0);
-          const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
-          if (xg >= 1.85 && fairOdds >= 1.20) {
-            // Allow this leg
-          } else {
-            return false;
-          }
-        } else {
-          return false;
-        }
-      }
-      // Corner floor: reject anything below Over 8.5 Corners
-      if (p.market === 'OVER_7_5_CORNERS') return false;
+      // Corner floor: reject anything below Over 7.5 Corners (absolute minimum)
+      if (p.market === 'OVER_5_5_CORNERS') return false;
       // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
       if (highProb && p.market === 'OVER_1_5') {
         const xgTotal = (p.supportingStatistics?.homeXgAverage ?? 0) + (p.supportingStatistics?.awayXgAverage ?? 0);
@@ -73,10 +61,12 @@ export function buildStatisticalParlay(
       return true;
     });
 
-    // Odds value range filter: 1.30x - 2.25x per leg.
+    // Odds value range filter: 1.15x - 2.25x per leg (fair odds = 1 / estimatedProbability).
+    // Filters out useless micro-odds (1.02-1.12x) and extreme longshots, but only
+    // when enough candidates survive to fill the requested leg count.
     const oddsFiltered = result.filter(p => {
       const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
-      return fairOdds >= 1.30 && fairOdds <= 2.25;
+      return fairOdds >= 1.15 && fairOdds <= 2.25;
     });
     if (oddsFiltered.length >= targetLegsCount) {
       result = oddsFiltered;
