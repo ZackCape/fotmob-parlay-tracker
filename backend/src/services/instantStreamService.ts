@@ -39,6 +39,37 @@ export function markEventProcessed(eventId: string): void {
   }
 }
 
+/**
+ * Atomically claim one or more event ids.
+ *
+ * Check-and-set happens in a single synchronous pass (no awaits, no I/O), so
+ * two concurrent 500ms micro-ticks cannot both win the same goal. Either every
+ * id is claimed or none are - never a partial claim.
+ *
+ * @returns true when the caller owns the event and must dispatch the alert.
+ */
+export function claimEventIds(eventIds: string[]): boolean {
+  if (!eventIds.length) return false;
+  const now = Date.now();
+
+  // Pass 1: any live lock wins the race for the other caller.
+  for (const id of eventIds) {
+    const ts = eventLock.get(id);
+    if (ts && now - ts < DEDUP_TTL_MS) return false;
+  }
+
+  // Pass 2: claim every id. Still synchronous - no interleaving possible.
+  for (const id of eventIds) {
+    eventLock.set(id, now);
+  }
+
+  // Bounded cleanup so the lock map cannot grow forever.
+  for (const [key, ts] of eventLock.entries()) {
+    if (now - ts > DEDUP_TTL_MS) eventLock.delete(key);
+  }
+  return true;
+}
+
 export function generateEventId(fixtureId: string, teamId: string, minute: string, type: string): string {
   return `${fixtureId}_${teamId}_${minute}_${type}`.toUpperCase().replace(/[^A-Z0-9_]/g, '');
 }
@@ -99,6 +130,7 @@ export default {
   pooledAxios,
   isEventProcessed,
   markEventProcessed,
+  claimEventIds,
   generateEventId,
   startMicroLoop,
   stopMicroLoop,

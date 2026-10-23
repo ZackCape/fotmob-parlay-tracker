@@ -26,6 +26,10 @@ export interface DiscordConfig {
 }
 
 import { getDashboardUrl } from '../utils/dashboardUrl.js';
+import {
+  claimEventIds as claimStreamEventIds,
+  generateEventId as generateStreamEventId,
+} from '../services/instantStreamService.js';
 const DASHBOARD_URL = getDashboardUrl();
 
 export class DiscordBotService {
@@ -63,6 +67,18 @@ export class DiscordBotService {
    * off before UTC midnight, or a sweep that came back short).
    */
   private liveEventPinnedFixtureIds: Set<string> = new Set();
+  /**
+   * Re-entrancy guard for the 500ms micro-loop. A tick that performs network
+   * I/O can outlive its interval; without this, overlapping ticks sweep the
+   * same match and race each other into duplicate alerts.
+   */
+  private liveTickInFlight: boolean = false;
+  /**
+   * Dispatch-level dedup locks (key -> timestamp). Claimed synchronously
+   * BEFORE any network I/O so the webhook transport and the bot-channel
+   * transport can never both fire for the same event id.
+   */
+  private liveAlertDispatchLocks: Map<string, number> = new Map();
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
     this.config = config;
@@ -1890,6 +1906,123 @@ export class DiscordBotService {
    * ------------------------------------------------------------------ */
 
   /**
+   * Claim a live event id ATOMICALLY, before any await / embed build / HTTP.
+   *
+   * Two guards are consulted in one synchronous pass:
+   *   1. the process-wide `__dedupSet` (cross-instance),
+   *   2. the instantStream event lock (`claimEventIds`).
+   *
+   * Goal events also carry a score-bound alias
+   * (`fixture_GOAL_team_2-1`), so the same goal reported at minute 62 by one
+   * feed and minute 63 by another is still claimed exactly once.
+   *
+   * @returns the canonical event id when this caller owns the event, else null.
+   */
+  private claimLiveEvent(
+    fixtureId: string,
+    ev: any,
+    homeScore: number | null | undefined,
+    awayScore: number | null | undefined,
+  ): string | null {
+    const team = String(ev.team ?? 'unknown');
+    const minute = String(ev.minute ?? '0');
+    const type = String(ev.type ?? 'event');
+    const isGoal = type === 'goal' || type === 'own-goal';
+
+    // Canonical id required by the live pipeline.
+    const eventId = isGoal
+      ? `${fixtureId}_GOAL_${team}_${minute}`.toUpperCase().replace(/[^A-Z0-9_]/g, '')
+      : generateStreamEventId(fixtureId, team, minute, type);
+
+    // Score-bound alias: minute drift between feeds cannot duplicate a goal.
+    const alias = isGoal && homeScore !== null && homeScore !== undefined
+      && awayScore !== null && awayScore !== undefined
+      ? generateStreamEventId(fixtureId, team, `${homeScore}-${awayScore}`, 'goal')
+      : null;
+
+    const ids = alias && alias !== eventId ? [eventId, alias] : [eventId];
+
+    const dedupSet: Set<string> = (global as any).__dedupSet || new Set<string>();
+    (global as any).__dedupSet = dedupSet;
+
+    // ---- IMMEDIATE SYNCHRONOUS CHECK-AND-SET (no await above) ----
+    if (ids.some((id) => dedupSet.has(id))) return null;
+    if (!claimStreamEventIds(ids)) return null;
+    for (const id of ids) {
+      dedupSet.add(id);
+      setTimeout(() => dedupSet.delete(id), 60_000);
+    }
+    return eventId;
+  }
+
+  /**
+   * Claim an event's transport slot. Synchronous check-and-set so the webhook
+   * and the bot-channel sender can never both dispatch the same event.
+   */
+  private claimLiveDispatch(eventId: string, scope: string): boolean {
+    const key = `${eventId}::${scope}`;
+    const now = Date.now();
+    const ts = this.liveAlertDispatchLocks.get(key);
+    if (ts && now - ts < 60_000) return false;
+    this.liveAlertDispatchLocks.set(key, now);
+
+    if (this.liveAlertDispatchLocks.size > 500) {
+      for (const [k, v] of this.liveAlertDispatchLocks.entries()) {
+        if (now - v > 60_000) this.liveAlertDispatchLocks.delete(k);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Single deduplicated dispatch pipeline for one live event.
+   *
+   * Transport selection is exclusive: when a webhook is configured it is the
+   * sole sender for the event; otherwise bot-channel messages are used. This
+   * removes the old "webhook + channel.send in parallel" double ping.
+   */
+  private async dispatchLiveAlert(
+    eventId: string,
+    subs: any[],
+    embed: any,
+    mentions: string,
+  ): Promise<void> {
+    if (!this.claimLiveDispatch(eventId, 'transport')) return;
+
+    const webhook = this.config.webhookUrl;
+    if (webhook) {
+      try {
+        await axios.post(webhook, {
+          username: 'Cape Predictor',
+          content: mentions,
+          embeds: [embed],
+        });
+        return; // webhook is the sole transport for this event
+      } catch (e: any) {
+        console.warn(`[LiveEvents] webhook dispatch failed, falling back to channel: ${e?.message ?? e}`);
+      }
+    }
+
+    const sentChannels = new Set<string>();
+    for (const sub of subs) {
+      if (sentChannels.has(sub.channelId)) continue;
+      sentChannels.add(sub.channelId);
+      try {
+        const ch = await this.client!.channels.fetch(sub.channelId);
+        if (ch?.isTextBased()) {
+          const channelMentions = subs
+            .filter((s) => s.channelId === sub.channelId)
+            .map((s) => `<@${s.userId}>`)
+            .join(' ');
+          await (ch as any).send({ content: channelMentions || undefined, embeds: [embed] });
+        }
+      } catch (e: any) {
+        console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e?.message ?? e}`);
+      }
+    }
+  }
+
+  /**
    * One pass of the 60-second live-event worker.
    *
    * Also fired once from `start()` when subscriptions were restored from disk,
@@ -1898,6 +2031,10 @@ export class DiscordBotService {
    */
   private async runLiveEventTick(): Promise<void> {
     if (!this.client?.isReady()) return;
+    // No overlapping ticks: the 500ms cadence can fire while the previous
+    // pass is still awaiting provider I/O, which is a duplicate-alert source.
+    if (this.liveTickInFlight) return;
+    this.liveTickInFlight = true;
     try {
       const today = new Date().toISOString().slice(0, 10);
       const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
@@ -1981,15 +2118,10 @@ export class DiscordBotService {
           }
           if (CP.isSeenEvent(ev.id)) continue;
 
-          // Atomic deduplication lock (60s TTL) to prevent double-posting
-          // during high-frequency sub-second checks.
-          const eventHash = `${fx.id}_${ev.team ?? 'unknown'}_${ev.minute ?? '0'}_${ev.type}`.toUpperCase().replace(/[^A-Z0-9_]/g, '');
-          // Check if already processed
-          const dedupSet = (global as any).__dedupSet || new Set<string>();
-          if (! (global as any).__dedupSet) (global as any).__dedupSet = dedupSet;
-          if (dedupSet.has(eventHash)) continue;
-          dedupSet.add(eventHash);
-          setTimeout(() => dedupSet.delete(eventHash), 60_000);
+          // IMMEDIATE SYNCHRONOUS check-and-set, before any await, embed build
+          // or HTTP request. Concurrent micro-ticks abort right here.
+          const claimedEventId = this.claimLiveEvent(fx.id, ev, fx.homeScore, fx.awayScore);
+          if (!claimedEventId) continue;
 
           CP.markEventSeen(ev.id);
 
@@ -2028,30 +2160,18 @@ export class DiscordBotService {
           }
           if (!embed) continue;
 
+          // Single deduplicated transport pipeline: exactly one of webhook /
+          // bot-channel message fires per event id (never both).
+          await this.dispatchLiveAlert(claimedEventId, subs, embed, mentions);
+
+          // Honoured DM alerts stay private and are locked per user.
           for (const sub of subs) {
+            if (!this.dmAlerts.has(sub.userId)) continue;
+            if (!this.claimLiveDispatch(claimedEventId, `dm:${sub.userId}`)) continue;
             try {
-              const ch = await this.client.channels.fetch(sub.channelId);
-              const sendTasks: Promise<any>[] = [];
-              // Direct webhook dispatch for instant delivery (parallel).
-              if (this.config.webhookUrl) {
-                sendTasks.push(
-                  axios.post(this.config.webhookUrl, { username: 'Cape Predictor', embeds: [embed] }).catch(() => {})
-                );
-              }
-              if (ch?.isTextBased()) {
-                sendTasks.push((ch as any).send({ content: mentions, embeds: [embed] }));
-              }
-              await Promise.all(sendTasks);
-            } catch (e: any) {
-              console.warn(`[LiveEvents] alert send failed for ${sub.channelId}: ${e.message}`);
-            }
-            // Honoured DM alerts: users who opted in receive the alert privately.
-            if (this.dmAlerts.has(sub.userId)) {
-              try {
-                const user = await this.client.users.fetch(sub.userId);
-                await user.send({ embeds: [embed] });
-              } catch { /* DMs closed or user unavailable */ }
-            }
+              const user = await this.client.users.fetch(sub.userId);
+              await user.send({ embeds: [embed] });
+            } catch { /* DMs closed or user unavailable */ }
           }
         }
 
@@ -2087,6 +2207,8 @@ export class DiscordBotService {
       await this.syncLiveChannelTopics(liveFixtures);
     } catch (e: any) {
       console.warn('[LiveEvents] alert worker tick failed:', e.message);
+    } finally {
+      this.liveTickInFlight = false;
     }
   }
 

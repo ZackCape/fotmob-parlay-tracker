@@ -200,6 +200,14 @@ export function markEventSeen(eventId: string): void {
   seenEvents.add(eventId);
 }
 
+/**
+ * Forget a seen event id (memory only). Verification scripts use it so
+ * synthetic fixtures never leak into the persisted de-duplication store.
+ */
+export function unmarkEventSeen(eventId: string): void {
+  seenEvents.delete(eventId);
+}
+
 /* ------------------------------------------------------------------ *
  * Event detection
  *
