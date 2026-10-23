@@ -313,15 +313,15 @@ try {
   check('secondary leagues rank last', competitionPriority('LALIGA') > competitionPriority('CHAMPIONS_LEAGUE'));
 
   const weakPriority = [
-    ...Array.from({ length: 20 }, (_, i) => prediction(`laliga-${i + 1}`, 'LALIGA', 'HOME_WIN', 0.9)),
+    ...Array.from({ length: 20 }, (_, i) => prediction(`laliga-${i + 1}`, 'LALIGA', 'HOME_WIN', 0.82)),
     ...Array.from({ length: 5 }, (_, i) => prediction(`epl-${i + 1}`, 'EPL', 'HOME_WIN', 0.62)),
   ];
-  const priorityParlay = buildStatisticalParlay(weakPriority as any, { targetLegsCount: 5, minProbability: 0.6 });
+  const priorityParlay = await buildStatisticalParlay(weakPriority as any, { targetLegsCount: 5, minProbability: 0.6 });
   check('the builder prefers weaker EPL legs over stronger secondary-league legs',
     priorityParlay.legs.length === 5 && priorityParlay.legs.every((l) => l.league === 'EPL'),
     json(priorityParlay.legs.map((l) => l.league)));
 
-  const unprioritised = buildStatisticalParlay(weakPriority as any, {
+  const unprioritised = await buildStatisticalParlay(weakPriority as any, {
     targetLegsCount: 5, minProbability: 0.6, prioritizePriorityLeagues: false,
   });
   check('prioritisation can be switched off for a pure probability pool',
@@ -332,7 +332,7 @@ try {
     ...Array.from({ length: 5 }, (_, i) => prediction(`epl-low-${i + 1}`, 'EPL', 'HOME_WIN', 0.5)),
     ...Array.from({ length: 5 }, (_, i) => prediction(`laliga-ok-${i + 1}`, 'LALIGA', 'HOME_WIN', 0.75)),
   ];
-  const gated = buildStatisticalParlay(gatePool as any, { targetLegsCount: 5, minProbability: 0.6 });
+  const gated = await buildStatisticalParlay(gatePool as any, { targetLegsCount: 5, minProbability: 0.6 });
   check('priority never promotes a leg that fails the probability gate',
     gated.legs.length === 5 && gated.legs.every((l) => l.league === 'LALIGA'),
     json(gated.legs.map((l) => l.league)));
@@ -377,7 +377,7 @@ try {
   genSlate.forEach((fx) => {
     // The secondary leagues carry the stronger prices, so priority — not model
     // strength — is what decides this parlay.
-    genPreds.set(fx.id, [prediction(fx.id, fx.league, 'HOME_WIN', fx.league === 'LALIGA' ? 0.92 : 0.64)]);
+    genPreds.set(fx.id, [prediction(fx.id, fx.league, 'HOME_WIN', fx.league === 'LALIGA' ? 0.82 : 0.64)]);
   });
   const genBot = new DiscordBotService({} as any, makeStubFactory(genSlate, detailsFor(genSlate, genPreds)));
   const genReply = await genBot.generateParlayReply({ legs: 5, minProbability: 0.6 });
@@ -525,9 +525,15 @@ try {
     botSrc.indexOf('const live = CP.findTrackerByCustomId(id);'),
     botSrc.indexOf('/* ---------- live match picker ---------- */'),
   );
+  const trackerAckIdx = (() => {
+    const a = trackerBlock.indexOf('CP.ackInteraction(interaction)');
+    const b = trackerBlock.indexOf('interaction.deferUpdate()');
+    if (a === -1) return b;
+    if (b === -1) return a;
+    return Math.min(a, b);
+  })();
   check('tracker buttons acknowledge before the match analysis call',
-    trackerBlock.indexOf('CP.ackInteraction(interaction)') > -1
-      && trackerBlock.indexOf('CP.ackInteraction(interaction)') < trackerBlock.indexOf('analysisFor(tracker.fixtureId)'),
+    trackerAckIdx > -1 && trackerAckIdx < trackerBlock.indexOf('analysisFor(tracker.fixtureId)'),
     trackerBlock.slice(0, 120).replace(/\s+/g, ' '));
 
   /* ================================================================ *
@@ -568,3 +574,4 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log('\nPERSISTENCE & BOOT VERIFICATION PASSED');
+

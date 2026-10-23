@@ -519,60 +519,27 @@ export class DiscordBotService {
           });
           return;
         } else if (interaction.commandName === 'generateparlay') {
-          await interaction.deferReply();
+          // Global interaction guard: never leave the user on "thinking...".
+          // If market scanning stalls past 4s, edit the deferred reply.
+          const timeoutId = setTimeout(async () => {
+            try {
+              if (interaction.deferred && !interaction.replied) {
+                await interaction.editReply({ content: '⚠️ Request timed out while scanning live markets. Please try again.' });
+              }
+            } catch (e) { console.error('Timeout editReply failed:', e); }
+          }, 4000);
+
           try {
-            const legs = interaction.options.getInteger('legs') || 5;
-            const minPct = interaction.options.getInteger('min_probability');
-            const league = interaction.options.getString('league') || 'ALL';
-            const commandMode = interaction.options.getString('mode') || 'anti_correlated';
-            const mode: ParlayMode = commandMode === 'same_game'
-              ? 'SAME_GAME_PARLAY'
-              : commandMode === 'correlated'
-              ? 'CORRELATED_ALLOWED'
-              : 'ANTI_CORRELATED';
-
-            // Generate the parlay with a 5-second timeout guard on market checks.
-            const replyText = await Promise.race([
-              this.generateParlayReply({
-                legs,
-                mode,
-                league,
-                minProbability: minPct ? minPct / 100 : undefined,
-                userId: interaction.user.id,
-                channelId: interaction.channelId,
-              }),
-              new Promise<string>((_, reject) =>
-                setTimeout(() => reject(new Error('Parlay generation timed out')), 5000)
-              ),
-            ]);
-
-            // Build an embed + interactive action row so the user can one-click
-            // save/track or copy the slip.
-            const embed = new EmbedBuilder()
-              .setColor(BRAND.accent)
-              .setAuthor({ name: BRAND.author })
-              .setTitle('Generated Parlay')
-              .setDescription(replyText.slice(0, 4000))
-              .setTimestamp(new Date());
-
-            const parlayId = `gen-${Date.now()}`;
-            const actionRow = new ActionRowBuilder<any>().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`track_parlay_${parlayId}`)
-                .setLabel('Save & Track Parlay')
-                .setStyle(ButtonStyle.Primary),
-              new ButtonBuilder()
-                .setCustomId(`copy_parlay_${parlayId}`)
-                .setLabel('Copy Parlay Slip')
-                .setStyle(ButtonStyle.Secondary),
-            );
-
-            await interaction.editReply({ embeds: [embed], components: [actionRow] });
-          } catch (error: any) {
-            console.error(`Error executing generateparlay:`, error);
-            if (interaction.deferred) {
-              await interaction.editReply({ content: '⚠️ Unable to generate parlay ticket right now. Please try again in a moment or adjust your filters.' });
+            await this.handleGenerateParlay(interaction);
+          } catch (err) {
+            console.error('Unhandled parlay error:', err);
+            if (interaction.deferred && !interaction.replied) {
+              try {
+                await interaction.editReply({ content: '⚠️ An error occurred generating your parlay slip.' });
+              } catch (editErr) { console.error('Error editReply failed:', editErr); }
             }
+          } finally {
+            clearTimeout(timeoutId);
           }
         } else if (interaction.commandName === 'track') {
           await interaction.deferReply();
@@ -2397,6 +2364,70 @@ export class DiscordBotService {
    * ranked Premier League and UEFA Champions League first, so the priority
    * fixtures lead both the value picks and the featured parlay.
    */
+
+  /**
+   * Handle /generateparlay: defer immediately, then run the (event-loop
+   * friendly) parlay builder under an outer 4s interaction guard.
+   */
+  private async handleGenerateParlay(interaction: any): Promise<void> {
+    // deferReply MUST be the first await inside the handler.
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply();
+    }
+
+    const legs = interaction.options.getInteger('legs') || 5;
+    const minPct = interaction.options.getInteger('min_probability');
+    const league = interaction.options.getString('league') || 'ALL';
+    const commandMode = interaction.options.getString('mode') || 'anti_correlated';
+    const mode: ParlayMode = commandMode === 'same_game'
+      ? 'SAME_GAME_PARLAY'
+      : commandMode === 'correlated'
+      ? 'CORRELATED_ALLOWED'
+      : 'ANTI_CORRELATED';
+
+    // Hard ceiling on market scanning: a stalled odds provider must never
+    // leave the interaction on "thinking...". Rejects at 3.5s so the outer
+    // 4s interaction guard stays a pure last resort.
+    const replyText = await Promise.race([
+      this.generateParlayReply({
+        legs,
+        mode,
+        league,
+        minProbability: minPct ? minPct / 100 : undefined,
+        userId: interaction.user.id,
+        channelId: interaction.channelId,
+      }),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('Parlay generation timed out after 3500ms')), 3500)
+      ),
+    ]);
+
+    if (!replyText || !replyText.trim()) {
+      throw new Error('Parlay builder returned an empty ticket');
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(BRAND.accent)
+      .setAuthor({ name: BRAND.author })
+      .setTitle('Generated Parlay')
+      .setDescription(replyText.slice(0, 4000))
+      .setTimestamp(new Date());
+
+    const parlayId = `gen-${Date.now()}`;
+    const actionRow = new ActionRowBuilder<any>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`track_parlay_${parlayId}`)
+        .setLabel('Save & Track Parlay')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`copy_parlay_${parlayId}`)
+        .setLabel('Copy Parlay Slip')
+        .setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [actionRow] });
+  }
+
   public async buildMorningBriefing(): Promise<EmbedBuilder> {
     const today = new Date().toISOString().slice(0, 10);
 
@@ -2475,7 +2506,7 @@ export class DiscordBotService {
     const pickedFixtureIds = new Set(valuePicks.map((p) => p.fixtureId));
     const slipCandidates = candidatePredictions.filter((p) => !pickedFixtureIds.has(p.fixtureId));
     const slipPool = slipCandidates.length >= 5 ? slipCandidates : candidatePredictions;
-    const parlay5 = buildStatisticalParlay(slipPool, { targetLegsCount: 5, minProbability: 0.60 });
+    const parlay5 = await buildStatisticalParlay(slipPool, { targetLegsCount: 5, minProbability: 0.60 });
     const legLines = parlay5.legs
       .map((l, i) => `**Leg ${i + 1}**: ${l.fixtureDescription} ➔ \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`)
       .join('\n');
@@ -2902,7 +2933,7 @@ export class DiscordBotService {
       return '📅 **No Scheduled Fixtures**\n\nNo active fixtures were found for this date. Check back closer to matchday kickoffs or select another date.';
     }
 
-    const parlay = buildStatisticalParlay(preds, {
+    const parlay = await buildStatisticalParlay(preds, {
       targetLegsCount: target,
       minProbability,
       leagueFilter,

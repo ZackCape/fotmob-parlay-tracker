@@ -63,7 +63,7 @@ export function createParlaysRouter(
       }
 
       // Build statistical parlay with requested correlation mode (Anti-Correlated, SGP, or Correlated Allowed)
-      const parlay = buildStatisticalParlay(candidatePredictions, {
+      const parlay = await buildStatisticalParlay(candidatePredictions, {
         targetLegsCount: legsCount as ParlayLegCount,
         minProbability: parseFloat(minProbability),
         allowedMarkets,

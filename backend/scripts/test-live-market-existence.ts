@@ -66,7 +66,7 @@ section('1) Bookmaker-verified line filter');
     prediction('monaco-1', 'LIGUE1', 'BTTS_YES', 0.70),   // Published - should pass
   ];
 
-  const parlay = buildStatisticalParlay(candidates, {
+  const parlay = await buildStatisticalParlay(candidates, {
     targetLegsCount: 5,
     minProbability: 0.5,
     publishedMarkets,
@@ -88,7 +88,7 @@ section('2) Sub-1.15x micro-odds rejected');
     prediction('good-3', 'EPL', 'OVER_2_5', 0.55),    // 1.82x - should pass
   ];
 
-  const parlay = buildStatisticalParlay(candidates, {
+  const parlay = await buildStatisticalParlay(candidates, {
     targetLegsCount: 5,
     minProbability: 0.5,
     publishedMarkets,
@@ -110,7 +110,7 @@ section('3) Unlisted lines default to available bookmaker lines');
     prediction('fallback-1', 'EPL', 'BTTS_YES', 0.65),  // Published
   ];
 
-  const parlay = buildStatisticalParlay(candidates, {
+  const parlay = await buildStatisticalParlay(candidates, {
     targetLegsCount: 5,
     minProbability: 0.5,
     publishedMarkets,
@@ -127,7 +127,7 @@ section('4) No publishedMarkets = all markets allowed (backwards compat)');
     prediction('compat-1', 'EPL', 'OVER_1_5', 0.70),
   ];
 
-  const parlay = buildStatisticalParlay(candidates, {
+  const parlay = await buildStatisticalParlay(candidates, {
     targetLegsCount: 5,
     minProbability: 0.5,
   });
@@ -140,3 +140,4 @@ console.log(`checks run : ${checks}`);
 console.log(`failures   : ${failures}`);
 if (failures > 0) { console.error(`\nBOOKMAKER-VERIFIED LINES VERIFICATION FAILED (${failures} check(s))`); process.exit(1); }
 console.log('\nBOOKMAKER-VERIFIED LINES VERIFICATION PASSED');
+

@@ -190,7 +190,7 @@ section('2) /generateparlay leg options + command consolidation');
 {
   const candidates = makePredictions(30, 'EPL', 0.75);
   for (const target of [5, 10, 15, 20, 25] as const) {
-    const parlay = buildStatisticalParlay(candidates, {
+    const parlay = await buildStatisticalParlay(candidates, {
       targetLegsCount: target, minProbability: 0.6, leagueFilter: 'ALL', mode: 'ANTI_CORRELATED',
     });
     check(`generator produces a ${target}-leg anti-correlated parlay`,
@@ -199,14 +199,14 @@ section('2) /generateparlay leg options + command consolidation');
   }
 
   const mixed = [...makePredictions(10, 'EPL', 0.75), ...makePredictions(10, 'LALIGA', 0.75)];
-  const eplOnly = buildStatisticalParlay(mixed, {
+  const eplOnly = await buildStatisticalParlay(mixed, {
     targetLegsCount: 5, minProbability: 0.6, leagueFilter: 'EPL', mode: 'ANTI_CORRELATED',
   });
   check('league filter restricts every leg to the chosen competition',
     eplOnly.legs.length === 5 && eplOnly.legs.every((l) => l.league === 'EPL'));
 
   const thresholds = makePredictions(12, 'EPL', 0.55).concat(makePredictions(12, 'EPL', 0.72));
-  const highOnly = buildStatisticalParlay(thresholds, {
+  const highOnly = await buildStatisticalParlay(thresholds, {
     targetLegsCount: 5, minProbability: 0.7, leagueFilter: 'ALL', mode: 'ANTI_CORRELATED',
   });
   check('min-probability threshold filters out weaker legs',
@@ -326,3 +326,4 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log('All parlay state-retention and live-tracking checks passed.');
+

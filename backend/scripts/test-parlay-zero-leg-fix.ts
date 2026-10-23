@@ -62,7 +62,7 @@ section('1) Auto-relaxing threshold fallback');
     prediction(`match-${i + 1}`, 'EPL', 'HOME_WIN', 0.75)
   );
 
-  const parlay = buildStatisticalParlay(candidates, { targetLegsCount: 25, minProbability: 0.90 });
+  const parlay = await buildStatisticalParlay(candidates, { targetLegsCount: 25, minProbability: 0.90 });
   check('parlay has >= 5 legs', parlay.legs.length >= 5, String(parlay.legs.length));
   check('not 0-leg parlay', parlay.legs.length > 0, String(parlay.legs.length));
   check('combined probability > 0', parlay.combinedProbability > 0, String(parlay.combinedProbability));
@@ -77,7 +77,7 @@ section('2) Threshold adjustment notice');
     prediction(`match-${i + 1}`, 'EPL', 'HOME_WIN', 0.75)
   );
 
-  const parlay = buildStatisticalParlay(candidates, { targetLegsCount: 10, minProbability: 0.90 });
+  const parlay = await buildStatisticalParlay(candidates, { targetLegsCount: 10, minProbability: 0.90 });
   // Since threshold was relaxed, check for the notice
   const hasNotice = parlay.message.includes('Threshold Adjusted') || parlay.message.includes('Adjusted minimum');
   check('threshold adjustment notice present', hasNotice || parlay.legs.length >= 5, parlay.message);
@@ -85,7 +85,7 @@ section('2) Threshold adjustment notice');
 
 section('3) Zero fixtures edge case');
 {
-  const emptyParlay = buildStatisticalParlay([], { targetLegsCount: 5, minProbability: 0.60 });
+  const emptyParlay = await buildStatisticalParlay([], { targetLegsCount: 5, minProbability: 0.60 });
   check('empty pool returns 0 legs', emptyParlay.legs.length === 0);
   check('status is INSUFFICIENT_SELECTIONS', emptyParlay.status === 'INSUFFICIENT_SELECTIONS');
 }
@@ -96,7 +96,7 @@ section('4) Normal high-prob request (no relaxation needed)');
     prediction(`match-${i + 1}`, 'EPL', 'HOME_WIN', 0.92)
   );
 
-  const parlay = buildStatisticalParlay(candidates, { targetLegsCount: 5, minProbability: 0.90 });
+  const parlay = await buildStatisticalParlay(candidates, { targetLegsCount: 5, minProbability: 0.90 });
   check('5 legs returned', parlay.legs.length === 5, String(parlay.legs.length));
   check('no threshold adjustment needed', !parlay.message.includes('Threshold Adjusted'), parlay.message);
   check('combined probability > 0', parlay.combinedProbability > 0);
@@ -107,3 +107,4 @@ console.log(`checks run : ${checks}`);
 console.log(`failures   : ${failures}`);
 if (failures > 0) { console.error(`\nPARLAY ZERO-LEG FIX VERIFICATION FAILED (${failures} check(s))`); process.exit(1); }
 console.log('\nPARLAY ZERO-LEG FIX VERIFICATION PASSED');
+

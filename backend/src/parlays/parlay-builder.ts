@@ -27,10 +27,10 @@ export interface ParlayBuilderOptions {
   publishedMarkets?: string[];
 }
 
-export function buildStatisticalParlay(
+export async function buildStatisticalParlay(
   candidatePredictions: MarketPrediction[],
   options: ParlayBuilderOptions
-): StatisticalParlay {
+): Promise<StatisticalParlay> {
   const {
     targetLegsCount,
     minProbability = 0.58,
@@ -52,43 +52,57 @@ export function buildStatisticalParlay(
   const isHighProb = minProbability >= 0.85;
 
   // Helper: filter candidates at a given threshold.
-  function filterAtThreshold(threshold: number): MarketPrediction[] {
+  // Chunked + async so large fixture scans yield to the event loop every
+  // 15 candidates (prevents starvation of timers / Discord heartbeats).
+  async function filterAtThreshold(threshold: number): Promise<MarketPrediction[]> {
     const highProb = threshold >= 0.85;
-    let result = candidatePredictions.filter(p => {
-      if (leagueFilter !== 'ALL' && p.league !== leagueFilter) return false;
-      if (p.estimatedProbability < threshold) return false;
-      if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) return false;
+    const result: MarketPrediction[] = [];
+
+    for (let i = 0; i < candidatePredictions.length; i++) {
+      const p = candidatePredictions[i];
+      if (i > 0 && i % 15 === 0) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      if (leagueFilter !== 'ALL' && p.league !== leagueFilter) continue;
+      if (p.estimatedProbability < threshold) continue;
+      if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) continue;
       // Market Existence Check: reject markets not published by the bookmaker.
-      if (publishedMarkets && publishedMarkets.length > 0 && !publishedMarkets.includes(p.market)) return false;
+      if (publishedMarkets && publishedMarkets.length > 0 && !publishedMarkets.includes(p.market)) continue;
       // Corner floor: reject anything below Over 7.5 Corners (absolute minimum)
-      if (p.market === 'OVER_5_5_CORNERS') return false;
+      if (p.market === 'OVER_5_5_CORNERS') continue;
       // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
       if (highProb && p.market === 'OVER_1_5') {
         const xgTotal = (p.supportingStatistics?.homeXgAverage ?? 0) + (p.supportingStatistics?.awayXgAverage ?? 0);
-        if (xgTotal < 2.80) return false;
+        if (xgTotal < 2.80) continue;
       }
-      return true;
-    });
+      result.push(p);
+    }
 
     // Odds value range filter: 1.15x - 2.25x per leg (fair odds = 1 / estimatedProbability).
     // Filters out useless micro-odds (1.02-1.12x) and extreme longshots.
-    const oddsFiltered = result.filter(p => {
+    const oddsFiltered: MarketPrediction[] = [];
+    for (let i = 0; i < result.length; i++) {
+      if (i > 0 && i % 15 === 0) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const p = result[i];
       const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
-      return fairOdds >= 1.15 && fairOdds <= 2.25;
-    });
-    // Apply filter when it removes at least one candidate (always filter micro-odds)
-    if (oddsFiltered.length > 0 && oddsFiltered.length < result.length) {
-      result = oddsFiltered;
-    } else if (oddsFiltered.length >= targetLegsCount) {
-      result = oddsFiltered;
+      if (fairOdds >= 1.15 && fairOdds <= 2.25) oddsFiltered.push(p);
     }
 
+    // Apply filter when it removes at least one candidate (always filter micro-odds)
+    if (oddsFiltered.length > 0 && oddsFiltered.length < result.length) {
+      return oddsFiltered;
+    }
+    if (oddsFiltered.length >= targetLegsCount) {
+      return oddsFiltered;
+    }
     return result;
   }
 
   // Auto-relaxing threshold: step down in 5% decrements until enough candidates.
   let effectiveMinProb = minProbability;
-  let filtered = filterAtThreshold(effectiveMinProb);
+  let filtered = await filterAtThreshold(effectiveMinProb);
   let thresholdRelaxed = false;
   const minThreshold = 0.70;
 
@@ -96,13 +110,16 @@ export function buildStatisticalParlay(
     const prevProb = effectiveMinProb;
     effectiveMinProb = Math.max(minThreshold, effectiveMinProb - 0.05);
     if (effectiveMinProb === prevProb) break;
-    const newFiltered = filterAtThreshold(effectiveMinProb);
+    const newFiltered = await filterAtThreshold(effectiveMinProb);
     if (newFiltered.length >= filtered.length) {
       filtered = newFiltered;
       thresholdRelaxed = true;
     }
     if (filtered.length >= 5) break;
   }
+
+  // Yield to event loop to prevent blocking during heavy computation.
+  await new Promise(resolve => setImmediate(resolve));
 
   // Competition priority (EPL / UCL first) over the eligible pool, with the
   // strength of each leg as the in-tier ranking. Everything below consumes this
@@ -114,6 +131,9 @@ export function buildStatisticalParlay(
     (p) => p.estimatedProbability,
     { prioritize: prioritizePriorityLeagues },
   );
+
+  // Yield after priority sorting.
+  await new Promise(resolve => setImmediate(resolve));
 
   let selectedPredictions: MarketPrediction[] = [];
 
@@ -168,8 +188,12 @@ export function buildStatisticalParlay(
       ? [...ordered].sort((a, b) =>
           compareCompetitionPriority(a.league, b.league) || (b.estimatedProbability - a.estimatedProbability))
       : [...filtered].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
-    for (const cand of sorted) {
+    for (let i = 0; i < sorted.length; i++) {
       if (selectedPredictions.length >= targetLegsCount) break;
+      if (i > 0 && i % 15 === 0) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const cand = sorted[i];
       const matchConflicts = selectedPredictions.some(
         sel => sel.fixtureId === cand.fixtureId && areMarketsConflicting(sel.market, cand.market)
       );
