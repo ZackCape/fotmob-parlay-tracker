@@ -240,7 +240,7 @@ export function buildFixturesEmbed(
       'No verified fixtures are available for this league today. ' +
       'Providers may be rate-limited or the league may be out of season.',
     );
-    e.setFooter({ text: `Cape Predictor Engine • Dixon-Coles & Multi-Market Analytics • ${page}/${totalPages}` });
+    e.setFooter({ text: BRAND.footer });
     return e;
   }
 
@@ -262,7 +262,7 @@ export function buildFixturesEmbed(
 
   const header = `**Football Intelligence • High Probability & Market Analytics** • ${fixturesPage.length} match${fixturesPage.length === 1 ? '' : 'es'} (page ${page}/${totalPages})`;
   e.setDescription([header, '', lines.join('\n\n')].join('\n'));
-  e.setFooter({ text: `Cape Predictor Engine • Dixon-Coles & Multi-Market Analytics • ${page}/${totalPages}` });
+  e.setFooter({ text: BRAND.footer });
   return e;
 }
 

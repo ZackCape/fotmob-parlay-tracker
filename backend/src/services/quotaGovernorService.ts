@@ -179,6 +179,8 @@ export function getStatus(): GovernorStatus {
   };
 }
 
+export const getGovernorStatus = getStatus;
+
 /**
  * Check whether an external (quota-consuming) API call is currently allowed.
  *

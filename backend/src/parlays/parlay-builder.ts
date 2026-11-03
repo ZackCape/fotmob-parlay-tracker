@@ -136,12 +136,14 @@ export async function buildStatisticalParlay(
       ? p.estimatedProbability
       : 0;
     if (disableLearningLoop) {
-      return p;
+      return {
+        ...p,
+        rawProbability: p.rawProbability ?? rawProb,
+        confidenceMultiplier: 1.0,
+        estimatedProbability: rawProb,
+      };
     }
     const multiplier = getMarketConfidenceMultiplier(p.market, p.league);
-    if (multiplier === 1.0) {
-      return p;
-    }
     const adjustedProb = Number(Math.min(0.99, Math.max(0.01, rawProb * multiplier)).toFixed(4));
     return {
       ...p,

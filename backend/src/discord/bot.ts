@@ -471,6 +471,22 @@ export class DiscordBotService {
           new SlashCommandBuilder()
             .setName('status')
             .setDescription('Bot diagnostics: latency, API status, tracked matches, and system health'),
+          new SlashCommandBuilder()
+            .setName('record')
+            .setDescription('Performance tracker: strike rate, net PnL, ROI, and closing line value (CLV)')
+            .addStringOption(opt =>
+              opt
+                .setName('filter')
+                .setDescription('Time window filter')
+                .setRequired(false)
+                .addChoices(
+                  { name: 'All-time', value: 'all' },
+                  { name: 'Last 7 Days', value: '7d' },
+                  { name: 'Last 30 Days', value: '30d' },
+                )),
+          new SlashCommandBuilder()
+            .setName('steam')
+            .setDescription('Real-time sharp money & steam line movements detection'),
         ];
 
         await this.client?.application?.commands.set(commands);
@@ -890,17 +906,43 @@ export class DiscordBotService {
           await interaction.deferReply();
           const latency = this.client?.ws?.ping ?? -1;
           const trackedCount = this.trackerService ? this.trackerService.getTrackedParlays().length : 0;
-          const e = new EmbedBuilder().setColor(BRAND.accent).setAuthor({ name: BRAND.author }).setTitle('Bot Diagnostics & Status').setTimestamp(new Date());
+          const { getGovernorStatus } = await import('../services/quotaGovernorService.js');
+          const { loadDatabase } = await import('../services/multiLeagueDbService.js');
+          const gov = getGovernorStatus();
+          const db = loadDatabase();
+          const heapMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+          const rssMb = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
+
+          const e = new EmbedBuilder()
+            .setColor(BRAND.accent)
+            .setAuthor({ name: BRAND.author })
+            .setTitle('Bot Diagnostics & Status')
+            .setTimestamp(new Date());
+
           e.addFields(
-            { name: 'Latency', value: `${latency}ms`, inline: true },
-            { name: 'API-Football', value: 'Connected', inline: true },
-            { name: 'PremierBet ZW', value: 'Connected', inline: true },
+            { name: 'Quota Governor', value: `\`${gov.mode}\` (${gov.remainingQuota}/${gov.totalBudget} req remaining)`, inline: true },
+            { name: 'Memory Usage', value: `${heapMb} MB heap (${rssMb} MB RSS)`, inline: true },
+            { name: 'Multi-League DB', value: `Active (${db.matches.length} verified fixtures)`, inline: true },
+            { name: 'Active Background Loops', value: '• Live Micro-Polling (500ms)\n• Live Refresh (30s)\n• Multi-League Sync (6h)\n• Morning Briefing Cron', inline: false },
             { name: 'Active Tracked Matches', value: String(trackedCount), inline: true },
-            { name: 'Guilds', value: String(this.client?.guilds.cache.size ?? 0), inline: true },
+            { name: 'WebSocket Ping', value: `${latency}ms`, inline: true },
             { name: 'Uptime', value: `${Math.floor(process.uptime() / 60)}m`, inline: true },
           );
           e.setFooter({ text: BRAND.footer });
           await interaction.editReply({ embeds: [e] });
+          return;
+        } else if (interaction.commandName === 'record') {
+          await interaction.deferReply();
+          const filter = (interaction.options.getString('filter') || 'all') as 'all' | '7d' | '30d';
+          const { buildRecordEmbed } = await import('../services/settlementService.js');
+          const embed = buildRecordEmbed(filter);
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        } else if (interaction.commandName === 'steam') {
+          await interaction.deferReply();
+          const { buildSteamEmbed } = await import('../services/steamDetectorService.js');
+          const embed = buildSteamEmbed();
+          await interaction.editReply({ embeds: [embed] });
           return;
         }
       } catch (err: any) {
@@ -2422,6 +2464,7 @@ export class DiscordBotService {
     for (const p of top) {
       const fair = 1 / p.model;
       let extra = `Fair ${fair.toFixed(2)}x`;
+      let kellyText = '';
       if (configured) {
         try {
           const odds = await this.factory.getOddsForFixture(p.fx as any);
@@ -2429,13 +2472,17 @@ export class DiscordBotService {
           const mkt = p.label.includes('Win') && p.label.includes(p.fx.homeTeam.name)
             ? prices.home
             : p.label === 'Draw' ? prices.draw : prices.away;
-          if (mkt) {
-            const edge = (p.model - 1 / mkt) * 100;
-            extra = `Market ${mkt.toFixed(2)}x → Edge ${edge > 0 ? '+' : ''}${edge.toFixed(1)}%`;
+          if (mkt && mkt > fair) {
+            const edge = ((mkt / fair) - 1) * 100;
+            const b = mkt - 1;
+            const rawKelly = (b * p.model - (1 - p.model)) / b;
+            const suggestedUnits = Math.min(2.5, Math.max(0.25, Number((rawKelly * 0.25 * 10).toFixed(1))));
+            extra = `Market ${mkt.toFixed(2)}x → Edge +${edge.toFixed(1)}% EV`;
+            kellyText = ` | Kelly: ${suggestedUnits}u`;
           }
         } catch { /* odds unavailable for this fixture */ }
       }
-      lines.push(`• **${p.label}** — ${p.fx.homeTeam.name} vs ${p.fx.awayTeam.name}\n     Model ${(p.model * 100).toFixed(0)}% → ${extra}`);
+      lines.push(`• **${p.label}** — ${p.fx.homeTeam.name} vs ${p.fx.awayTeam.name}\n     Model ${(p.model * 100).toFixed(0)}% → ${extra}${kellyText}`);
     }
     e.setDescription(`Model vs market-implied odds. Positive edge = value.\n\n${lines.join('\n')}`);
     e.setFooter({ text: `${BRAND.footer} • Model estimates, not financial advice` });

@@ -8,7 +8,10 @@
 
 import fs from 'node:fs';
 import nodePath from 'node:path';
+import { EmbedBuilder } from 'discord.js';
 import { claimEventIds } from './instantStreamService.js';
+import { BRAND } from '../discord/brand.js';
+import { getFairModelBaselineOdds } from '../parlays/parlay-builder.js';
 
 const DATA_DIR = nodePath.resolve(process.cwd(), 'data');
 const SNAPSHOT_FILE = nodePath.join(DATA_DIR, 'odds_snapshots.json');
@@ -126,6 +129,7 @@ export function recordOddsSnapshot(
   kickoffTime: string,
   market: string,
   decimal: number,
+  timestamp: number = Date.now(),
 ): void {
   // Purge stale entries first
   purgeOldSnapshots();
@@ -134,7 +138,7 @@ export function recordOddsSnapshot(
   const point: OddsPoint = {
     decimal,
     impliedProb: 1 / decimal,
-    timestamp: now,
+    timestamp,
   };
 
   let snapshot = snapshots.get(fixtureId);
@@ -315,6 +319,49 @@ function computeSteamMoves(windowStart: number, now: number): SteamMove[] {
   return moves;
 }
 
+/**
+ * Builds the `/steam` command embed displaying active sharp money movements.
+ * Strictly adheres to UI contract: 0x2563EB brand color, BRAND.footer, honest calculations.
+ */
+export function buildSteamEmbed(): EmbedBuilder {
+  const moves = getActiveSteamMoves();
+
+  const embed = new EmbedBuilder()
+    .setColor(BRAND.accent)
+    .setAuthor({ name: BRAND.author })
+    .setTitle('⚡ Sharp Steam & Line Movement Alerts')
+    .setTimestamp(new Date());
+
+  if (moves.length === 0) {
+    embed.setDescription('No significant sharp line movements detected in the current window.');
+  } else {
+    const lines = moves.slice(0, 8).map((m) => {
+      const dropStr = `${m.decimalDropPercent}% drop`;
+      const probStr = `${m.impliedProbShift >= 0 ? '+' : ''}${m.impliedProbShift}% implied prob`;
+      const conviction = m.highConviction ? ' 🔥 **[HIGH CONVICTION]**' : '';
+      const fairBaseline = getFairModelBaselineOdds();
+      return (
+        `• **${m.homeTeam} vs ${m.awayTeam}** • \`${m.market}\`${conviction}\n` +
+        `  Movement: \`${m.openingOdds.toFixed(2)}x\` ➔ \`**${m.currentOdds.toFixed(2)}x**\` (${dropStr}, ${probStr})\n` +
+        `  Fair Model Baseline: \`${fairBaseline.home}x / ${fairBaseline.draw}x / ${fairBaseline.away}x\``
+      );
+    });
+
+    embed.setDescription(
+      `Detected **${moves.length}** sharp line movements in the last 120 minutes (threshold: ≥10% price drop or ≥6.5% prob shift):\n\n` +
+        lines.join('\n\n')
+    );
+  }
+
+  embed.setFooter({ text: BRAND.footer });
+  return embed;
+}
+
+/** Testing helper to reset in-memory snapshots */
+export function resetSnapshots(): void {
+  snapshots.clear();
+}
+
 // ─── Default export ──────────────────────────────────────────────────
 
 export default {
@@ -323,4 +370,6 @@ export default {
   getActiveSteamMoves,
   purgeOldSnapshots,
   getSnapshotCount,
+  buildSteamEmbed,
+  resetSnapshots,
 };
