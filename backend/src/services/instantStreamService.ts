@@ -131,7 +131,16 @@ export function disconnectWebSocket(): void {
  * SSE Live Event Bus — emits real-time events to frontend SSE clients
  * ------------------------------------------------------------------ */
 
-export type LiveEventType = 'GOAL' | 'DISALLOWED_GOAL' | 'RED_CARD' | 'HT' | 'FT' | 'STEAM';
+export type LiveEventType =
+  | 'GOAL'
+  | 'DISALLOWED_GOAL'
+  | 'VAR_ROLLBACK'
+  | 'RED_CARD'
+  | 'HT'
+  | 'FT'
+  | 'STEAM'
+  | 'MOMENTUM_UPDATE'
+  | 'PRESSURE_SQUEEZE';
 
 export interface LiveEventPayload {
   type: LiveEventType;
@@ -140,9 +149,19 @@ export interface LiveEventPayload {
   awayTeam: string;
   homeScore: number | null;
   awayScore: number | null;
-  minute: string | null;
+  minute: string | number | null;
   detail: string;
   timestamp: number;
+  momentum?: number;
+  momentumHistory?: Array<{ minute: number; score: number; timestamp?: number }>;
+  timelineEntry?: any;
+  pressureSqueeze?: any;
+  inPlayOdds?: {
+    market: string;
+    takenOdds: number;
+    liveOdds: number;
+    iClvPercent: number;
+  };
 }
 
 const liveBus = new EventEmitter();

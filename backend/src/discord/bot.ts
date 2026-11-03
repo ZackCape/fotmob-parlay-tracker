@@ -30,7 +30,12 @@ import { getDashboardUrl } from '../utils/dashboardUrl.js';
 import {
   claimEventIds as claimStreamEventIds,
   generateEventId as generateStreamEventId,
+  emitLiveEvent,
 } from '../services/instantStreamService.js';
+import {
+  updateLiveMatch,
+  recordMatchIncident,
+} from '../services/liveTrackingService.js';
 const DASHBOARD_URL = getDashboardUrl();
 
 export class DiscordBotService {
@@ -2057,6 +2062,34 @@ export class DiscordBotService {
 
         const prevStats = this.liveEventPrevStats.get(fx.id);
         this.liveEventPrevStats.set(fx.id, stats);
+
+        // Update in-memory live tracking state (momentum, pressure squeeze radar, incident timelines)
+        try {
+          const matchMinute = parseInt(String(fx.liveClock || '0').replace(/[^0-9]/g, ''), 10) || 45;
+          const s = stats.statistics;
+          updateLiveMatch({
+            fixtureId: fx.id,
+            homeTeam: fx.homeTeam?.name || 'Home',
+            awayTeam: fx.awayTeam?.name || 'Away',
+            league: fx.league,
+            minute: matchMinute,
+            status: fx.status || 'LIVE',
+            stats: {
+              homeScore: fx.homeScore ?? stats.homeScore ?? 0,
+              awayScore: fx.awayScore ?? stats.awayScore ?? 0,
+              homeShotsOnTarget: s?.shotsOnTargetHome ?? s?.shotsHome ?? 0,
+              awayShotsOnTarget: s?.shotsOnTargetAway ?? s?.shotsAway ?? 0,
+              homeCorners: s?.cornersHome ?? 0,
+              awayCorners: s?.cornersAway ?? 0,
+              homeRedCards: s?.redCardsHome ?? 0,
+              awayRedCards: s?.redCardsAway ?? 0,
+              homeYellowCards: s?.yellowCardsHome ?? 0,
+              awayYellowCards: s?.yellowCardsAway ?? 0,
+              homePossession: s?.possessionHome ?? undefined,
+              awayPossession: s?.possessionAway ?? undefined,
+            },
+          });
+        } catch { /* best-effort live tracking */ }
 
         const newEvents = CP.detectNewEvents(prevStats ?? null, stats);
         const firstPoll = !this.liveEventFirstPolled.has(fx.id);

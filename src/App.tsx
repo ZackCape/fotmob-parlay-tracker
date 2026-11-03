@@ -7,6 +7,7 @@ import { LeagueAccordionGroup } from './components/LeagueAccordionGroup';
 import { MatchAnalysisModal } from './components/MatchAnalysisModal';
 import { ParlayBuilder } from './components/ParlayBuilder';
 import { LiveParlayTracker } from './components/LiveParlayTracker';
+import { LiveTracker } from './components/LiveTracker';
 import { NewsSidebar } from './components/NewsSidebar';
 import { ModelPerformance } from './components/ModelPerformance';
 import { PredictionTracker } from './components/PredictionTracker';
@@ -213,15 +214,23 @@ export const App: React.FC = () => {
                 />
               )}
 
-              {/* TAB 3: LIVE MATCH PARLAY TRACKER */}
+              {/* TAB 3: LIVE COMMAND CENTER & PARLAY TRACKER */}
               {activeTab === 'livetracker' && (
-                <LiveParlayTracker
-                  initialTrackedParlay={activeTrackedParlay}
-                  onSelectFixture={(id) => {
-                    const fx = fixtures.find(f => f.id === id);
-                    if (fx) handleSelectFixture(fx);
-                  }}
-                />
+                <div className="space-y-8">
+                  <LiveTracker />
+                  <div className="pt-6 border-t border-slate-800">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                      Tracked Parlay Slips & Leg Outcomes
+                    </div>
+                    <LiveParlayTracker
+                      initialTrackedParlay={activeTrackedParlay}
+                      onSelectFixture={(id) => {
+                        const fx = fixtures.find(f => f.id === id);
+                        if (fx) handleSelectFixture(fx);
+                      }}
+                    />
+                  </div>
+                </div>
               )}
 
               {/* TAB 4: DISCORD BOT PANEL */}
