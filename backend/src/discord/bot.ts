@@ -566,6 +566,7 @@ export class DiscordBotService {
           });
           return;
         } else if (interaction.commandName === 'generateparlay') {
+          await interaction.deferReply();
           // Global interaction guard: never leave the user on "thinking...".
           // If market scanning stalls past 12s, edit the deferred reply.
           const timeoutId = setTimeout(async () => {
@@ -917,7 +918,8 @@ export class DiscordBotService {
             .setColor(BRAND.accent)
             .setAuthor({ name: BRAND.author })
             .setTitle('Bot Diagnostics & Status')
-            .setTimestamp(new Date());
+            .setFooter({ text: BRAND.footer })
+        .setTimestamp(new Date());
 
           e.addFields(
             { name: 'Quota Governor', value: `\`${gov.mode}\` (${gov.remainingQuota}/${gov.totalBudget} req remaining)`, inline: true },
@@ -1808,7 +1810,8 @@ export class DiscordBotService {
               .setTitle(title)
               .setDescription(desc)
               .setFooter({ text: `${BRAND.footer} - ${league}` })
-              .setTimestamp(new Date());
+              .setFooter({ text: BRAND.footer })
+        .setTimestamp(new Date());
             await interaction.editReply({ embeds: [embed], components: [] });
             return;
           }
@@ -2624,6 +2627,7 @@ export class DiscordBotService {
         .setAuthor({ name: BRAND.author })
         .setTitle('Generated Parlay')
         .setDescription(replyText.slice(0, 4000))
+        .setFooter({ text: BRAND.footer })
         .setTimestamp(new Date());
 
       const parlayId = `gen-${Date.now()}`;
@@ -3145,7 +3149,20 @@ export class DiscordBotService {
       // rank the Premier League and Champions League fixtures at the top of the
       // pool so the priority competitions lead the slip.
       const verified = (allFixtures || []).filter(fx => fx && isVerifiedFixture(fx));
-      const preKickoff = CP.filterPreKickoffFixtures(verified);
+      let preKickoff = CP.filterPreKickoffFixtures(verified);
+      if (preKickoff.length === 0) {
+        const tomorrow = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
+        try {
+          const tomorrowFixtures = await this.factory.getFixturesByDate(tomorrow, 'ALL');
+          const tomorrowVerified = (tomorrowFixtures || []).filter(fx => fx && isVerifiedFixture(fx));
+          const tomorrowPre = CP.filterPreKickoffFixtures(tomorrowVerified);
+          if (tomorrowPre.length > 0) {
+            preKickoff = tomorrowPre;
+          }
+        } catch {
+          // best-effort lookahead
+        }
+      }
       const fixtures = orderFixturesByPriority(preKickoff);
       const preds: MarketPrediction[] = [];
 

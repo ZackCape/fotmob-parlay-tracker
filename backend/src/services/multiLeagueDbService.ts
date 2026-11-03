@@ -278,49 +278,6 @@ function emptyDatabase(): MultiLeagueDatabase {
   };
 }
 
-/** Initial authentic baseline of verified recent matches across Europe */
-function getAuthenticSeedMatches(): MultiLeagueMatch[] {
-  const now = Date.now();
-  const d = (daysAgo: number) => new Date(now - daysAgo * 86400000).toISOString().slice(0, 10);
-
-  return [
-    // Manchester United (EPL + UEL)
-    { id: `${d(3)}_manchester_united_chelsea`, date: d(3), competition: 'EPL', homeTeam: 'Manchester United', awayTeam: 'Chelsea', homeCanonical: 'manchester_united', awayCanonical: 'chelsea', homeScore: 1, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(7)}_manchester_united_leicester`, date: d(7), competition: 'EFL_CUP', homeTeam: 'Manchester United', awayTeam: 'Leicester City', homeCanonical: 'manchester_united', awayCanonical: 'leicester', homeScore: 5, awayScore: 2, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(10)}_west_ham_manchester_united`, date: d(10), competition: 'EPL', homeTeam: 'West Ham United', awayTeam: 'Manchester United', homeCanonical: 'west_ham', awayCanonical: 'manchester_united', homeScore: 2, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(14)}_fenerbahce_manchester_united`, date: d(14), competition: 'EUROPA_LEAGUE', homeTeam: 'Fenerbahce', awayTeam: 'Manchester United', homeCanonical: 'fenerbahce', awayCanonical: 'manchester_united', homeScore: 1, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(18)}_manchester_united_brentford`, date: d(18), competition: 'EPL', homeTeam: 'Manchester United', awayTeam: 'Brentford', homeCanonical: 'manchester_united', awayCanonical: 'brentford', homeScore: 2, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-
-    // AS Roma (Serie A + UEL)
-    { id: `${d(3)}_verona_as_roma`, date: d(3), competition: 'SERIE_A', homeTeam: 'Hellas Verona', awayTeam: 'AS Roma', homeCanonical: 'verona', awayCanonical: 'as_roma', homeScore: 3, awayScore: 2, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(6)}_as_roma_torino`, date: d(6), competition: 'SERIE_A', homeTeam: 'AS Roma', awayTeam: 'Torino', homeCanonical: 'as_roma', awayCanonical: 'torino', homeScore: 1, awayScore: 0, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(10)}_fiorentina_as_roma`, date: d(10), competition: 'SERIE_A', homeTeam: 'Fiorentina', awayTeam: 'AS Roma', homeCanonical: 'fiorentina', awayCanonical: 'as_roma', homeScore: 5, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(14)}_as_roma_dynamo_kyiv`, date: d(14), competition: 'EUROPA_LEAGUE', homeTeam: 'AS Roma', awayTeam: 'Dynamo Kyiv', homeCanonical: 'as_roma', awayCanonical: 'dynamo_kyiv', homeScore: 1, awayScore: 0, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(17)}_as_roma_inter_milan`, date: d(17), competition: 'SERIE_A', homeTeam: 'AS Roma', awayTeam: 'Inter Milan', homeCanonical: 'as_roma', awayCanonical: 'inter_milan', homeScore: 0, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-
-    // Arsenal (EPL + UCL)
-    { id: `${d(3)}_newcastle_arsenal`, date: d(3), competition: 'EPL', homeTeam: 'Newcastle United', awayTeam: 'Arsenal', homeCanonical: 'newcastle', awayCanonical: 'arsenal', homeScore: 1, awayScore: 0, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(6)}_preston_arsenal`, date: d(6), competition: 'EFL_CUP', homeTeam: 'Preston North End', awayTeam: 'Arsenal', homeCanonical: 'preston', awayCanonical: 'arsenal', homeScore: 0, awayScore: 3, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(10)}_arsenal_liverpool`, date: d(10), competition: 'EPL', homeTeam: 'Arsenal', awayTeam: 'Liverpool', homeCanonical: 'arsenal', awayCanonical: 'liverpool', homeScore: 2, awayScore: 2, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(14)}_arsenal_shakhtar`, date: d(14), competition: 'CHAMPIONS_LEAGUE', homeTeam: 'Arsenal', awayTeam: 'Shakhtar Donetsk', homeCanonical: 'arsenal', awayCanonical: 'shakhtar', homeScore: 1, awayScore: 0, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(17)}_bournemouth_arsenal`, date: d(17), competition: 'EPL', homeTeam: 'Bournemouth', awayTeam: 'Arsenal', homeCanonical: 'bournemouth', awayCanonical: 'arsenal', homeScore: 2, awayScore: 0, status: 'FT', source: 'seed', updatedAt: now },
-
-    // Real Madrid (La Liga + UCL)
-    { id: `${d(4)}_real_madrid_ac_milan`, date: d(4), competition: 'CHAMPIONS_LEAGUE', homeTeam: 'Real Madrid', awayTeam: 'AC Milan', homeCanonical: 'real_madrid', awayCanonical: 'ac_milan', homeScore: 1, awayScore: 3, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(10)}_real_madrid_barcelona`, date: d(10), competition: 'LALIGA', homeTeam: 'Real Madrid', awayTeam: 'FC Barcelona', homeCanonical: 'real_madrid', awayCanonical: 'barcelona', homeScore: 0, awayScore: 4, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(14)}_real_madrid_dortmund`, date: d(14), competition: 'CHAMPIONS_LEAGUE', homeTeam: 'Real Madrid', awayTeam: 'Borussia Dortmund', homeCanonical: 'real_madrid', awayCanonical: 'borussia_dortmund', homeScore: 5, awayScore: 2, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(17)}_celta_vigo_real_madrid`, date: d(17), competition: 'LALIGA', homeTeam: 'Celta Vigo', awayTeam: 'Real Madrid', homeCanonical: 'celta_vigo', awayCanonical: 'real_madrid', homeScore: 1, awayScore: 2, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(24)}_real_madrid_villarreal`, date: d(24), competition: 'LALIGA', homeTeam: 'Real Madrid', awayTeam: 'Villarreal CF', homeCanonical: 'real_madrid', awayCanonical: 'villarreal', homeScore: 2, awayScore: 0, status: 'FT', source: 'seed', updatedAt: now },
-
-    // Barcelona (La Liga + UCL)
-    { id: `${d(3)}_barcelona_espanyol`, date: d(3), competition: 'LALIGA', homeTeam: 'FC Barcelona', awayTeam: 'RCD Espanyol', homeCanonical: 'barcelona', awayCanonical: 'espanyol', homeScore: 3, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(10)}_real_madrid_barcelona`, date: d(10), competition: 'LALIGA', homeTeam: 'Real Madrid', awayTeam: 'FC Barcelona', homeCanonical: 'real_madrid', awayCanonical: 'barcelona', homeScore: 0, awayScore: 4, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(14)}_barcelona_bayern`, date: d(14), competition: 'CHAMPIONS_LEAGUE', homeTeam: 'FC Barcelona', awayTeam: 'Bayern Munich', homeCanonical: 'barcelona', awayCanonical: 'bayern_munich', homeScore: 4, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(17)}_barcelona_sevilla`, date: d(17), competition: 'LALIGA', homeTeam: 'FC Barcelona', awayTeam: 'Sevilla FC', homeCanonical: 'barcelona', awayCanonical: 'sevilla', homeScore: 5, awayScore: 1, status: 'FT', source: 'seed', updatedAt: now },
-    { id: `${d(24)}_alaves_barcelona`, date: d(24), competition: 'LALIGA', homeTeam: 'Deportivo Alaves', awayTeam: 'FC Barcelona', homeCanonical: 'alaves', awayCanonical: 'barcelona', homeScore: 0, awayScore: 3, status: 'FT', source: 'seed', updatedAt: now },
-  ];
-}
-
 /** Load database from persistent disk storage */
 export function loadDatabase(): MultiLeagueDatabase {
   if (databaseCache) return databaseCache;
@@ -340,15 +297,8 @@ export function loadDatabase(): MultiLeagueDatabase {
     }
   }
 
-  // Auto-initialize with seed data
+  // Strictly empty initialization: zero synthetic or test seed data
   const initial = emptyDatabase();
-  const seed = getAuthenticSeedMatches();
-  for (const m of seed) {
-    initial.matches.push(m);
-  }
-  initial.totalMatches = initial.matches.length;
-  initial.lastSync = Date.now();
-
   databaseCache = initial;
   saveDatabase();
   return databaseCache;
@@ -403,75 +353,100 @@ export function recordVerifiedMatch(match: Omit<MultiLeagueMatch, 'id' | 'homeCa
 /**
  * Sync recent completed fixtures across all supported competitions via
  * ESPN public scoreboard endpoints (free, zero paid quota consumption).
+ * Queries rolling 30-day date ranges for real completed matches only.
  */
 export async function syncMultiLeagueHistory(): Promise<number> {
   const db = loadDatabase();
   let newMatchesCount = 0;
   const now = Date.now();
 
-  // Scoreboard dates: last 45 days in 5-day intervals
   const today = new Date();
-  const dateStrings: string[] = [];
-  for (let i = 0; i < 45; i += 3) {
-    const d = new Date(today.getTime() - i * 86400000);
-    const yyyymmdd = d.toISOString().slice(0, 10).replace(/-/g, '');
-    dateStrings.push(yyyymmdd);
-  }
+  const past30 = new Date(today.getTime() - 30 * 86400000);
+  const startYYYYMMDD = past30.toISOString().slice(0, 10).replace(/-/g, '');
+  const endYYYYMMDD = today.toISOString().slice(0, 10).replace(/-/g, '');
 
   for (const [compName, compInfo] of Object.entries(TRACKED_COMPETITIONS)) {
-    // Sample recent scoreboards for this competition
-    for (const dStr of dateStrings.slice(0, 5)) {
+    try {
+      // 1. Attempt bulk date range query (?dates=${startYYYYMMDD}-${endYYYYMMDD}&limit=100)
+      const rangeUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${compInfo.code}/scoreboard?dates=${startYYYYMMDD}-${endYYYYMMDD}&limit=100`;
+      let events: any[] = [];
+
       try {
-        const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${compInfo.code}/scoreboard?dates=${dStr}`;
-        const res = await axios.get(url, {
+        const res = await axios.get(rangeUrl, {
           timeout: 4000,
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
           validateStatus: (s) => s === 200,
         });
-
-        const events = res.data?.events;
-        if (!Array.isArray(events)) continue;
-
-        for (const ev of events) {
-          const comp = ev.competitions?.[0];
-          if (!comp) continue;
-
-          // Only record completed matches
-          const isCompleted = comp.status?.type?.completed === true || comp.status?.type?.state === 'post';
-          if (!isCompleted) continue;
-
-          const competitors = comp.competitors;
-          if (!Array.isArray(competitors) || competitors.length < 2) continue;
-
-          const homeComp = competitors.find((c: any) => c.homeAway === 'home');
-          const awayComp = competitors.find((c: any) => c.homeAway === 'away');
-
-          if (!homeComp || !awayComp) continue;
-
-          const homeScore = parseInt(homeComp.score, 10);
-          const awayScore = parseInt(awayComp.score, 10);
-
-          if (Number.isNaN(homeScore) || Number.isNaN(awayScore)) continue;
-
-          const date = ev.date ? ev.date.slice(0, 10) : new Date().toISOString().slice(0, 10);
-          const homeTeam = homeComp.team?.name || 'Home';
-          const awayTeam = awayComp.team?.name || 'Away';
-
-          recordVerifiedMatch({
-            date,
-            competition: compName,
-            homeTeam,
-            awayTeam,
-            homeScore,
-            awayScore,
-            status: 'FT',
-            source: 'espn_public',
-          });
-          newMatchesCount++;
+        if (Array.isArray(res.data?.events) && res.data.events.length > 0) {
+          events = res.data.events;
         }
       } catch {
-        // Soft-fail individual endpoints to keep sync resilient
+        events = [];
       }
+
+      // 2. Fallback: If range query is unsupported by specific ESPN endpoint (e.g. 400),
+      // sample recent dates individually
+      if (events.length === 0) {
+        const datesToCheck: string[] = [];
+        for (let d = 0; d < 30; d += 2) {
+          const day = new Date(today.getTime() - d * 86400000);
+          datesToCheck.push(day.toISOString().slice(0, 10).replace(/-/g, ''));
+        }
+        for (const dStr of datesToCheck.slice(0, 6)) {
+          try {
+            const dayUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${compInfo.code}/scoreboard?dates=${dStr}`;
+            const dayRes = await axios.get(dayUrl, {
+              timeout: 3500,
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              validateStatus: (s) => s === 200,
+            });
+            if (Array.isArray(dayRes.data?.events)) {
+              events.push(...dayRes.data.events);
+            }
+          } catch {}
+        }
+      }
+
+      for (const ev of events) {
+        const comp = ev.competitions?.[0];
+        if (!comp) continue;
+
+        // Only record genuinely completed matches
+        const isCompleted = comp.status?.type?.completed === true || comp.status?.type?.state === 'post';
+        if (!isCompleted) continue;
+
+        const competitors = comp.competitors;
+        if (!Array.isArray(competitors) || competitors.length < 2) continue;
+
+        const homeComp = competitors.find((c: any) => c.homeAway === 'home');
+        const awayComp = competitors.find((c: any) => c.homeAway === 'away');
+        if (!homeComp || !awayComp) continue;
+
+        const rawHomeScore = typeof homeComp.score === 'object' ? homeComp.score?.value ?? homeComp.score?.displayValue : homeComp.score;
+        const rawAwayScore = typeof awayComp.score === 'object' ? awayComp.score?.value ?? awayComp.score?.displayValue : awayComp.score;
+        const homeScore = parseInt(String(rawHomeScore), 10);
+        const awayScore = parseInt(String(rawAwayScore), 10);
+
+        if (Number.isNaN(homeScore) || Number.isNaN(awayScore)) continue;
+
+        const date = ev.date ? ev.date.slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const homeTeam = homeComp.team?.displayName || homeComp.team?.name || 'Home';
+        const awayTeam = awayComp.team?.displayName || awayComp.team?.name || 'Away';
+
+        recordVerifiedMatch({
+          date,
+          competition: compName,
+          homeTeam,
+          awayTeam,
+          homeScore,
+          awayScore,
+          status: 'FT',
+          source: 'espn_public',
+        });
+        newMatchesCount++;
+      }
+    } catch {
+      // Soft-fail individual endpoints to keep sync resilient
     }
   }
 
@@ -591,12 +566,21 @@ export function getTeamVerifiedForm(teamName: string, limit = 5): TeamVerifiedFo
 
   const glyphs = results.map((r) => (r === 'W' ? '🟢' : r === 'D' ? '🟡' : '🔴')).join('');
   const recordSummary = `${wins}W ${draws}D ${losses}L`;
-  const formattedSummary = `${glyphs}  ${recordSummary}`;
+  const formattedSummary = `${glyphs}  ${recordSummary} (Latest ➔ Oldest)`;
 
-  // Mini match breakdown (e.g., "vs Chelsea (1-1, EPL) • vs Leicester (5-2, EFL_CUP)")
+  // Match breakdown with badges, scores, opponent, competition and date
+  // e.g. "🟢 W 2-0 vs Chelsea (EPL • Nov 7)"
   const breakdownLines = records.map((r) => {
+    const badge = r.result === 'W' ? '🟢' : r.result === 'D' ? '🟡' : '🔴';
     const venue = r.homeAway === 'H' ? 'vs' : 'at';
-    return `${venue} ${r.opponent} (${r.score}, ${r.competition})`;
+    let dateLabel = r.date;
+    try {
+      const parsed = new Date(r.date.includes('T') ? r.date : `${r.date}T12:00:00Z`);
+      if (!Number.isNaN(parsed.getTime())) {
+        dateLabel = parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      }
+    } catch {}
+    return `${badge} ${r.result} ${r.goalsFor}-${r.goalsAgainst} ${venue} ${r.opponent} (${r.competition} • ${dateLabel})`;
   });
 
   return {
