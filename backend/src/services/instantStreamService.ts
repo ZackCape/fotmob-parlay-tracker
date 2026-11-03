@@ -8,6 +8,7 @@
 import axios from 'axios';
 import http from 'node:http';
 import https from 'node:https';
+import { EventEmitter } from 'node:events';
 
 // Persistent HTTP agents for connection pooling (eliminate TCP/TLS handshakes)
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50, maxFreeSockets: 10 });
@@ -126,6 +127,47 @@ export function disconnectWebSocket(): void {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * SSE Live Event Bus — emits real-time events to frontend SSE clients
+ * ------------------------------------------------------------------ */
+
+export type LiveEventType = 'GOAL' | 'DISALLOWED_GOAL' | 'RED_CARD' | 'HT' | 'FT' | 'STEAM';
+
+export interface LiveEventPayload {
+  type: LiveEventType;
+  fixtureId: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  minute: string | null;
+  detail: string;
+  timestamp: number;
+}
+
+const liveBus = new EventEmitter();
+// Raise the default limit so many SSE clients don't trigger a warning.
+liveBus.setMaxListeners(200);
+
+/**
+ * Emit a live event to all connected SSE clients.
+ * Call this from bot.ts when claimLiveEvent() approves a Goal,
+ * Disallowed Goal (VAR rollback), Red Card, or Halftime whistle.
+ */
+export function emitLiveEvent(payload: LiveEventPayload): void {
+  liveBus.emit('live', payload);
+}
+
+/** Subscribe to live events (used by the SSE endpoint in server.ts). */
+export function onLiveEvent(listener: (payload: LiveEventPayload) => void): void {
+  liveBus.on('live', listener);
+}
+
+/** Remove a live event listener (cleanup when SSE client disconnects). */
+export function offLiveEvent(listener: (payload: LiveEventPayload) => void): void {
+  liveBus.off('live', listener);
+}
+
 export default {
   pooledAxios,
   isEventProcessed,
@@ -139,4 +181,7 @@ export default {
   connectWebSocket,
   isWebSocketConnected,
   disconnectWebSocket,
+  emitLiveEvent,
+  onLiveEvent,
+  offLiveEvent,
 };

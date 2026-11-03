@@ -20,11 +20,28 @@ export interface AggregatedOdds {
   publishedMarkets: string[];
 }
 
-export async function getOddsForFixture(fixtureId: string, homeTeam: string, awayTeam: string, modelHomeProb: number, modelDrawProb: number, modelAwayProb: number): Promise<AggregatedOdds> {
-  // Tier 1: PremierBet ZW
+export async function getOddsForFixture(
+  fixtureId: string,
+  homeTeam?: string | null,
+  awayTeam?: string | null,
+  modelHomeProb: number = 0.45,
+  modelDrawProb: number = 0.25,
+  modelAwayProb: number = 0.30
+): Promise<AggregatedOdds> {
+  const safeHomeTeam = homeTeam || 'Home';
+  const safeAwayTeam = awayTeam || 'Away';
+  const safeHomeProb = typeof modelHomeProb === 'number' && Number.isFinite(modelHomeProb) && modelHomeProb > 0 ? modelHomeProb : 0.45;
+  const safeDrawProb = typeof modelDrawProb === 'number' && Number.isFinite(modelDrawProb) && modelDrawProb > 0 ? modelDrawProb : 0.25;
+  const safeAwayProb = typeof modelAwayProb === 'number' && Number.isFinite(modelAwayProb) && modelAwayProb > 0 ? modelAwayProb : 0.30;
+
+  // Tier 1: PremierBet ZW (wrapped in strict 2-second Promise.race timeout)
   try {
     const { fetchPremierBetOdds } = await import('./premierbetService.js');
-    const pb = await fetchPremierBetOdds(fixtureId, homeTeam, awayTeam);
+    const pbPromise = fetchPremierBetOdds(fixtureId, safeHomeTeam, safeAwayTeam);
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), 2000)
+    );
+    const pb = await Promise.race([pbPromise, timeoutPromise]);
     if (pb && pb.homeOdds && pb.awayOdds) {
       // Build published markets from available odds
       const markets: string[] = ['HOME_WIN', 'DRAW', 'AWAY_WIN'];
@@ -45,10 +62,10 @@ export async function getOddsForFixture(fixtureId: string, homeTeam: string, awa
   // Tier 2: API-Football Global (placeholder - would fetch from API-Football odds endpoint)
   // In production, this would call the API-Football odds endpoint
 
-  // Tier 3: Synthetic De-Vigged Model Odds (always available)
-  const homeFair = modelHomeProb > 0 ? 1 / modelHomeProb : 2.0;
-  const awayFair = modelAwayProb > 0 ? 1 / modelAwayProb : 2.0;
-  const drawFair = modelDrawProb > 0 ? 1 / modelDrawProb : 3.0;
+  // Tier 3: Synthetic De-Vigged Model Odds (always available - Fair Model Baseline)
+  const homeFair = safeHomeProb > 0 ? 1 / safeHomeProb : 2.0;
+  const awayFair = safeAwayProb > 0 ? 1 / safeAwayProb : 2.0;
+  const drawFair = safeDrawProb > 0 ? 1 / safeDrawProb : 3.0;
   // Apply bookmaker margin (~5%)
   const margin = 1.05;
   // Tier 3: All standard markets published (synthetic baseline)

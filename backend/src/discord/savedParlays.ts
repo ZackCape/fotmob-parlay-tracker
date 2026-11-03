@@ -139,28 +139,36 @@ export function legKey(leg: { fixtureId: string; market: MarketType; selection: 
   return `${leg.fixtureId}:${leg.market}:${leg.selection}`;
 }
 
-function toSavedLeg(leg: ParlayLeg): SavedParlayLeg {
+function toSavedLeg(leg: any): SavedParlayLeg {
+  const prob = typeof leg?.probability === 'number' && Number.isFinite(leg.probability)
+    ? leg.probability
+    : typeof leg?.estimatedProbability === 'number' && Number.isFinite(leg.estimatedProbability)
+    ? leg.estimatedProbability
+    : 0.5;
+
   return {
-    fixtureId: leg.fixtureId,
-    description: leg.description,
-    league: leg.league,
-    market: leg.market,
-    selection: leg.selection,
-    probability: leg.probability,
-    marketOdds: leg.marketOdds ?? null,
+    fixtureId: leg?.fixtureId || 'unknown',
+    description: leg?.description || leg?.fixtureDescription || 'Match',
+    league: leg?.league || 'ALL',
+    market: leg?.market || 'HOME_WIN',
+    selection: leg?.selection || 'Selection',
+    probability: prob,
+    marketOdds: typeof leg?.marketOdds === 'number' && Number.isFinite(leg.marketOdds) ? leg.marketOdds : null,
   };
 }
 
 /** Product of every leg's bookmaker price, or null when one is missing. */
 function combinedMarketOdds(legs: SavedParlayLeg[]): number | null {
-  if (!legs.length) return null;
+  if (!legs || !legs.length) return null;
   let product = 1;
+  let hasValidOdds = false;
   for (const l of legs) {
-    const o = l.marketOdds;
+    const o = l?.marketOdds;
     if (typeof o !== 'number' || !Number.isFinite(o) || o <= 1) return null;
     product *= o;
+    hasValidOdds = true;
   }
-  return Number(product.toFixed(3));
+  return hasValidOdds ? Number(product.toFixed(3)) : null;
 }
 
 /**
@@ -168,12 +176,12 @@ function combinedMarketOdds(legs: SavedParlayLeg[]): number | null {
  * and user it was saved from.
  */
 export function saveParlayToDisk(
-  parlay: CustomParlay,
+  parlay: CustomParlay | any,
   meta: { userId: string; channelId: string; guildId?: string | null },
 ): SavedParlay {
-  const legs: SavedParlayLeg[] = parlay.legs.map(toSavedLeg);
+  const legs: SavedParlayLeg[] = (parlay?.legs || []).map(toSavedLeg);
   const combinedProbability = Number(
-    legs.reduce((acc, l) => acc * Math.max(0.0001, l.probability), 1).toFixed(6),
+    legs.reduce((acc, l) => acc * Math.max(0.0001, l.probability || 0.5), 1).toFixed(6),
   );
   // Retire any earlier slip for this user + channel so /track shows the slip
   // the user just saved rather than a stale one.
@@ -186,9 +194,9 @@ export function saveParlayToDisk(
     channelId: meta.channelId,
     guildId: meta.guildId ?? null,
     legs,
-    stake: parlay.stake,
+    stake: typeof parlay?.stake === 'number' && Number.isFinite(parlay.stake) ? parlay.stake : 10,
     combinedOdds: combinedMarketOdds(legs),
-    combinedProbability,
+    combinedProbability: Number.isFinite(combinedProbability) ? combinedProbability : 0.05,
     savedAt: Date.now(),
     activeTracking: true,
     settled: {},

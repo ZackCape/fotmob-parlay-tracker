@@ -1,9 +1,8 @@
 import { MarketPrediction, ParlayLeg, ParlayLegCount, ParlayMode, StatisticalParlay } from '../types/football.js';
 import { areMarketsConflicting, filterNonCorrelatedPredictions } from './correlation-detector.js';
-import {
-  compareCompetitionPriority,
-  orderByCompetitionPriorityThenScore,
-} from '../utils/competitionPriority.js';
+import { compareCompetitionPriority, orderByCompetitionPriorityThenScore } from '../utils/competitionPriority.js';
+import { getOddsForFixture, AggregatedOdds } from '../services/oddsAggregatorService.js';
+import { getMarketConfidenceMultiplier } from '../services/learningWeightService.js';
 
 export interface ParlayBuilderOptions {
   targetLegsCount: ParlayLegCount;
@@ -25,13 +24,82 @@ export interface ParlayBuilderOptions {
    * If omitted, all markets pass (backwards compat).
    */
   publishedMarkets?: string[];
+  /** Optional: enrich parlay legs with real bookmaker odds using 2s timeout */
+  fetchOdds?: boolean;
+  /** Optional: disable learning feedback loop weighting (default: false) */
+  disableLearningLoop?: boolean;
+}
+
+/**
+ * Tier-3 Fair Model Baseline fallback generator.
+ */
+export function getFairModelBaselineOdds(
+  modelHomeProb: number = 0.45,
+  modelDrawProb: number = 0.25,
+  modelAwayProb: number = 0.30
+): AggregatedOdds {
+  const margin = 1.05;
+  const homeFair = modelHomeProb > 0 ? 1 / modelHomeProb : 2.0;
+  const awayFair = modelAwayProb > 0 ? 1 / modelAwayProb : 2.0;
+  const drawFair = modelDrawProb > 0 ? 1 / modelDrawProb : 3.0;
+
+  return {
+    source: 'Fair Model Baseline',
+    home: Number((homeFair / margin).toFixed(2)),
+    draw: Number((drawFair / margin).toFixed(2)),
+    away: Number((awayFair / margin).toFixed(2)),
+    over25: null,
+    under25: null,
+    publishedMarkets: [
+      'HOME_WIN', 'DRAW', 'AWAY_WIN', 'OVER_0_5', 'OVER_1_5', 'OVER_2_5', 'OVER_3_5',
+      'UNDER_2_5', 'UNDER_3_5', 'BTTS_YES', 'BTTS_NO', 'DOUBLE_CHANCE_1X', 'DOUBLE_CHANCE_X2',
+      'DOUBLE_CHANCE_12', 'OVER_7_5_CORNERS', 'OVER_8_5_CORNERS', 'OVER_9_5_CORNERS',
+      'UNDER_8_5_CORNERS', 'UNDER_11_5_CORNERS', 'OVER_2_5_CARDS', 'OVER_3_5_CARDS', 'OVER_4_5_CARDS'
+    ],
+  };
+}
+
+/**
+ * Wrap external odds fetching calls in a strict Promise.race with a 2-second timeout.
+ * If any individual provider lags or fails, it immediately falls back to Tier-3 Fair
+ * Model Baseline odds instead of hanging or failing the whole parlay generation.
+ */
+export async function fetchOddsWithTimeout(
+  fixtureId: string,
+  homeTeam?: string | null,
+  awayTeam?: string | null,
+  modelHomeProb: number = 0.45,
+  modelDrawProb: number = 0.25,
+  modelAwayProb: number = 0.30,
+  timeoutMs: number = 2000
+): Promise<AggregatedOdds> {
+  const fallbackOdds = getFairModelBaselineOdds(modelHomeProb, modelDrawProb, modelAwayProb);
+
+  try {
+    const oddsPromise = getOddsForFixture(
+      fixtureId,
+      homeTeam,
+      awayTeam,
+      modelHomeProb,
+      modelDrawProb,
+      modelAwayProb
+    );
+    const timeoutPromise = new Promise<AggregatedOdds>((resolve) =>
+      setTimeout(() => resolve(fallbackOdds), timeoutMs)
+    );
+
+    return await Promise.race([oddsPromise, timeoutPromise]);
+  } catch (err) {
+    console.warn(`[ParlayBuilder] External odds provider failed for ${fixtureId}, falling back to Tier-3 Fair Model Baseline:`, err);
+    return fallbackOdds;
+  }
 }
 
 export async function buildStatisticalParlay(
   candidatePredictions: MarketPrediction[],
   options: ParlayBuilderOptions
 ): Promise<StatisticalParlay> {
-  const {
+  let {
     targetLegsCount,
     minProbability = 0.58,
     allowedMarkets,
@@ -40,7 +108,14 @@ export async function buildStatisticalParlay(
     targetFixtureId,
     prioritizePriorityLeagues = true,
     publishedMarkets,
+    fetchOdds,
+    disableLearningLoop = false,
   } = options;
+
+  // Force parlay generator to rely 100% on in-memory Tier-3 Fair Model Baseline markets (zero external network latency)
+  if (targetFixtureId && (!publishedMarkets || publishedMarkets.length === 0)) {
+    publishedMarkets = getFairModelBaselineOdds().publishedMarkets;
+  }
 
   // Dynamic bookmaker-verified line filter: no hardcoded bans.
   // Micro/low-line markets (Over 0.5 Goals, Over 5.5 Corners, etc.) are allowed
@@ -48,6 +123,33 @@ export async function buildStatisticalParlay(
   // Since the parlay builder works with fair odds (1/probability), we apply
   // the odds floor at 1.15x minimum. The actual bookmaker odds check happens
   // at the caller level (bot.ts / routes) via oddsAggregatorService.
+
+  const rawCandidates = Array.isArray(candidatePredictions) ? candidatePredictions : [];
+
+  // Quantitative Learning Feedback Loop:
+  // Multiply the raw model probability of candidate legs by the corresponding confidence
+  // multiplier derived from rolling 30-day settlement hit rates. Markets and leagues that
+  // historically underperform get down-weighted; winning patterns get prioritized.
+  const weightedCandidates: MarketPrediction[] = rawCandidates.map(p => {
+    if (!p) return p;
+    const rawProb = typeof p.estimatedProbability === 'number' && Number.isFinite(p.estimatedProbability)
+      ? p.estimatedProbability
+      : 0;
+    if (disableLearningLoop) {
+      return p;
+    }
+    const multiplier = getMarketConfidenceMultiplier(p.market, p.league);
+    if (multiplier === 1.0) {
+      return p;
+    }
+    const adjustedProb = Number(Math.min(0.99, Math.max(0.01, rawProb * multiplier)).toFixed(4));
+    return {
+      ...p,
+      rawProbability: p.rawProbability ?? rawProb,
+      confidenceMultiplier: multiplier,
+      estimatedProbability: adjustedProb,
+    };
+  });
 
   const isHighProb = minProbability >= 0.85;
 
@@ -58,16 +160,20 @@ export async function buildStatisticalParlay(
     const highProb = threshold >= 0.85;
     const result: MarketPrediction[] = [];
 
-    for (let i = 0; i < candidatePredictions.length; i++) {
-      const p = candidatePredictions[i];
+    for (let i = 0; i < weightedCandidates.length; i++) {
+      const p = weightedCandidates[i];
+      if (!p) continue;
       if (i > 0 && i % 15 === 0) {
         await new Promise(resolve => setImmediate(resolve));
       }
       if (leagueFilter !== 'ALL' && p.league !== leagueFilter) continue;
-      if (p.estimatedProbability < threshold) continue;
-      if (allowedMarkets && allowedMarkets.length > 0 && !allowedMarkets.includes(p.market)) continue;
+      const prob = typeof p.estimatedProbability === 'number' && Number.isFinite(p.estimatedProbability)
+        ? p.estimatedProbability
+        : 0;
+      if (prob < threshold) continue;
+      if (allowedMarkets && allowedMarkets.length > 0 && (!p.market || !allowedMarkets.includes(p.market))) continue;
       // Market Existence Check: reject markets not published by the bookmaker.
-      if (publishedMarkets && publishedMarkets.length > 0 && !publishedMarkets.includes(p.market)) continue;
+      if (publishedMarkets && publishedMarkets.length > 0 && (!p.market || !publishedMarkets.includes(p.market))) continue;
       // Corner floor: reject anything below Over 7.5 Corners (absolute minimum)
       if (p.market === 'OVER_5_5_CORNERS') continue;
       // High-prob expansion: Over 1.5 Goals only when xG_total >= 2.80
@@ -86,7 +192,12 @@ export async function buildStatisticalParlay(
         await new Promise(resolve => setImmediate(resolve));
       }
       const p = result[i];
-      const fairOdds = p.estimatedProbability > 0 ? 1 / p.estimatedProbability : Infinity;
+      if (!p) continue;
+      const prob = typeof p.estimatedProbability === 'number' && Number.isFinite(p.estimatedProbability) && p.estimatedProbability > 0
+        ? p.estimatedProbability
+        : null;
+      // Fallback safely to Fair Model Baseline (1 / prob) or 2.0 default
+      const fairOdds = prob ? 1 / prob : 2.0;
       if (fairOdds >= 1.15 && fairOdds <= 2.25) oddsFiltered.push(p);
     }
 
@@ -225,18 +336,22 @@ export async function buildStatisticalParlay(
 
   // Map to ParlayLeg format
   const parlayLegs: ParlayLeg[] = selectedPredictions.map(p => ({
-    fixtureId: p.fixtureId,
-    league: p.league,
-    fixtureDescription: p.fixtureDescription,
-    kickoff: p.kickoff,
-    market: p.market,
-    marketLabel: p.marketLabel,
-    selection: p.selection,
-    estimatedProbability: p.estimatedProbability,
-    supportingStatistics: p.supportingStatistics,
-    sampleSize: p.sampleSize,
-    dataFreshnessDays: p.dataFreshnessDays,
-    riskFactors: p.riskFactors,
+    fixtureId: p?.fixtureId || 'unknown',
+    league: p?.league || 'ALL',
+    fixtureDescription: p?.fixtureDescription || 'Match',
+    kickoff: p?.kickoff || new Date().toISOString(),
+    market: p?.market || ('HOME_WIN' as any),
+    marketLabel: p?.marketLabel || p?.market || 'Market',
+    selection: p?.selection || 'Selection',
+    estimatedProbability: typeof p?.estimatedProbability === 'number' && Number.isFinite(p.estimatedProbability)
+      ? p.estimatedProbability
+      : 0.5,
+    rawProbability: (p as any)?.rawProbability ?? p?.estimatedProbability,
+    confidenceMultiplier: (p as any)?.confidenceMultiplier ?? 1.0,
+    supportingStatistics: p?.supportingStatistics,
+    sampleSize: p?.sampleSize ?? 10,
+    dataFreshnessDays: p?.dataFreshnessDays ?? 1,
+    riskFactors: p?.riskFactors || [],
   }));
 
   // Calculate combined probability with correlation awareness:
@@ -245,7 +360,10 @@ export async function buildStatisticalParlay(
     if (mode === 'ANTI_CORRELATED') {
       // Independent product
       for (const leg of parlayLegs) {
-        combinedProb *= leg.estimatedProbability;
+        const legProb = typeof leg.estimatedProbability === 'number' && Number.isFinite(leg.estimatedProbability) && leg.estimatedProbability > 0
+          ? leg.estimatedProbability
+          : 0.5;
+        combinedProb *= legProb;
       }
     } else {
       // Intra-match positive correlation adjustment (Gaussian copula approximation)
@@ -253,8 +371,11 @@ export async function buildStatisticalParlay(
       let independentProduct = 1.0;
       let minLegProb = 1.0;
       for (const leg of parlayLegs) {
-        independentProduct *= leg.estimatedProbability;
-        if (leg.estimatedProbability < minLegProb) minLegProb = leg.estimatedProbability;
+        const legProb = typeof leg.estimatedProbability === 'number' && Number.isFinite(leg.estimatedProbability) && leg.estimatedProbability > 0
+          ? leg.estimatedProbability
+          : 0.5;
+        independentProduct *= legProb;
+        if (legProb < minLegProb) minLegProb = legProb;
       }
 
       // Group by fixture to measure intra-match correlation degree

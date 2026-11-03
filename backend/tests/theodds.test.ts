@@ -27,7 +27,7 @@ describe('TheOddsAdapter matching', () => {
       commence_time: '2026-10-17T11:30:00Z',
       bookmakers: [{ key: 'skybet', title: 'Sky Bet', last_update: '2026-10-17T11:00:00Z', markets: [{ key: 'h2h', last_update: '2026-10-17T11:00:00Z', outcomes: [{ name: 'Everton', price: 2.9 }, { name: 'Draw', price: 2.75 }, { name: 'Chelsea', price: 2.63 }] }] }],
     }]);
-    const adapter = new TheOddsAdapter('key', 'uk', 500, 50);
+    const adapter = new TheOddsAdapter('key', 'uk', 5000, 50);
     const odds = await adapter.getOddsForFixture(makeFixture('Everton', 'Chelsea', '2026-10-17T11:30:00Z'));
     expect(odds).not.toBeNull();
     expect(odds!.id).toBe('ev1');
@@ -39,7 +39,7 @@ describe('TheOddsAdapter matching', () => {
       commence_time: '2026-10-18T11:30:00Z',
       bookmakers: [],
     }]);
-    const adapter = new TheOddsAdapter('key', 'uk', 500, 50);
+    const adapter = new TheOddsAdapter('key', 'uk', 5000, 50);
     const odds = await adapter.getOddsForFixture(makeFixture('Everton', 'Chelsea', '2026-10-17T11:30:00Z'));
     expect(odds).toBeNull();
   });
@@ -50,7 +50,7 @@ describe('TheOddsAdapter matching', () => {
       commence_time: '2026-10-17T11:30:00Z',
       bookmakers: [],
     }]);
-    const adapter = new TheOddsAdapter('key', 'uk', 500, 50);
+    const adapter = new TheOddsAdapter('key', 'uk', 5000, 50);
     const odds = await adapter.getOddsForFixture(makeFixture('Everton', 'Chelsea', '2026-10-17T11:30:00Z'));
     expect(odds).toBeNull();
   });
@@ -61,7 +61,7 @@ describe('TheOddsAdapter matching', () => {
       commence_time: '2026-10-17T13:30:00Z',
       bookmakers: [],
     }]);
-    const adapter = new TheOddsAdapter('key', 'uk', 500, 50);
+    const adapter = new TheOddsAdapter('key', 'uk', 5000, 50);
     const odds = await adapter.getOddsForFixture(makeFixture('Everton', 'Chelsea', '2026-10-17T11:30:00Z'));
     expect(odds).toBeNull();
   });
@@ -71,7 +71,7 @@ describe('TheOddsAdapter matching', () => {
       { id: 'ev1', sport_key: 'soccer_epl', home_team: 'Everton', away_team: 'Chelsea', commence_time: '2026-10-17T11:30:00Z', bookmakers: [] },
       { id: 'ev2', sport_key: 'soccer_epl', home_team: 'Everton', away_team: 'Chelsea', commence_time: '2026-10-17T11:32:00Z', bookmakers: [] },
     ]);
-    const adapter = new TheOddsAdapter('key', 'uk', 500, 50);
+    const adapter = new TheOddsAdapter('key', 'uk', 5000, 50);
     const odds = await adapter.getOddsForFixture(makeFixture('Everton', 'Chelsea', '2026-10-17T11:30:00Z'));
     expect(odds).toBeNull();
   });

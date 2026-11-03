@@ -43,7 +43,7 @@ section('1) Immediate deferral inside handleGenerateParlay');
 section('2) Global interaction guard');
 {
   check('router invokes handleGenerateParlay', botSrc.includes('await this.handleGenerateParlay(interaction)'));
-  check('guard timer armed at 4000ms', botSrc.includes('}, 4000);'));
+  check('guard timer armed at 12000ms', botSrc.includes('}, 12000);'));
   check('guard clears timer in finally', botSrc.includes('clearTimeout(timeoutId);'));
   check('guard only edits an un-replied deferred interaction',
     botSrc.includes('if (interaction.deferred && !interaction.replied)'));
@@ -53,7 +53,7 @@ section('2) Global interaction guard');
 section('3) Inner generation timeout + graceful errors');
 {
   check('inner Promise.race guard present', botSrc.includes('Promise.race(['));
-  check('inner ceiling is 3500ms', botSrc.includes("setTimeout(() => reject(new Error('Parlay generation timed out after 3500ms')), 3500)"));
+  check('inner ceiling is 9000ms', botSrc.includes("setTimeout(() => reject(new Error('Parlay generation timed out after 9000ms')), 9000)"));
   check('router catches unhandled parlay errors', botSrc.includes("console.error('Unhandled parlay error:', err)"));
   check('error message is user-facing', botSrc.includes('An error occurred generating your parlay slip.'));
   check('editReply failures are swallowed safely', botSrc.includes("console.error('Error editReply failed:', editErr)"));

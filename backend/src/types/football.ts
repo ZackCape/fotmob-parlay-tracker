@@ -238,6 +238,8 @@ export interface ParlayLeg {
   marketLabel: string;
   selection: string;
   estimatedProbability: number;
+  rawProbability?: number;
+  confidenceMultiplier?: number;
   supportingStatistics: MarketPrediction['supportingStatistics'];
   sampleSize: number;
   dataFreshnessDays: number;

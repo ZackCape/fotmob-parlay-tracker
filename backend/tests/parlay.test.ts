@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildStatisticalParlay } from '../src/parlays/parlay-builder.js';
+import { buildStatisticalParlay, fetchOddsWithTimeout } from '../src/parlays/parlay-builder.js';
 import { filterNonCorrelatedPredictions } from '../src/parlays/correlation-detector.js';
 import { MarketPrediction } from '../src/types/football.js';
 
@@ -104,6 +104,33 @@ describe('Anti-Correlation & Parlay Engine', () => {
     expect(parlay25.combinedProbability).toBeGreaterThan(0);
     expect(parlay25.combinedProbability).toBeLessThan(0.01); // Exponential tail shrinkage
     expect(parlay25.riskWarning).toContain('Statistical Warning');
+  });
+
+  it('handles null, undefined, or sparse candidates without crashing', async () => {
+    const sparsePreds: any[] = [
+      null,
+      undefined,
+      createMockPrediction('match-1', 'HOME_WIN', 0.70),
+      { fixtureId: 'match-2', estimatedProbability: 0.75 }, // missing fields
+      createMockPrediction('match-3', 'DOUBLE_CHANCE_1X', 0.65),
+      { fixtureId: 'match-4', estimatedProbability: undefined },
+    ];
+
+    const parlay = await buildStatisticalParlay(sparsePreds, {
+      targetLegsCount: 5,
+      minProbability: 0.60,
+    });
+    expect(parlay).toBeDefined();
+    expect(Array.isArray(parlay.legs)).toBe(true);
+    expect(parlay.compoundOddsDecimal).toBeGreaterThan(0);
+  });
+
+  it('fetchOddsWithTimeout immediately falls back to Tier-3 Fair Model Baseline when provider lags or fails', async () => {
+    const odds = await fetchOddsWithTimeout('fx-lagging', 'Team A', 'Team B', 0.50, 0.25, 0.25, 50);
+    expect(odds).toBeDefined();
+    expect(odds.source).toBe('Fair Model Baseline');
+    expect(odds.home).toBeGreaterThan(1.0);
+    expect(odds.publishedMarkets.length).toBeGreaterThan(0);
   });
 });
 
