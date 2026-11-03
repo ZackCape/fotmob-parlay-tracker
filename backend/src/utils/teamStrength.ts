@@ -24,6 +24,7 @@
  */
 
 import { lookupTeamPower } from '../engine/teamPower.js';
+import { getTeamRecentStats } from '../services/multiLeagueDbService.js';
 
 /** League baseline goals per team per match, mirroring the DC engine. */
 export function leagueBaselineRate(league: string): number {
@@ -160,6 +161,30 @@ function defenseMultiplier(
  * Every returned value is strictly positive and finite.
  */
 export function estimateTeamStrengths(input: StrengthInput): TeamStrengths {
+  // Query multi-league DB when recent goal sample is missing or empty
+  let homeRecent = input.homeRecent;
+  if ((!homeRecent || !homeRecent.matches) && input.homeTeam) {
+    const stats = getTeamRecentStats(input.homeTeam);
+    if (stats && stats.matchesCount > 0) {
+      homeRecent = {
+        goalsForPerMatch: stats.avgGoalsScored,
+        goalsConcededPerMatch: stats.avgGoalsConceded,
+        matches: stats.matchesCount,
+      };
+    }
+  }
+
+  let awayRecent = input.awayRecent;
+  if ((!awayRecent || !awayRecent.matches) && input.awayTeam) {
+    const stats = getTeamRecentStats(input.awayTeam);
+    if (stats && stats.matchesCount > 0) {
+      awayRecent = {
+        goalsForPerMatch: stats.avgGoalsScored,
+        goalsConcededPerMatch: stats.avgGoalsConceded,
+        matches: stats.matchesCount,
+      };
+    }
+  }
   const baseline = leagueBaselineRate(input.league);
 
   // ELO power priors (alpha = attack, beta = defensive weakness).
@@ -170,15 +195,15 @@ export function estimateTeamStrengths(input: StrengthInput): TeamStrengths {
   const awayAtkPrior = awayPower?.attack ?? 1;
   const awayDefPrior = awayPower?.defense ?? 1;
 
-  const homeAtk = attackMultiplier(baseline, input.homeXg, input.homeRecent, homeAtkPrior);
-  const awayAtk = attackMultiplier(baseline, input.awayXg, input.awayRecent, awayAtkPrior);
-  const homeDef = defenseMultiplier(baseline, input.homeRecent, homeDefPrior);
-  const awayDef = defenseMultiplier(baseline, input.awayRecent, awayDefPrior);
+  const homeAtk = attackMultiplier(baseline, input.homeXg, homeRecent, homeAtkPrior);
+  const awayAtk = attackMultiplier(baseline, input.awayXg, awayRecent, awayAtkPrior);
+  const homeDef = defenseMultiplier(baseline, homeRecent, homeDefPrior);
+  const awayDef = defenseMultiplier(baseline, awayRecent, awayDefPrior);
 
   const used: string[] = [];
   if (input.homeXg || input.awayXg) used.push('fixture xG');
-  if (input.homeRecent?.matches || input.awayRecent?.matches) {
-    used.push(`recent form (${(input.homeRecent?.matches ?? 0) + (input.awayRecent?.matches ?? 0)} matches)`);
+  if (homeRecent?.matches || awayRecent?.matches) {
+    used.push(`recent form (${(homeRecent?.matches ?? 0) + (awayRecent?.matches ?? 0)} matches)`);
   }
   if (homePower || awayPower) used.push('ELO power ratings');
 

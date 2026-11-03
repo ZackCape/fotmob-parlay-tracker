@@ -16,8 +16,8 @@ export const BRAND = {
   positive: 0x16A34A,
   negative: 0xDC2626,
   neutral: 0x6B7280,
-  /** Embed footer crediting the probability engine. */
-  footer: 'Cape Predictor Engine • Powered by Dixon-Coles Probability Engine',
+  /** Embed footer tagline strictly adhering to brand guidelines. */
+  footer: 'Football Intelligence. Smarter Predictions.',
 } as const;
 
 export default BRAND;

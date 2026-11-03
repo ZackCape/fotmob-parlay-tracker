@@ -6,6 +6,7 @@ import { findTeamByIdOrName, ALL_AUTHENTIC_TEAMS } from '../data/authentic-teams
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { AdaptiveLearningEngine } from '../engine/adaptive-learning.js';
+import { getTeamVerifiedForm } from '../services/multiLeagueDbService.js';
 
 export interface FootballNewsArticle {
   id: string;
@@ -351,44 +352,57 @@ export class FootballDatabaseAdapter implements IFootballDataProvider {
         ['FootballDatabase.eu verified fixtures & player tracking', 'Bayesian Adaptive Learning Engine Active']
       );
 
+      const homeVerified = getTeamVerifiedForm(targetFixture.homeTeam.name, 5);
+      const awayVerified = getTeamVerifiedForm(targetFixture.awayTeam.name, 5);
+
       const analysis: MatchAnalysis = {
         fixture: {
           ...targetFixture,
           injuries: parsedInjuries.length > 0 ? parsedInjuries : null,
         },
         homeForm: {
-          matchesPlayed: 10,
-          wins: 6,
-          draws: 2,
-          losses: 2,
-          goalsScored: Math.round(homeAttack * 14),
-          goalsConceded: Math.round(homeDefense * 10),
-          cleanSheets: 4,
-          failedToScore: 1,
+          matchesPlayed: homeVerified.hasData ? homeVerified.totalMatches : 0,
+          wins: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'W').length : 0,
+          draws: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'D').length : 0,
+          losses: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'L').length : 0,
+          goalsScored: homeVerified.hasData ? homeVerified.recentMatches.reduce((acc, m) => acc + m.goalsFor, 0) : Math.round(homeAttack * 14),
+          goalsConceded: homeVerified.hasData ? homeVerified.recentMatches.reduce((acc, m) => acc + m.goalsAgainst, 0) : Math.round(homeDefense * 10),
+          cleanSheets: homeVerified.hasData ? homeVerified.recentMatches.filter((m) => m.goalsAgainst === 0).length : 0,
+          failedToScore: homeVerified.hasData ? homeVerified.recentMatches.filter((m) => m.goalsFor === 0).length : 0,
           avgShots: 14.8,
           avgShotsOnTarget: 5.4,
           avgCorners: homeRating?.avgCorners ?? 5.8,
           avgYellowCards: homeRating?.avgYellowCards ?? 1.6,
           avgXg: homeRating?.avgXg ?? 1.78,
-          last5Results: ['W', 'W', 'D', 'W', 'L'],
-          recentFixtures: [],
+          last5Results: homeVerified.results,
+          recentFixtures: homeVerified.recentMatches.map((m) => ({
+            date: m.date,
+            opponent: m.opponent,
+            score: m.score,
+            result: m.result,
+          })),
         },
         awayForm: {
-          matchesPlayed: 10,
-          wins: 5,
-          draws: 2,
-          losses: 3,
-          goalsScored: Math.round(awayAttack * 12),
-          goalsConceded: Math.round(awayDefense * 11),
-          cleanSheets: 3,
-          failedToScore: 2,
+          matchesPlayed: awayVerified.hasData ? awayVerified.totalMatches : 0,
+          wins: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'W').length : 0,
+          draws: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'D').length : 0,
+          losses: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'L').length : 0,
+          goalsScored: awayVerified.hasData ? awayVerified.recentMatches.reduce((acc, m) => acc + m.goalsFor, 0) : Math.round(awayAttack * 12),
+          goalsConceded: awayVerified.hasData ? awayVerified.recentMatches.reduce((acc, m) => acc + m.goalsAgainst, 0) : Math.round(awayDefense * 11),
+          cleanSheets: awayVerified.hasData ? awayVerified.recentMatches.filter((m) => m.goalsAgainst === 0).length : 0,
+          failedToScore: awayVerified.hasData ? awayVerified.recentMatches.filter((m) => m.goalsFor === 0).length : 0,
           avgShots: 11.9,
           avgShotsOnTarget: 4.0,
           avgCorners: awayRating?.avgCorners ?? 4.6,
           avgYellowCards: awayRating?.avgYellowCards ?? 2.1,
           avgXg: awayRating?.avgXg ?? 1.34,
-          last5Results: ['D', 'W', 'L', 'W', 'D'],
-          recentFixtures: [],
+          last5Results: awayVerified.results,
+          recentFixtures: awayVerified.recentMatches.map((m) => ({
+            date: m.date,
+            opponent: m.opponent,
+            score: m.score,
+            result: m.result,
+          })),
         },
         headToHead: {
           totalMeetings: 8,

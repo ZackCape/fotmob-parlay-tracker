@@ -3,6 +3,7 @@ import {
 } from 'discord.js';
 import { MatchAnalysis, MarketPrediction, Lineup } from '../types/football.js';
 import { BRAND } from './brand.js';
+import { getTeamVerifiedForm } from '../services/multiLeagueDbService.js';
 
 /* ------------------------------------------------------------------ *
  * Tabbed match-analysis embeds
@@ -311,7 +312,7 @@ function lineupBlock(lineup: Lineup | null | undefined, label: string): string {
 }
 
 function formBlock(results: Array<'W' | 'D' | 'L'> | null | undefined): string {
-  if (!results || results.length === 0) return 'No recent results published.';
+  if (!results || results.length === 0) return 'Form data unavailable (no recent verified matches in feed)';
   const glyphs = results.map((r) => (r === 'W' ? '🟢' : r === 'D' ? '🟡' : '🔴'));
   const wins = results.filter((r) => r === 'W').length;
   const draws = results.filter((r) => r === 'D').length;
@@ -326,15 +327,26 @@ export function buildLineupsTab(analysis: MatchAnalysis): EmbedBuilder {
     .setTitle(`Lineups & Form • ${teamNames(analysis)}`)
     .setTimestamp(new Date());
 
+  const homeVerified = getTeamVerifiedForm(analysis.fixture.homeTeam.name, 5);
+  const awayVerified = getTeamVerifiedForm(analysis.fixture.awayTeam.name, 5);
+
+  const homeValue = homeVerified.hasData
+    ? `${homeVerified.formattedSummary}${homeVerified.breakdownText ? `\n*Recent:*\n${homeVerified.breakdownText.slice(0, 300)}` : ''}`
+    : formBlock(analysis.homeForm?.last5Results);
+
+  const awayValue = awayVerified.hasData
+    ? `${awayVerified.formattedSummary}${awayVerified.breakdownText ? `\n*Recent:*\n${awayVerified.breakdownText.slice(0, 300)}` : ''}`
+    : formBlock(analysis.awayForm?.last5Results);
+
   e.addFields(
     {
       name: `${analysis.fixture.homeTeam.name} • Form`,
-      value: formBlock(analysis.homeForm?.last5Results),
+      value: homeValue,
       inline: true,
     },
     {
       name: `${analysis.fixture.awayTeam.name} • Form`,
-      value: formBlock(analysis.awayForm?.last5Results),
+      value: awayValue,
       inline: true,
     },
   );

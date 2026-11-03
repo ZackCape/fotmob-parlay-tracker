@@ -1,4 +1,5 @@
 import { Fixture, League, MarketPrediction, MarketType } from '../types/football.js';
+import { getTeamVerifiedForm } from '../services/multiLeagueDbService.js';
 import { calculateDixonColes } from './poisson-dixon-coles.js';
 import { evaluateActualOutcome } from './market-calculator.js';
 
@@ -128,7 +129,7 @@ export class AdaptiveLearningEngine {
         avgYellowCards: p.card,
         avgXg: p.xg,
         matchesLearnedCount: 0,
-        last5Results: ['W', 'W', 'D', 'W', 'L'],
+        last5Results: getTeamVerifiedForm(p.name, 5).results,
         recentScorelines: [],
         lastUpdated: new Date().toISOString(),
       });
@@ -165,7 +166,7 @@ export class AdaptiveLearningEngine {
         avgYellowCards: 1.9,
         avgXg: 1.30,
         matchesLearnedCount: 0,
-        last5Results: ['D', 'W', 'L', 'D', 'W'],
+        last5Results: getTeamVerifiedForm(teamName, 5).results,
         recentScorelines: [],
         lastUpdated: new Date().toISOString(),
       };

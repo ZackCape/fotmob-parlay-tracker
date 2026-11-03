@@ -5,6 +5,7 @@ import { ALL_AUTHENTIC_TEAMS, findTeamByIdOrName } from '../data/authentic-teams
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { AdaptiveLearningEngine } from '../engine/adaptive-learning.js';
+import { getTeamVerifiedForm } from '../services/multiLeagueDbService.js';
 
 // FotMob competition ID mapping
 const FOTMOB_LEAGUE_IDS: Record<number, League> = {
@@ -204,41 +205,54 @@ export class FotmobAdapter implements IFootballDataProvider {
         ['FotMob verified match momentum active', 'Adaptive Bayesian Learning Active']
       );
 
+      const homeVerified = getTeamVerifiedForm(fixture.homeTeam.name, 5);
+      const awayVerified = getTeamVerifiedForm(fixture.awayTeam.name, 5);
+
       return {
         fixture,
         homeForm: {
-          matchesPlayed: 10,
-          wins: 6,
-          draws: 2,
-          losses: 2,
-          goalsScored: 19,
-          goalsConceded: 9,
-          cleanSheets: 4,
-          failedToScore: 1,
+          matchesPlayed: homeVerified.hasData ? homeVerified.totalMatches : 0,
+          wins: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'W').length : 0,
+          draws: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'D').length : 0,
+          losses: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'L').length : 0,
+          goalsScored: homeVerified.hasData ? homeVerified.recentMatches.reduce((acc, m) => acc + m.goalsFor, 0) : 0,
+          goalsConceded: homeVerified.hasData ? homeVerified.recentMatches.reduce((acc, m) => acc + m.goalsAgainst, 0) : 0,
+          cleanSheets: homeVerified.hasData ? homeVerified.recentMatches.filter((m) => m.goalsAgainst === 0).length : 0,
+          failedToScore: homeVerified.hasData ? homeVerified.recentMatches.filter((m) => m.goalsFor === 0).length : 0,
           avgShots: 14.5,
           avgShotsOnTarget: 5.2,
           avgCorners: 5.9,
           avgYellowCards: 1.5,
           avgXg: 1.72,
-          last5Results: ['W', 'W', 'D', 'W', 'L'],
-          recentFixtures: [],
+          last5Results: homeVerified.results,
+          recentFixtures: homeVerified.recentMatches.map((m) => ({
+            date: m.date,
+            opponent: m.opponent,
+            score: m.score,
+            result: m.result,
+          })),
         },
         awayForm: {
-          matchesPlayed: 10,
-          wins: 5,
-          draws: 2,
-          losses: 3,
-          goalsScored: 15,
-          goalsConceded: 12,
-          cleanSheets: 3,
-          failedToScore: 2,
+          matchesPlayed: awayVerified.hasData ? awayVerified.totalMatches : 0,
+          wins: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'W').length : 0,
+          draws: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'D').length : 0,
+          losses: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'L').length : 0,
+          goalsScored: awayVerified.hasData ? awayVerified.recentMatches.reduce((acc, m) => acc + m.goalsFor, 0) : 0,
+          goalsConceded: awayVerified.hasData ? awayVerified.recentMatches.reduce((acc, m) => acc + m.goalsAgainst, 0) : 0,
+          cleanSheets: awayVerified.hasData ? awayVerified.recentMatches.filter((m) => m.goalsAgainst === 0).length : 0,
+          failedToScore: awayVerified.hasData ? awayVerified.recentMatches.filter((m) => m.goalsFor === 0).length : 0,
           avgShots: 12.1,
           avgShotsOnTarget: 4.1,
           avgCorners: 4.7,
           avgYellowCards: 2.0,
           avgXg: 1.35,
-          last5Results: ['D', 'W', 'L', 'W', 'D'],
-          recentFixtures: [],
+          last5Results: awayVerified.results,
+          recentFixtures: awayVerified.recentMatches.map((m) => ({
+            date: m.date,
+            opponent: m.opponent,
+            score: m.score,
+            result: m.result,
+          })),
         },
         headToHead: {
           totalMeetings: 6,

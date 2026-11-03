@@ -153,6 +153,7 @@ export class DiscordBotService {
         'processed_event_hashes.json': '[]',
         'guild_configs.json': '{}',
         'premierbet_odds.json': '{}',
+        'multi_league_history.json': '{"version":1,"lastSync":null,"matches":[]}',
       };
       for (const [file, content] of Object.entries(defaults)) {
         const fp = nodePath.join(dataDir, file);
@@ -171,7 +172,15 @@ export class DiscordBotService {
     // empty and every saved slip and tracked match would silently stop receiving
     // live updates until the user saved/tracked it again.
     try {
-      const slips = CP.initSavedParlays();
+      // Initialize Multi-League History Database & periodic sync
+    try {
+      const { initializeMultiLeagueSync } = await import('../services/multiLeagueDbService.js');
+      initializeMultiLeagueSync();
+    } catch (e: any) {
+      console.warn('[DiscordBot] Multi-league sync initialization failed:', e.message);
+    }
+
+    const slips = CP.initSavedParlays();
       const subs = CP.initLiveSubscriptions();
       for (const fixtureId of subs.fixtureIds) this.liveEventPinnedFixtureIds.add(fixtureId);
       console.log(
