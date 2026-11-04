@@ -16,8 +16,8 @@ const LEAGUE_PRIORS = {
     DOUBLE_CHANCE_1X: 0.69,
     DOUBLE_CHANCE_X2: 0.56,
     DOUBLE_CHANCE_12: 0.75,
-    HOME_OVER_0_5: 0.79,
-    AWAY_OVER_0_5: 0.68,
+    HOME_OVER_0_5: 0.80,
+    AWAY_OVER_0_5: 0.75,
     HT_OVER_0_5: 0.70,
     HT_DRAW: 0.42,
     OVER_7_5_CORNERS: 0.75,
@@ -68,6 +68,11 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
         if (awayScore > 0)
             probAwayOver05 += probability;
     }
+    // Complement discrete matrix with continuous Poisson CDF so away offensive ratings are fully honored
+    const poissonProbHome05 = 1 - Math.exp(-dcResult.homeExpectedGoals);
+    const poissonProbAway05 = 1 - Math.exp(-dcResult.awayExpectedGoals);
+    probHomeOver05 = Math.max(probHomeOver05, poissonProbHome05);
+    probAwayOver05 = Math.max(probAwayOver05, poissonProbAway05);
     const probUnder25 = 1 - probOver25;
     const probUnder35 = 1 - probOver35;
     const probBttsNo = 1 - probBttsYes;
@@ -329,7 +334,13 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
         },
     ];
     return rawMarkets.map((item, index) => {
-        const calibrated = calibrateProbability(item.rawProb, item.prior, sampleSize);
+        // When sampleSize is 0, Dixon-Coles draws on season ELO/power ratings. We grant
+        // effective sample size = 8 and priorWeight = 2.0 so strong offensive ratings
+        // (especially away favorites like Man City or Real Madrid) are not overly shrunk
+        // down into suppression.
+        const effectiveSampleSize = sampleSize > 0 ? sampleSize : 8;
+        const priorWeight = sampleSize > 0 ? 5.0 : 2.0;
+        const calibrated = calibrateProbability(item.rawProb, item.prior, effectiveSampleSize, priorWeight);
         const combinedRisks = [...riskFactors, ...item.extraRisks];
         return {
             id: `${fixture.id}-${item.market}`,

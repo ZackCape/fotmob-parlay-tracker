@@ -308,7 +308,10 @@ export async function buildStatisticalParlay(
           compareCompetitionPriority(a.league, b.league) || (b.estimatedProbability - a.estimatedProbability))
       : [...filtered].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
 
-    // Pass 1: Stacking up to 2 legs per match from different market families
+    // Check if away team goal candidates exist in pool to enable balanced alternation
+    const hasAvailableAway = sorted.some(p => p && p.market === 'AWAY_OVER_0_5');
+
+    // Pass 1: Stacking up to 2 legs per match from different market families with Home/Away team goal balance
     for (let i = 0; i < sorted.length; i++) {
       if (selectedPredictions.length >= targetLegsCount) break;
       if (i > 0 && i % 15 === 0) {
@@ -319,6 +322,16 @@ export async function buildStatisticalParlay(
       const fKey = cand.fixtureId || cand.fixtureDescription;
       const count = fixtureLegCount.get(fKey) || 0;
       if (count >= MAX_LEGS_PRIMARY) continue;
+
+      // Diversity rule: enforce a balanced ratio of Home vs. Away team goal selections
+      // (max 50% home team goal props) so slips don't cluster exclusively on home goal lines.
+      if (cand.market === 'HOME_OVER_0_5' && hasAvailableAway) {
+        const homeGoalsCount = selectedPredictions.filter(p => p.market === 'HOME_OVER_0_5').length;
+        const awayGoalsCount = selectedPredictions.filter(p => p.market === 'AWAY_OVER_0_5').length;
+        if (homeGoalsCount > awayGoalsCount) {
+          continue; // Defer home goal selection until away goal props catch up
+        }
+      }
 
       const matchConflicts = selectedPredictions.some(
         sel => (sel.fixtureId === cand.fixtureId || sel.fixtureDescription === cand.fixtureDescription) &&
@@ -362,7 +375,36 @@ export async function buildStatisticalParlay(
     const independentPicks = filterNonCorrelatedPredictions(ordered, {
       respectGivenOrder: prioritizePriorityLeagues,
     });
-    selectedPredictions = independentPicks.slice(0, targetLegsCount);
+
+    // Apply Home/Away team goals balance constraint (max 50% home team goal props)
+    const hasAwayInIndependent = independentPicks.some(p => p.market === 'AWAY_OVER_0_5');
+    if (hasAwayInIndependent) {
+      const balancedPicks: MarketPrediction[] = [];
+      const deferredHome: MarketPrediction[] = [];
+      let hCount = 0;
+      let aCount = 0;
+
+      for (const p of independentPicks) {
+        if (balancedPicks.length >= targetLegsCount) break;
+        if (p.market === 'HOME_OVER_0_5') {
+          if (hCount > aCount) {
+            deferredHome.push(p);
+            continue;
+          }
+          hCount++;
+        } else if (p.market === 'AWAY_OVER_0_5') {
+          aCount++;
+        }
+        balancedPicks.push(p);
+      }
+      for (const p of deferredHome) {
+        if (balancedPicks.length >= targetLegsCount) break;
+        balancedPicks.push(p);
+      }
+      selectedPredictions = balancedPicks;
+    } else {
+      selectedPredictions = independentPicks.slice(0, targetLegsCount);
+    }
   }
 
   const actualCount = selectedPredictions.length;
