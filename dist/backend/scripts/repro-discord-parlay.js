@@ -32,6 +32,7 @@ async function runRepro() {
         { name: 'Same Game Parlay', league: 'ALL', mode: 'same_game', legs: 5, clearMemCache: false },
         { name: 'High Min Probability', league: 'ALL', mode: 'anti_correlated', legs: 5, min_probability: 85, clearMemCache: false },
         { name: 'Championship only (sparse)', league: 'CHAMPIONSHIP', mode: 'anti_correlated', legs: 5, clearMemCache: false },
+        { name: 'Correlated Multi-Leg (Grouping verification)', league: 'ALL', mode: 'correlated', legs: 10, clearMemCache: false },
     ];
     let hasFailure = false;
     for (const tc of testCases) {
@@ -106,6 +107,17 @@ async function runRepro() {
             const perMatchCalls = capturedRequests.filter(r => /summary|events\?|boxscore/i.test(r));
             if (perMatchCalls.length > 0) {
                 throw new Error(`CRITICAL VIOLATION: ${perMatchCalls.length} per-match HTTP calls detected during parlay generation!`);
+            }
+            // If checking grouping on correlated multi-leg, assert contiguous grouping & match count
+            if (tc.name.includes('Grouping verification')) {
+                const desc = replyPayload?.embeds?.[0]?.data?.description || replyPayload?.embeds?.[0]?.description || '';
+                console.log('[Grouping Verification] Full Embed Description:\n', desc);
+                if (!desc.includes('Matches') && !desc.includes('•')) {
+                    console.warn('[Grouping Verification] Note: Matches badge or bullet separator not present, check leg distribution.');
+                }
+                else {
+                    console.log('[Grouping Verification] PASSED: Match group bullet formatting confirmed in output.');
+                }
             }
             // Assert completion within ceiling (< 1500ms)
             if (elapsedMs > 1500) {

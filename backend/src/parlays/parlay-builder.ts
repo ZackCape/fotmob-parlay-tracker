@@ -337,7 +337,7 @@ export async function buildStatisticalParlay(
   }
 
   // Map to ParlayLeg format
-  const parlayLegs: ParlayLeg[] = selectedPredictions.map(p => ({
+  let parlayLegs: ParlayLeg[] = selectedPredictions.map(p => ({
     fixtureId: p?.fixtureId || 'unknown',
     league: p?.league || 'ALL',
     fixtureDescription: p?.fixtureDescription || 'Match',
@@ -355,6 +355,34 @@ export async function buildStatisticalParlay(
     dataFreshnessDays: p?.dataFreshnessDays ?? 1,
     riskFactors: p?.riskFactors || [],
   }));
+
+  // Group and cluster legs by fixture so multi-market bets from the same match are contiguous.
+  // 1. Order fixture groups by the highest individual leg probability within each fixture (descending),
+  //    respecting competition priority when enabled.
+  // 2. Within each fixture group, order legs by probability (descending).
+  const fixtureGroupMap = new Map<string, ParlayLeg[]>();
+  for (const leg of parlayLegs) {
+    const key = leg.fixtureId || leg.fixtureDescription;
+    const group = fixtureGroupMap.get(key) || [];
+    group.push(leg);
+    fixtureGroupMap.set(key, group);
+  }
+
+  for (const group of fixtureGroupMap.values()) {
+    group.sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+  }
+
+  const sortedGroups = Array.from(fixtureGroupMap.values()).sort((groupA, groupB) => {
+    if (prioritizePriorityLeagues) {
+      const pDiff = compareCompetitionPriority(groupA[0]?.league, groupB[0]?.league);
+      if (pDiff !== 0) return pDiff;
+    }
+    const maxA = groupA[0]?.estimatedProbability ?? 0;
+    const maxB = groupB[0]?.estimatedProbability ?? 0;
+    return maxB - maxA;
+  });
+
+  parlayLegs = sortedGroups.flat();
 
   // Calculate combined probability with correlation awareness:
   let combinedProb = 1.0;

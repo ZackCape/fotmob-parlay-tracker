@@ -3294,33 +3294,79 @@ export class DiscordBotService {
       ? 'Same-Game Parlay (SGP)'
       : mode === 'CORRELATED_ALLOWED' ? 'Correlated Parlay' : 'Statistical Parlay';
 
-    const legsList = parlay.legs.map((l, i) =>
-      isSgp
-        ? `${i + 1}. \`${l.marketLabel}\`: **${l.selection}** — **${(l.estimatedProbability * 100).toFixed(1)}%** prob`
-        : `${i + 1}. **${l.fixtureDescription}**: \`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}% | ${l.league})`,
-    ).join('\n');
+    // Group contiguous legs by match for a clean, compact one-line per match sportsbook display
+    interface MatchLegGroup {
+      fixtureId: string;
+      fixtureDescription: string;
+      league: string;
+      legs: typeof parlay.legs;
+    }
+
+    const matchGroups: MatchLegGroup[] = [];
+    for (const leg of parlay.legs) {
+      const prev = matchGroups[matchGroups.length - 1];
+      if (prev && (prev.fixtureId === leg.fixtureId || prev.fixtureDescription === leg.fixtureDescription)) {
+        prev.legs.push(leg);
+      } else {
+        matchGroups.push({
+          fixtureId: leg.fixtureId,
+          fixtureDescription: leg.fixtureDescription,
+          league: leg.league,
+          legs: [leg],
+        });
+      }
+    }
+
+    const legsList = isSgp
+      ? parlay.legs.map((l, i) =>
+          `${i + 1}. \`${l.marketLabel}\`: **${l.selection}** — **${(l.estimatedProbability * 100).toFixed(1)}%** prob`
+        ).join('\n')
+      : matchGroups.map((grp, i) => {
+          const picks = grp.legs.map(l => `\`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`).join(' • ');
+          return `${i + 1}. **${grp.fixtureDescription}** (${grp.league}): ${picks}`;
+        }).join('\n');
 
     const insufficient = parlay.status === 'INSUFFICIENT_SELECTIONS'
       ? `\n\n> ⚠️ ${parlay.message}`
       : '';
 
+    const hasSharedMatches = !isSgp && matchGroups.length < parlay.actualLegsCount && parlay.actualLegsCount > 0;
+    const matchCountBadge = hasSharedMatches ? ` (${matchGroups.length} Matches)` : '';
+
     const header = isSgp
       ? `🔥 **Same-Game Parlay (SGP) — Single Match Stacking**\n🏟️ Match: **${parlay.legs[0]?.fixtureDescription || 'Featured Fixture'}**\n\n`
-      : `⚡ **${parlay.actualLegsCount}-Leg ${modeLabel}** — ${leagueFilter === 'ALL' ? 'all leagues' : leagueFilter}, min leg probability ${(minProbability * 100).toFixed(0)}%:\n\n`;
+      : `⚡ **${parlay.actualLegsCount}-Leg ${modeLabel}${matchCountBadge}** — ${leagueFilter === 'ALL' ? 'all leagues' : leagueFilter}, min leg probability ${(minProbability * 100).toFixed(0)}%:\n\n`;
 
     // Priority only bites when the pool is drawn from every league.
     const priorityLine = !isSgp && leagueFilter === 'ALL'
       ? `• **Priority**: \`${PRIORITY_LEAGUE_LABEL}\` — ranked ahead of the secondary leagues\n`
       : '';
 
-    return (
-      `${header}${legsList}${insufficient}\n\n` +
+    const footerDetails =
       `• **Combined Probability**: \`${(parlay.combinedProbability * 100).toFixed(2)}%\`\n` +
       `• **Fair Compound Odds**: \`${parlay.compoundOddsDecimal}x\`\n` +
       priorityLine +
       `• **Conditions**: \`legs=${target}\` • \`min=${(minProbability * 100).toFixed(0)}%\` • \`league=${leagueFilter}\` • \`mode=${mode}\`\n\n` +
-      `*Type \`/track\` to follow live match motion, or build your own slip with \`/customparlay\`!*`
-    );
+      `*Type \`/track\` to follow live match motion, or build your own slip with \`/customparlay\`!*`;
+
+    const fullMessage = `${header}${legsList}${insufficient}\n\n${footerDetails}`;
+
+    if (fullMessage.length <= 4000) {
+      return fullMessage;
+    }
+
+    let truncatedLegs = '';
+    const legLines = legsList.split('\n');
+    let renderedCount = 0;
+    for (let i = 0; i < legLines.length; i++) {
+      const candidate = (truncatedLegs ? truncatedLegs + '\n' : '') + legLines[i];
+      const testTotal = `${header}${candidate}\n> *(+${legLines.length - 1 - i} more matches tracked in background)*${insufficient}\n\n${footerDetails}`;
+      if (testTotal.length > 3900) break;
+      truncatedLegs = candidate;
+      renderedCount = i + 1;
+    }
+    const overflowNotice = renderedCount < legLines.length ? `\n> *(+${legLines.length - renderedCount} more matches tracked in background)*` : '';
+    return `${header}${truncatedLegs}${overflowNotice}${insufficient}\n\n${footerDetails}`;
     } catch (err: any) {
       console.error('[PARLAY_ERROR] generateParlayReply failed with stack:', err?.stack || err);
       throw err;
