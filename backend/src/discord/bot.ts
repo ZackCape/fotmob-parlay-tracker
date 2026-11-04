@@ -253,11 +253,11 @@ export class DiscordBotService {
     const prewarm = async () => {
       try {
         const today = new Date().toISOString().substring(0, 10);
-        const tLookaheadStart = Date.now();
-        const tomorrow = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
+
+        const tomorrowDate = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
         await Promise.allSettled([
           this.factory.getFastFixturesForParlay(today, 'ALL'),
-          this.factory.getFastFixturesForParlay(tomorrow, 'ALL'),
+          this.factory.getFastFixturesForParlay(tomorrowDate, 'ALL'),
         ]);
         console.info('[DiscordBot] Parlay background pre-warming completed');
       } catch (e: any) {
@@ -603,7 +603,7 @@ export class DiscordBotService {
           const timeoutId = setTimeout(async () => {
             try {
               if (interaction.deferred && !interaction.replied) {
-                await interaction.editReply({ content: '⚠️ Request timed out while scanning live markets [v2.5]. Please try again.' });
+                await interaction.editReply({ content: '⚠️ Request timed out while scanning live markets [v2.6]. Please try again.' });
               }
             } catch (e) { console.error('Timeout editReply failed:', e); }
           }, 12000);
@@ -614,7 +614,7 @@ export class DiscordBotService {
             console.error('Unhandled parlay error:', err);
             console.error('[PARLAY_ERROR] /generateparlay interaction failed with stack:', err?.stack || err);
             const errMsg = (err as Error)?.message || String(err);
-            const errText = `⚠️ Parlay Error [v2.5]: ${errMsg.slice(0, 1800)}`;
+            const errText = `⚠️ Parlay Error [v2.6]: ${errMsg.slice(0, 1800)}`;
             if (interaction.deferred && !interaction.replied) {
               try {
                 await interaction.editReply({ content: errText });
@@ -1841,7 +1841,9 @@ export class DiscordBotService {
                 break;
             }
 
-            const embed = new EmbedBuilder()
+
+
+      const embed = new EmbedBuilder()
               .setColor(BRAND.accent)
               .setAuthor({ name: BRAND.author })
               .setTitle(title)
@@ -2640,6 +2642,7 @@ export class DiscordBotService {
 
       // Ceiling on market scanning: allows the parlay generator enough time to finish
       // scanning and aggregating odds without being prematurely killed.
+      const trace = { step: 'init', startedAt: Date.now(), details: '' };
       const replyText = await Promise.race([
         this.generateParlayReply({
           legs,
@@ -2648,15 +2651,18 @@ export class DiscordBotService {
           minProbability: minPct ? minPct / 100 : undefined,
           userId: interaction.user.id,
           channelId: interaction.channelId,
-        }),
+        }, trace),
         new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error('Parlay generation timed out after 9000ms')), 9000)
+          setTimeout(() => reject(new Error(`Timed out after 9000ms at step [${trace.step}] (${trace.details}) [v2.6]`)), 9000)
         ),
       ]);
 
       if (!replyText || !replyText.trim()) {
         throw new Error('Parlay builder returned an empty ticket');
       }
+
+      trace.step = '7_build_embed';
+      trace.details = 'build_and_send';
 
       const embed = new EmbedBuilder()
         .setColor(BRAND.accent)
@@ -3161,7 +3167,7 @@ export class DiscordBotService {
     minProbability?: number;
     userId?: string;
     channelId?: string;
-  } = {}): Promise<string> {
+  } = {}, trace?: { step: string; startedAt: number; details: string }): Promise<string> {
     const valid = [5, 10, 15, 20, 25];
     const requested = typeof opts.legs === 'number' && Number.isFinite(opts.legs) ? opts.legs : 5;
     const target = (valid.includes(requested) ? requested : 5) as ParlayLegCount;
@@ -3179,6 +3185,7 @@ export class DiscordBotService {
 
     try {
       const today = new Date().toISOString().substring(0, 10);
+      if (trace) { trace.step = '1_fetch_fixtures'; trace.details = `today=${today}`; }
       let allFixtures: any[] = [];
       try {
         allFixtures = await this.factory.getFastFixturesForParlay(today, 'ALL');
@@ -3192,10 +3199,14 @@ export class DiscordBotService {
       // rank the Premier League and Champions League fixtures at the top of the
       // pool so the priority competitions lead the slip.
       const verified = (allFixtures || []).filter(fx => fx && isVerifiedFixture(fx));
+      if (trace) { trace.step = '2_filter_prekickoff'; trace.details = `verified=${verified.length}`; }
       let preKickoff = CP.filterPreKickoffFixtures(verified);
       if (preKickoff.length === 0) {
+
         const tLookaheadStart = Date.now();
         const tomorrow = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
+        if (trace) { trace.step = '3_lookahead_tomorrow'; trace.details = `tomorrow=${tomorrow}`; }
+
         try {
           const tomorrowTimeout = new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Lookahead timeout 1500ms')), 1500));
           const tomorrowFixtures = await Promise.race([this.factory.getFastFixturesForParlay(tomorrow, 'ALL'), tomorrowTimeout]);
@@ -3216,7 +3227,10 @@ export class DiscordBotService {
       // Zero external network adapter calls during command execution: resolves in <50ms.
       const tAnalyzeStart = Date.now();
       const fixturesToScan = fixtures.slice(0, 30);
-      for (const fx of fixturesToScan) {
+      if (trace) { trace.step = '4_analyze_matches_loop'; trace.details = `0/${fixturesToScan.length}`; }
+      for (let i = 0; i < fixturesToScan.length; i++) {
+        const fx = fixturesToScan[i];
+        if (trace) { trace.details = `match ${i + 1}/${fixturesToScan.length}`; }
         if (!fx || !fx.id) continue;
         const cachedAnalysis = (this.factory as any).getCached?.(`match:${fx.id}`);
         if (cachedAnalysis?.marketPredictions?.length) {
@@ -3238,6 +3252,7 @@ export class DiscordBotService {
         return '📅 **No Scheduled Fixtures**\n\nNo active fixtures were found for this date. Check back closer to matchday kickoffs or select another date.';
       }
 
+      if (trace) { trace.step = '5_build_statistical_parlay'; trace.details = `candidates=${preds.length}`; }
       const tBuilderStart = Date.now();
       const parlay = await buildStatisticalParlay(preds, {
         targetLegsCount: target,
@@ -3248,9 +3263,10 @@ export class DiscordBotService {
       });
       t_builder = Date.now() - tBuilderStart;
       console.info(`[DiscordBot] Parlay generated in ${Date.now() - t0}ms (fixtures: ${t_fixtures}ms, lookahead: ${t_lookahead}ms, analyze: ${t_analyze}ms, builder: ${t_builder}ms)`);
+      if (trace) { trace.step = '6_save_parlay'; trace.details = `legs=${parlay.legs.length}`; }
       if (this.trackerService) {
         try {
-          await this.trackerService.trackParlay(parlay);
+          void this.trackerService.trackParlay(parlay).catch(trackerErr => console.warn('[DiscordBot] Tracker failed:', trackerErr));
         } catch (trackerErr) {
           console.warn('[DiscordBot] Tracker service failed:', trackerErr);
         }

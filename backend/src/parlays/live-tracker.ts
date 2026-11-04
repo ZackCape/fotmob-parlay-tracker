@@ -78,7 +78,7 @@ export class LiveParlayTrackerService {
       let fixture: Fixture | null = null;
 
       try {
-        const details = await this.factory.getMatchDetails(leg.fixtureId);
+        const details = (this.factory as any).getCached?.(`match:${leg.fixtureId}`) || await this.factory.getMatchDetails(leg.fixtureId);
         fixture = details?.fixture || null;
       } catch (e) {
         // Fallback

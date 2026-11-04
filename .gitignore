@@ -5,6 +5,7 @@ node_modules/
 
 # Data / databases / caches
 data/
+!data/fixtures_cache.json
 *.log
 
 # Build output

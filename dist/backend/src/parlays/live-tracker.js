@@ -58,7 +58,7 @@ export class LiveParlayTrackerService {
             const leg = tracked.parlay.legs[i];
             let fixture = null;
             try {
-                const details = await this.factory.getMatchDetails(leg.fixtureId);
+                const details = this.factory.getCached?.(`match:${leg.fixtureId}`) || await this.factory.getMatchDetails(leg.fixtureId);
                 fixture = details?.fixture || null;
             }
             catch (e) {

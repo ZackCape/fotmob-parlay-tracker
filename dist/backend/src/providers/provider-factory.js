@@ -73,6 +73,7 @@ function extractH2hPrices(snapshot) {
         draw: safe(market.outcomes?.find((o) => /draw/i.test(o.name))?.price),
     };
 }
+const moduleFixturesCache = new Map();
 export class DataProviderFactory {
     primaryProvider;
     backupProvider;
@@ -331,8 +332,7 @@ export class DataProviderFactory {
     }
     FILE_CACHE = nodePath.resolve(process.cwd(), 'data', 'fixtures_cache.json');
     readJsonCache() {
-        if (process.env.NODE_ENV !== 'production')
-            return null;
+        // Allow JSON cache fallback across all environments
         try {
             if (!fs.existsSync(this.FILE_CACHE))
                 return null;
@@ -341,7 +341,8 @@ export class DataProviderFactory {
                 return null;
             if (raw.version !== DataProviderFactory.CACHE_VERSION)
                 return null;
-            if (Date.now() - raw.cachedAt > 30 * 60 * 1000)
+            // Keep cached verified schedule valid up to 72h as offline baseline
+            if (Date.now() - raw.cachedAt > 72 * 60 * 60 * 1000)
                 return null;
             return raw;
         }
@@ -350,11 +351,14 @@ export class DataProviderFactory {
         }
     }
     writeJsonCache(data) {
-        if (process.env.NODE_ENV !== 'production')
-            return;
+        const newItems = Array.isArray(data) ? data : [];
         try {
             fs.mkdirSync(nodePath.dirname(this.FILE_CACHE), { recursive: true });
-            fs.writeFileSync(this.FILE_CACHE, JSON.stringify({ cachedAt: Date.now(), version: DataProviderFactory.CACHE_VERSION, data }));
+            const existing = this.readJsonCache();
+            const existingData = Array.isArray(existing?.data) ? existing.data : [];
+            const seen = new Set(newItems.map((f) => f.id));
+            const merged = [...newItems, ...existingData.filter((f) => !seen.has(f.id))];
+            fs.writeFileSync(this.FILE_CACHE, JSON.stringify({ cachedAt: Date.now(), version: DataProviderFactory.CACHE_VERSION, data: merged }, null, 2));
         }
         catch { }
     }
@@ -366,6 +370,18 @@ export class DataProviderFactory {
         }
         const promise = (async () => {
             const ttlMs = this.ttlForFixtureDate(date);
+            // Fast disk cache hit: returns immediately (<2ms) if fixtures for this date exist on disk
+            const fc = this.readJsonCache();
+            if (fc && Array.isArray(fc.data)) {
+                const cleaned = fc.data.filter((f) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+                const filtered = cleaned.filter((f) => (league === 'ALL' || f.league === league) && f.date === date);
+                if (filtered.length > 0) {
+                    console.info(`[Factory] fast parlay file cache HIT ${date} ${league} (${filtered.length} fixtures)`);
+                    this.setCache(cacheKey, filtered, ttlMs);
+                    moduleFixturesCache.set(cacheKey, { data: filtered, cachedAt: Date.now() });
+                    return filtered;
+                }
+            }
             if (this.config.dataProvider === 'verified-archive') {
                 const fx = await this.fallbackProvider.getFixturesByDate(date, league);
                 if (fx.length > 0)
@@ -380,7 +396,7 @@ export class DataProviderFactory {
             }
             // a) In-memory cache. Checked before external calls so bursts of UI clicks
             //    are served from RAM.
-            const cached = this.getCached(cacheKey);
+            const cached = this.getCached(cacheKey) || moduleFixturesCache.get(cacheKey)?.data;
             if (cached && cached.length > 0) {
                 console.info(`[Factory] mem cache HIT fixtures ${date} ${league} (${cached.length} fixtures)`);
                 return cached;
@@ -480,6 +496,7 @@ export class DataProviderFactory {
             fixtures = fixtures.map((f) => ({ ...f, retrievedAt }));
             if (fixtures.length > 0) {
                 this.setCache(cacheKey, fixtures, ttlMs);
+                moduleFixturesCache.set(cacheKey, { data: fixtures, cachedAt: Date.now() });
                 this.writeJsonCache(fixtures);
             }
             return fixtures;
@@ -498,7 +515,7 @@ export class DataProviderFactory {
      */
     async getFastFixturesForParlay(date, league = 'ALL') {
         const cacheKey = `fixtures:${date}:${league}`;
-        const cached = this.getCached(cacheKey);
+        const cached = this.getCached(cacheKey) || moduleFixturesCache.get(cacheKey)?.data;
         if (cached && cached.length > 0) {
             console.info(`[Factory] fast parlay mem cache HIT fixtures ${date} ${league} (${cached.length} fixtures)`);
             return cached;
@@ -508,12 +525,24 @@ export class DataProviderFactory {
             return this.inFlight.get(inflightKey);
         }
         const promise = (async () => {
-            const secondCheck = this.getCached(cacheKey);
+            const secondCheck = this.getCached(cacheKey) || moduleFixturesCache.get(cacheKey)?.data;
             if (secondCheck && secondCheck.length > 0) {
                 return secondCheck;
             }
             let fixtures = [];
             const ttlMs = this.ttlForFixtureDate(date);
+            // Fast disk cache hit: returns immediately (<2ms) if fixtures for this date exist on disk
+            const fc = this.readJsonCache();
+            if (fc && Array.isArray(fc.data)) {
+                const cleaned = fc.data.filter((f) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+                const filtered = cleaned.filter((f) => (league === 'ALL' || f.league === league) && f.date === date);
+                if (filtered.length > 0) {
+                    console.info(`[Factory] fast parlay file cache HIT ${date} ${league} (${filtered.length} fixtures)`);
+                    this.setCache(cacheKey, filtered, ttlMs);
+                    moduleFixturesCache.set(cacheKey, { data: filtered, cachedAt: Date.now() });
+                    return filtered;
+                }
+            }
             try {
                 const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('ESPN parlay timeout 2500ms')), 2500));
                 const espnFixtures = await Promise.race([
@@ -544,6 +573,7 @@ export class DataProviderFactory {
             fixtures = fixtures.map((f) => ({ ...f, retrievedAt }));
             if (fixtures.length > 0) {
                 this.setCache(cacheKey, fixtures, ttlMs);
+                moduleFixturesCache.set(cacheKey, { data: fixtures, cachedAt: Date.now() });
                 this.writeJsonCache(fixtures);
             }
             return fixtures;
