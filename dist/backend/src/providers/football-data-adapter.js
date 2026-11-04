@@ -3,8 +3,16 @@ export class FootballDataOrgAdapter {
     name = 'Football-Data.org (REST)';
     apiKey;
     baseUrl = 'https://api.football-data.org/v4';
+    cooldownUntil = 0;
+    authFailed = false;
     constructor(apiKey) {
         this.apiKey = apiKey;
+    }
+    isQuotaExhausted() {
+        return this.authFailed;
+    }
+    isInCooldown() {
+        return Date.now() < this.cooldownUntil;
     }
     getHeaders() {
         const headers = {};
@@ -14,13 +22,22 @@ export class FootballDataOrgAdapter {
         return headers;
     }
     async getFixturesByDate(date, league = 'ALL') {
+        // Football-Data.org's free tier only carries the English top two divisions.
+        // For any other competition we return nothing so the pipeline falls through
+        // to a provider that can actually serve it, rather than answering an
+        // Eredivisie request with Premier League fixtures.
+        const COMPETITION_CODES = { EPL: 'PL', CHAMPIONSHIP: 'ELC' };
+        const requestedCode = COMPETITION_CODES[league];
+        if (league !== 'ALL' && !requestedCode)
+            return [];
+        const competitions = league === 'ALL' ? 'PL,ELC' : requestedCode;
         const fixtures = [];
         try {
             const response = await axios.get(`${this.baseUrl}/matches`, {
                 params: {
                     dateFrom: date,
                     dateTo: date,
-                    competitions: league === 'CHAMPIONSHIP' ? 'ELC' : league === 'EPL' ? 'PL' : 'PL,ELC',
+                    competitions,
                 },
                 headers: this.getHeaders(),
                 timeout: 6000,
@@ -28,6 +45,8 @@ export class FootballDataOrgAdapter {
             const matches = response.data?.matches || [];
             for (const m of matches) {
                 const leagueName = m.competition.code === 'PL' ? 'EPL' : 'CHAMPIONSHIP';
+                if (league !== 'ALL' && leagueName !== league)
+                    continue;
                 const homeTeam = {
                     id: `fd-${m.homeTeam.id}`,
                     name: m.homeTeam.name,
@@ -77,7 +96,12 @@ export class FootballDataOrgAdapter {
             }
         }
         catch (err) {
+            const status = err?.response?.status;
             console.warn('[FootballDataOrgAdapter] Error fetching fixtures:', err.message);
+            if (status === 429)
+                this.cooldownUntil = Date.now() + 60000;
+            if (status === 401 || status === 403)
+                this.authFailed = true;
         }
         return fixtures;
     }

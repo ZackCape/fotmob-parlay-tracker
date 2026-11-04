@@ -180,7 +180,7 @@ export function getCalendarFixturesForDate(dateStr, leagueFilter = 'ALL') {
                     injuries: [...(KNOWN_INJURIES[home.id] || []), ...(KNOWN_INJURIES[away.id] || [])],
                     homeLineup: generateLineup(home.id, 'LALIGA'),
                     awayLineup: generateLineup(away.id, 'LALIGA'),
-                    dataSource: 'FotMob / European Calendar Engine',
+                    dataSource: 'European Calendar Engine (Synthetic)',
                 });
             }
         }
@@ -219,7 +219,7 @@ export function getCalendarFixturesForDate(dateStr, leagueFilter = 'ALL') {
                     injuries: [...(KNOWN_INJURIES[home.id] || []), ...(KNOWN_INJURIES[away.id] || [])],
                     homeLineup: generateLineup(home.id, 'LIGUE1'),
                     awayLineup: generateLineup(away.id, 'LIGUE1'),
-                    dataSource: 'FotMob / European Calendar Engine',
+                    dataSource: 'European Calendar Engine (Synthetic)',
                 });
             }
         }
@@ -261,7 +261,7 @@ export function getCalendarFixturesForDate(dateStr, leagueFilter = 'ALL') {
                     injuries: null,
                     homeLineup: generateLineup(home.id, 'CHAMPIONS_LEAGUE'),
                     awayLineup: generateLineup(away.id, 'CHAMPIONS_LEAGUE'),
-                    dataSource: 'FotMob / UEFA Live Sync',
+                    dataSource: 'UEFA Live Sync (Synthetic)',
                 });
             }
         }
@@ -301,7 +301,7 @@ export function getCalendarFixturesForDate(dateStr, leagueFilter = 'ALL') {
                     injuries: null,
                     homeLineup: generateLineup(home.id, 'EUROPA_LEAGUE'),
                     awayLineup: generateLineup(away.id, 'EUROPA_LEAGUE'),
-                    dataSource: 'FotMob / UEFA Live Sync',
+                    dataSource: 'UEFA Live Sync (Synthetic)',
                 });
             }
         }

@@ -566,13 +566,16 @@ export class DiscordBotService {
           });
           return;
         } else if (interaction.commandName === 'generateparlay') {
-          await interaction.deferReply();
+          // Line 1: Immediate deferral — safe guard against double-defer crash
+          if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply();
+          }
           // Global interaction guard: never leave the user on "thinking...".
           // If market scanning stalls past 12s, edit the deferred reply.
           const timeoutId = setTimeout(async () => {
             try {
               if (interaction.deferred && !interaction.replied) {
-                await interaction.editReply({ content: '⚠️ Request timed out while scanning live markets. Please try again.' });
+                await interaction.editReply({ content: '⚠️ Request timed out while scanning live markets [v2.4]. Please try again.' });
               }
             } catch (e) { console.error('Timeout editReply failed:', e); }
           }, 12000);
@@ -582,10 +585,16 @@ export class DiscordBotService {
           } catch (err: any) {
             console.error('Unhandled parlay error:', err);
             console.error('[PARLAY_ERROR] /generateparlay interaction failed with stack:', err?.stack || err);
+            const errMsg = (err as Error)?.message || String(err);
+            const errText = `⚠️ Parlay Error [v2.4]: ${errMsg.slice(0, 1800)}`;
             if (interaction.deferred && !interaction.replied) {
               try {
-                await interaction.editReply({ content: '⚠️ An error occurred generating your parlay slip.' });
+                await interaction.editReply({ content: errText });
               } catch (editErr) { console.error('Error editReply failed:', editErr); }
+            } else if (!interaction.replied) {
+              try {
+                await interaction.reply({ content: errText, ephemeral: true });
+              } catch (replyErr) { console.error('Error reply failed:', replyErr); }
             }
           } finally {
             clearTimeout(timeoutId);
@@ -919,7 +928,7 @@ export class DiscordBotService {
             .setAuthor({ name: BRAND.author })
             .setTitle('Bot Diagnostics & Status')
             .setFooter({ text: BRAND.footer })
-        .setTimestamp(new Date());
+            .setTimestamp(new Date());
 
           e.addFields(
             { name: 'Quota Governor', value: `\`${gov.mode}\` (${gov.remainingQuota}/${gov.totalBudget} req remaining)`, inline: true },
@@ -1809,9 +1818,8 @@ export class DiscordBotService {
               .setAuthor({ name: BRAND.author })
               .setTitle(title)
               .setDescription(desc)
-              .setFooter({ text: `${BRAND.footer} - ${league}` })
               .setFooter({ text: BRAND.footer })
-        .setTimestamp(new Date());
+              .setTimestamp(new Date());
             await interaction.editReply({ embeds: [embed], components: [] });
             return;
           }

@@ -10,6 +10,10 @@ import { createPredictionsRouter } from './routes/predictions.js';
 import { createPerformanceRouter } from './routes/performance.js';
 import { createStatusRouter } from './routes/status.js';
 import { createDiscordRouter } from './routes/discord.js';
+import { createLearningRouter } from './routes/learning.js';
+import { createNewsRouter } from './routes/news.js';
+import { createOddsRouter } from './routes/odds.js';
+import { createLiveStreamRouter } from './routes/liveStream.js';
 import { LiveParlayTrackerService } from './parlays/live-tracker.js';
 export function createApp(factory, discordBot, trackerService) {
     const app = express();
@@ -28,6 +32,10 @@ export function createApp(factory, discordBot, trackerService) {
     app.use('/api/model/performance', createPerformanceRouter(factory));
     app.use('/api/system/status', createStatusRouter(factory));
     app.use('/api/discord', createDiscordRouter(discordBot));
+    app.use('/api/learning', createLearningRouter(factory));
+    app.use('/api/news', createNewsRouter(factory));
+    app.use('/api/odds', createOddsRouter(factory));
+    app.use('/api/live', createLiveStreamRouter());
     // Serve static client build if present (for single-container production deployment)
     const clientBuildPath = path.resolve(process.cwd(), 'dist', 'client');
     if (fs.existsSync(clientBuildPath)) {

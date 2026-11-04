@@ -9,12 +9,14 @@ export function createDiscordRouter(botService) {
     });
     /**
      * POST /api/discord/broadcast
-     * Triggers an immediate hourly update broadcast test
+     * Triggers an immediate morning-briefing broadcast (same builder as /setbrief
+     * and the scheduled briefing).
      */
     router.post('/broadcast', async (req, res) => {
         try {
-            const result = await botService.sendHourlyUpdate();
-            return res.json(result);
+            const embed = await botService.buildMorningBriefing();
+            await botService.deliverBriefing(embed, 'POST /api/discord/broadcast');
+            return res.json({ success: true, delivered: true });
         }
         catch (err) {
             return res.status(500).json({ success: false, message: err.message });

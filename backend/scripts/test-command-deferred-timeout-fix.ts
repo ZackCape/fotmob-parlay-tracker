@@ -55,7 +55,7 @@ section('3) Inner generation timeout + graceful errors');
   check('inner Promise.race guard present', botSrc.includes('Promise.race(['));
   check('inner ceiling is 9000ms', botSrc.includes("setTimeout(() => reject(new Error('Parlay generation timed out after 9000ms')), 9000)"));
   check('router catches unhandled parlay errors', botSrc.includes("console.error('Unhandled parlay error:', err)"));
-  check('error message is user-facing', botSrc.includes('An error occurred generating your parlay slip.'));
+  check('error message is user-facing', botSrc.includes('Parlay Error [v2.4]:'));
   check('editReply failures are swallowed safely', botSrc.includes("console.error('Error editReply failed:', editErr)"));
 }
 

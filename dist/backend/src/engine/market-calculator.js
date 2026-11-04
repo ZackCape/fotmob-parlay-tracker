@@ -1,4 +1,4 @@
-import { calculateDixonColes, poissonCdf } from './poisson-dixon-coles.js';
+import { calculateDixonColes, poissonCdf, computeCardsModel, computeCornersModel } from './poisson-dixon-coles.js';
 import { calibrateProbability } from './calibrator.js';
 // Empirical league prior frequencies for calibration shrinkage
 const LEAGUE_PRIORS = {
@@ -20,12 +20,15 @@ const LEAGUE_PRIORS = {
     AWAY_OVER_0_5: 0.68,
     HT_OVER_0_5: 0.70,
     HT_DRAW: 0.42,
-    OVER_5_5_CORNERS: 0.88,
     OVER_7_5_CORNERS: 0.75,
     OVER_8_5_CORNERS: 0.63,
+    UNDER_8_5_CORNERS: 0.37,
+    OVER_9_5_CORNERS: 0.54,
     UNDER_11_5_CORNERS: 0.71,
     OVER_2_5_CARDS: 0.80,
     OVER_3_5_CARDS: 0.62,
+    OVER_4_5_CARDS: 0.44,
+    UNDER_4_5_CARDS: 0.56,
     UNDER_5_5_CARDS: 0.82,
 };
 export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAttack, awayDefense, supportingStats, sampleSize, dataFreshnessDays, riskFactors) {
@@ -74,24 +77,30 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
     // Approximate first half projections based on empirical half-time distributions
     const probHtOver05 = 1 - Math.exp(-0.45 * (dcResult.homeExpectedGoals + dcResult.awayExpectedGoals));
     const probHtDraw = 0.40 * (1 - Math.abs(dcResult.homeExpectedGoals - dcResult.awayExpectedGoals) * 0.12);
-    // Poisson estimation for Match Corners based on attacking momentum
-    const homeCornersEst = (homeAttack * 5.4 + 4.6) / 2;
-    const awayCornersEst = (awayAttack * 4.8 + 4.4) / 2;
-    const lambdaCorners = Math.max(7.5, homeCornersEst + awayCornersEst);
-    const probOver55Corners = 1 - poissonCdf(5, lambdaCorners);
+    // Poisson corner-expectation engine (attacking vs defensive corner metrics).
+    const cornersModel = computeCornersModel({
+        league: fixture.league,
+        homeCornersFor: fixture.statistics?.cornersHome ?? null,
+        awayCornersFor: fixture.statistics?.cornersAway ?? null,
+    });
+    const lambdaCorners = cornersModel.lambda;
+    // probOver55Corners removed - minimum corner line is now 7.5
     const probOver75Corners = 1 - poissonCdf(7, lambdaCorners);
-    const probOver85Corners = 1 - poissonCdf(8, lambdaCorners);
+    const probOver85Corners = cornersModel.over8_5;
+    const probUnder85Corners = cornersModel.under8_5;
+    const probOver95Corners = cornersModel.over9_5;
     const probUnder115Corners = poissonCdf(11, lambdaCorners);
-    // Poisson estimation for Match Disciplinary Cards
-    let lambdaCards = 3.9;
-    if (fixture.league === 'LALIGA')
-        lambdaCards = 4.8;
-    else if (fixture.league === 'CHAMPIONSHIP')
-        lambdaCards = 4.3;
-    else if (fixture.league === 'LIGUE1')
-        lambdaCards = 4.1;
+    // Poisson booking-points engine (fouls + historical card rates + referee).
+    const cardsModel = computeCardsModel({
+        league: fixture.league,
+        homeCardsPerMatch: fixture.statistics?.yellowCardsHome ?? null,
+        awayCardsPerMatch: fixture.statistics?.yellowCardsAway ?? null,
+    });
+    const lambdaCards = cardsModel.lambda;
     const probOver25Cards = 1 - poissonCdf(2, lambdaCards);
-    const probOver35Cards = 1 - poissonCdf(3, lambdaCards);
+    const probOver35Cards = cardsModel.over3_5;
+    const probOver45Cards = cardsModel.over4_5;
+    const probUnder45Cards = cardsModel.under4_5;
     const probUnder55Cards = poissonCdf(5, lambdaCards);
     const rawMarkets = [
         {
@@ -239,14 +248,6 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
             extraRisks: ['Extremely rare 0-0 goalless draw would void selection'],
         },
         {
-            market: 'OVER_5_5_CORNERS',
-            label: 'Match Corners',
-            selection: 'Over 5.5 Corners',
-            rawProb: probOver55Corners,
-            prior: LEAGUE_PRIORS.OVER_5_5_CORNERS,
-            extraRisks: [],
-        },
-        {
             market: 'OVER_7_5_CORNERS',
             label: 'Match Corners',
             selection: 'Over 7.5 Corners',
@@ -261,6 +262,22 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
             rawProb: probOver85Corners,
             prior: LEAGUE_PRIORS.OVER_8_5_CORNERS,
             extraRisks: [],
+        },
+        {
+            market: 'UNDER_8_5_CORNERS',
+            label: 'Match Corners',
+            selection: 'Under 8.5 Corners',
+            rawProb: probUnder85Corners,
+            prior: LEAGUE_PRIORS.UNDER_8_5_CORNERS,
+            extraRisks: [],
+        },
+        {
+            market: 'OVER_9_5_CORNERS',
+            label: 'Match Corners',
+            selection: 'Over 9.5 Corners',
+            rawProb: probOver95Corners,
+            prior: LEAGUE_PRIORS.OVER_9_5_CORNERS,
+            extraRisks: ['Requires an open, high-tempo match'],
         },
         {
             market: 'UNDER_11_5_CORNERS',
@@ -285,6 +302,22 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
             rawProb: probOver35Cards,
             prior: LEAGUE_PRIORS.OVER_3_5_CARDS,
             extraRisks: ['Requires high match intensity or strict referee'],
+        },
+        {
+            market: 'OVER_4_5_CARDS',
+            label: 'Match Cards',
+            selection: 'Over 4.5 Total Cards',
+            rawProb: probOver45Cards,
+            prior: LEAGUE_PRIORS.OVER_4_5_CARDS,
+            extraRisks: ['Requires a fiery, high-foul contest'],
+        },
+        {
+            market: 'UNDER_4_5_CARDS',
+            label: 'Match Cards',
+            selection: 'Under 4.5 Total Cards',
+            rawProb: probUnder45Cards,
+            prior: LEAGUE_PRIORS.UNDER_4_5_CARDS,
+            extraRisks: [],
         },
         {
             market: 'UNDER_5_5_CARDS',
@@ -355,9 +388,13 @@ export function evaluateActualOutcome(market, fixture) {
         case 'OVER_5_5_CORNERS': return totalCorners !== null ? (totalCorners >= 6 ? 'HIT' : 'MISS') : 'VOID';
         case 'OVER_7_5_CORNERS': return totalCorners !== null ? (totalCorners >= 8 ? 'HIT' : 'MISS') : 'VOID';
         case 'OVER_8_5_CORNERS': return totalCorners !== null ? (totalCorners >= 9 ? 'HIT' : 'MISS') : 'VOID';
+        case 'UNDER_8_5_CORNERS': return totalCorners !== null ? (totalCorners <= 8 ? 'HIT' : 'MISS') : 'VOID';
+        case 'OVER_9_5_CORNERS': return totalCorners !== null ? (totalCorners >= 10 ? 'HIT' : 'MISS') : 'VOID';
         case 'UNDER_11_5_CORNERS': return totalCorners !== null ? (totalCorners <= 11 ? 'HIT' : 'MISS') : 'VOID';
         case 'OVER_2_5_CARDS': return totalCards !== null ? (totalCards >= 3 ? 'HIT' : 'MISS') : 'VOID';
         case 'OVER_3_5_CARDS': return totalCards !== null ? (totalCards >= 4 ? 'HIT' : 'MISS') : 'VOID';
+        case 'OVER_4_5_CARDS': return totalCards !== null ? (totalCards >= 5 ? 'HIT' : 'MISS') : 'VOID';
+        case 'UNDER_4_5_CARDS': return totalCards !== null ? (totalCards <= 4 ? 'HIT' : 'MISS') : 'VOID';
         case 'UNDER_5_5_CARDS': return totalCards !== null ? (totalCards <= 5 ? 'HIT' : 'MISS') : 'VOID';
         case 'HT_OVER_0_5':
             if (fixture.htHomeScore === null || fixture.htAwayScore === null)

@@ -1,19 +1,33 @@
 import { Router } from 'express';
 import { buildStatisticalParlay } from '../parlays/parlay-builder.js';
+import { filterPreKickoffFixtures } from '../discord/fixtureStatus.js';
+import { orderFixturesByPriority } from '../utils/competitionPriority.js';
 export function createParlaysRouter(factory, parlayRepo, trackerService) {
     const router = Router();
     /**
      * POST /api/parlays/generate
+     *
+     * Only matches that have not kicked off can carry a leg. Finished
+     * (FT / AET / PEN / FINISHED), in-play (LIVE / IN_PLAY), halted (HT / PAUSED)
+     * and postponed fixtures are all rejected, and the scheduled kick-off must
+     * still be in the future — so a leg can never settle against a score the user
+     * never had a chance to bet on.
+     *
+     * Candidates are ranked Premier League and UEFA Champions League first, so
+     * the priority fixtures lead the pool (and the response) ahead of the
+     * secondary domestic leagues.
      */
     router.post('/generate', async (req, res) => {
         try {
-            const { date = new Date().toISOString().substring(0, 10), legsCount = 5, minProbability = 0.58, allowedMarkets, leagueFilter = 'ALL', mode = 'ANTI_CORRELATED', targetFixtureId, } = req.body;
+            const { date = new Date().toISOString().substring(0, 10), legsCount = 5, minProbability = 0.58, allowedMarkets, leagueFilter = 'ALL', mode = 'ANTI_CORRELATED', targetFixtureId, prioritizePriorityLeagues = true, } = req.body;
             const validLegCounts = [5, 10, 15, 20, 25];
             if (!validLegCounts.includes(legsCount)) {
                 return res.status(400).json({ error: `Invalid legsCount. Must be one of: 5, 10, 15, 20, 25` });
             }
-            // Fetch fixtures on that date
-            const fixtures = await factory.getFixturesByDate(date, leagueFilter);
+            // Fetch fixtures on that date, then keep only pre-kickoff matches, ranked
+            // with the Premier League and Champions League at the top of the slate.
+            const allFixtures = await factory.getFixturesByDate(date, leagueFilter);
+            const fixtures = orderFixturesByPriority(filterPreKickoffFixtures(allFixtures), prioritizePriorityLeagues !== false);
             // Collect candidate predictions
             const candidatePredictions = [];
             for (const fx of fixtures) {
@@ -23,18 +37,21 @@ export function createParlaysRouter(factory, parlayRepo, trackerService) {
                 }
             }
             // Build statistical parlay with requested correlation mode (Anti-Correlated, SGP, or Correlated Allowed)
-            const parlay = buildStatisticalParlay(candidatePredictions, {
+            const parlay = await buildStatisticalParlay(candidatePredictions, {
                 targetLegsCount: legsCount,
                 minProbability: parseFloat(minProbability),
                 allowedMarkets,
                 leagueFilter,
                 mode,
                 targetFixtureId,
+                prioritizePriorityLeagues: prioritizePriorityLeagues !== false,
             });
-            // Save generated parlay
-            await parlayRepo.saveParlay(parlay);
-            // Auto-track the latest parlay in live tracker
-            await trackerService.trackParlay(parlay);
+            // Only persist and track a parlay that actually has legs; an empty slate
+            // (every match already started) must not create an empty tracked record.
+            if (parlay.legs.length > 0) {
+                await parlayRepo.saveParlay(parlay);
+                await trackerService.trackParlay(parlay);
+            }
             return res.json(parlay);
         }
         catch (err) {

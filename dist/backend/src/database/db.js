@@ -92,9 +92,12 @@ class LocalFallbackDatabaseClient {
 let dbInstance;
 export function getDatabase() {
     if (!dbInstance) {
-        if (config.databaseUrl && config.databaseUrl.startsWith('postgresql://')) {
+        // Accept both libpq URL schemes; Render, Neon, Supabase and Railway all
+        // emit postgres:// or postgresql:// depending on the provider.
+        const url = config.databaseUrl?.trim();
+        if (url && /^postgres(ql)?:\/\//i.test(url)) {
             try {
-                dbInstance = new PostgresClient(config.databaseUrl);
+                dbInstance = new PostgresClient(url);
                 console.log('[Database] Initialized PostgreSQL connection pool');
             }
             catch (err) {

@@ -1,19 +1,111 @@
 import axios from 'axios';
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
+import { getTeamVerifiedForm } from '../services/multiLeagueDbService.js';
+/**
+ * API-Football (api-sports.io) league ids per Cape Predictor league.
+ *
+ * The free plan cannot fetch by league+season for current dates, so the adapter
+ * pulls every fixture for the date and then keeps the ones whose `league.id`
+ * appears here — an unmapped competition would be dropped on the floor.
+ */
+export const API_FOOTBALL_LEAGUE_IDS = {
+    EPL: 39,
+    CHAMPIONSHIP: 40,
+    EREDIVISIE: 88,
+    PRIMEIRA_LIGA: 94,
+    EKSTRAKLASA: 106,
+    DANISH_SUPERLIGA: 119,
+    PRO_LEAGUE: 144,
+    SCOTTISH_PREM: 179,
+    SUPER_LIG: 203,
+    SWISS_SUPER: 207,
+    AUSTRIAN_BUNDESLIGA: 218,
+};
+/** Cape Predictor league for an API-Football league id, or null when unmapped. */
+export function leagueFromApiFootballId(id) {
+    const numeric = Number(id);
+    if (!Number.isFinite(numeric))
+        return null;
+    for (const [league, candidate] of Object.entries(API_FOOTBALL_LEAGUE_IDS)) {
+        if (candidate === numeric)
+            return league;
+    }
+    return null;
+}
 export class ApiFootballAdapter {
     name = 'API-Football (Live REST)';
     apiKey;
+    keys = [];
+    keyIndex = 0;
     baseUrl;
     isRapidApi;
     rateLimitRemaining = 100;
     rateLimitReset;
-    constructor(apiKey, isRapidApi = false) {
-        this.apiKey = apiKey;
+    dailyLimit;
+    safetyMargin;
+    madeToday = 0;
+    resetDate = new Date().toISOString().slice(0, 10);
+    dailyQuotaExhausted = false;
+    authFailed = false;
+    cooldownUntil = 0;
+    lastError = null;
+    constructor(apiKey, isRapidApi = false, dailyLimit = 90, safetyMargin = 10) {
+        this.keys = Array.isArray(apiKey) ? apiKey.filter(Boolean) : [apiKey].filter(Boolean);
+        this.apiKey = this.keys[0] || '';
         this.isRapidApi = isRapidApi;
+        this.dailyLimit = dailyLimit;
+        this.safetyMargin = safetyMargin;
         this.baseUrl = isRapidApi
             ? 'https://api-football-v1.p.rapidapi.com/v3'
             : 'https://v3.football.api-sports.io';
+    }
+    effectiveLimit() {
+        return Math.max(1, this.dailyLimit - this.safetyMargin);
+    }
+    maybeResetDaily() {
+        const today = new Date().toISOString().slice(0, 10);
+        if (today !== this.resetDate) {
+            this.resetDate = today;
+            this.madeToday = 0;
+            this.dailyQuotaExhausted = false;
+            this.lastError = null;
+        }
+    }
+    canSpend(n = 1) {
+        this.maybeResetDaily();
+        if (this.dailyQuotaExhausted || this.authFailed)
+            return false;
+        if (Date.now() < this.cooldownUntil)
+            return false;
+        if (this.rateLimitRemaining !== null && this.rateLimitRemaining < n)
+            return false;
+        return this.madeToday + n <= this.effectiveLimit();
+    }
+    isQuotaExhausted() {
+        this.maybeResetDaily();
+        return this.dailyQuotaExhausted || this.authFailed;
+    }
+    isInCooldown() {
+        return Date.now() < this.cooldownUntil;
+    }
+    getLastError() {
+        return this.lastError;
+    }
+    seasonForDate(date) {
+        const y = parseInt(date.substring(0, 4), 10);
+        const m = parseInt(date.substring(5, 7), 10);
+        // Football seasons start in July/August
+        return m >= 7 ? y : y - 1;
+    }
+    recordRequest(headers) {
+        this.maybeResetDaily();
+        this.madeToday++;
+        if (headers?.['x-ratelimit-requests-remaining']) {
+            const r = parseInt(headers['x-ratelimit-requests-remaining'], 10);
+            if (!isNaN(r))
+                this.rateLimitRemaining = r;
+        }
     }
     getHeaders() {
         if (this.isRapidApi) {
@@ -26,52 +118,161 @@ export class ApiFootballAdapter {
             'x-apisports-key': this.apiKey,
         };
     }
+    /** Rotate to the next configured API-Football key. Returns false if none left. */
+    rotateKey() {
+        if (this.keys.length <= 1)
+            return false;
+        this.keyIndex = (this.keyIndex + 1) % this.keys.length;
+        this.apiKey = this.keys[this.keyIndex];
+        // reset per-key daily tracking so the new key has budget
+        this.madeToday = 0;
+        this.rateLimitRemaining = 100;
+        this.dailyQuotaExhausted = false;
+        this.cooldownUntil = 0;
+        console.warn(`[ApiFootballAdapter] Rotated to next configured API key (index ${this.keyIndex}).`);
+        return true;
+    }
+    isQuotaError(status, body) {
+        if (status === 429)
+            return true;
+        const msg = JSON.stringify(body || '').toLowerCase();
+        return msg.includes('request limit') || msg.includes('quota') || msg.includes('too many requests') || msg.includes('rate limit');
+    }
     async getFixturesByDate(date, league = 'ALL') {
-        const leaguesToFetch = [];
-        if (league === 'ALL' || league === 'EPL')
-            leaguesToFetch.push({ id: 39, leagueName: 'EPL' });
-        if (league === 'ALL' || league === 'CHAMPIONSHIP')
-            leaguesToFetch.push({ id: 40, leagueName: 'CHAMPIONSHIP' });
-        const fixtures = [];
-        for (const target of leaguesToFetch) {
+        const targetLeagueIds = new Set();
+        for (const [id, leagueId] of Object.entries(API_FOOTBALL_LEAGUE_IDS)) {
+            if (league === 'ALL' || league === id)
+                targetLeagueIds.add(leagueId);
+        }
+        if (targetLeagueIds.size === 0)
+            return [];
+        if (!this.canSpend(1)) {
+            console.warn('[ApiFootballAdapter] Daily budget exhausted; skipping fixtures fetch.');
+            return [];
+        }
+        // Free plan: fetching by league+season is restricted for current dates.
+        // Fetch all fixtures for the date (no league/season) then filter by league id.
+        let attempt = 0;
+        while (attempt < 3) {
+            attempt++;
             try {
                 const response = await axios.get(`${this.baseUrl}/fixtures`, {
-                    params: {
-                        date,
-                        league: target.id,
-                        season: parseInt(date.substring(0, 4), 10),
-                    },
+                    params: { date },
                     headers: this.getHeaders(),
-                    timeout: 8000,
+                    timeout: 10000,
                 });
-                // Track rate limits
-                if (response.headers['x-ratelimit-requests-remaining']) {
-                    this.rateLimitRemaining = parseInt(response.headers['x-ratelimit-requests-remaining'], 10);
+                this.recordRequest(response.headers);
+                if (response.data?.errors && (Array.isArray(response.data.errors) ? response.data.errors.length : Object.keys(response.data.errors).length)) {
+                    const errs = response.data.errors;
+                    const msg = JSON.stringify(errs);
+                    console.warn('[ApiFootballAdapter] Provider returned errors:', errs);
+                    this.lastError = msg;
+                    if (/key|auth|token/i.test(msg) && !this.isQuotaError(undefined, errs)) {
+                        this.authFailed = true;
+                        return [];
+                    }
+                    if (/quota|limit|plan|rate/i.test(msg)) {
+                        this.dailyQuotaExhausted = true;
+                        // Rotate to next key before declaring exhaustion
+                        if (this.rotateKey()) {
+                            console.warn('[ApiFootballAdapter] Quota error on current key; retrying with rotated key.');
+                            attempt = 0; // reset attempt counter to retry with new key
+                            continue;
+                        }
+                        return [];
+                    }
+                    return [];
                 }
+                const fixtures = [];
                 const rawList = response.data?.response || [];
                 for (const item of rawList) {
-                    const fx = this.mapRawFixtureToDomain(item, target.leagueName);
-                    fixtures.push(fx);
+                    const lid = item?.league?.id;
+                    if (!targetLeagueIds.has(lid))
+                        continue;
+                    const leagueName = leagueFromApiFootballId(lid);
+                    if (!leagueName)
+                        continue;
+                    fixtures.push(this.mapRawFixtureToDomain(item, leagueName));
                 }
+                return fixtures;
             }
             catch (err) {
-                console.warn(`[ApiFootballAdapter] Error fetching fixtures for league ${target.id} on ${date}:`, err.message);
+                const status = err?.response?.status;
+                console.warn(`[ApiFootballAdapter] Error fetching fixtures for ${date} (attempt ${attempt}):`, err.message);
+                if (status === 429) {
+                    this.cooldownUntil = Date.now() + 60000;
+                    this.lastError = 'rate_limit';
+                    if (this.rotateKey()) {
+                        console.warn('[ApiFootballAdapter] HTTP 429 on current key; retrying with rotated key.');
+                        attempt = 0;
+                        continue;
+                    }
+                }
+                else if (status === 401 || status === 403) {
+                    this.authFailed = true;
+                    this.lastError = 'auth_failed';
+                }
+                else if (status >= 500) {
+                    // temporary: backoff only
+                }
+                if (attempt < 3 && status !== 401 && status !== 403) {
+                    await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 8000)));
+                }
             }
         }
-        return fixtures;
+        return [];
     }
     async getMatchDetails(fixtureId) {
+        if (!this.canSpend(1)) {
+            console.warn('[ApiFootballAdapter] Daily budget exhausted; skipping match details fetch.');
+            return null;
+        }
         try {
-            const externalId = fixtureId.replace('api-epl-', '').replace('api-ch-', '');
-            const response = await axios.get(`${this.baseUrl}/fixtures`, {
-                params: { id: externalId },
-                headers: this.getHeaders(),
-                timeout: 8000,
-            });
+            const externalId = fixtureId.replace('apifx-', '').replace('api-epl-', '').replace('api-ch-', '');
+            let response;
+            let attempt = 0;
+            while (attempt < 3) {
+                attempt++;
+                try {
+                    response = await axios.get(`${this.baseUrl}/fixtures`, {
+                        params: { id: externalId },
+                        headers: this.getHeaders(),
+                        timeout: 8000,
+                    });
+                    this.recordRequest(response.headers);
+                    if (response.data?.errors && (Array.isArray(response.data.errors) ? response.data.errors.length : Object.keys(response.data.errors).length)) {
+                        console.warn('[ApiFootballAdapter] Provider returned errors:', response.data.errors);
+                        response = null;
+                    }
+                    break;
+                }
+                catch (e) {
+                    const status = e?.response?.status;
+                    if (status === 429) {
+                        this.cooldownUntil = Date.now() + 60000;
+                        this.lastError = 'rate_limit';
+                        if (this.rotateKey()) {
+                            console.warn('[ApiFootballAdapter] HTTP 429 on details; retrying with rotated key.');
+                            attempt = 0;
+                            continue;
+                        }
+                    }
+                    if (status === 401 || status === 403) {
+                        this.authFailed = true;
+                        this.lastError = 'auth_failed';
+                    }
+                    if (attempt >= 3)
+                        throw e;
+                    if (status !== 401 && status !== 403)
+                        await new Promise((r) => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 8000)));
+                }
+            }
+            if (!response)
+                return null;
             const fixtureData = response.data?.response?.[0];
             if (!fixtureData)
                 return null;
-            const leagueName = fixtureData.league.id === 39 ? 'EPL' : 'CHAMPIONSHIP';
+            const leagueName = leagueFromApiFootballId(fixtureData.league.id) ?? 'EPL';
             const fixture = this.mapRawFixtureToDomain(fixtureData, leagueName);
             // Fetch injuries
             let injuries = null;
@@ -161,41 +362,53 @@ export class ApiFootballAdapter {
                 cleanSheetRateAway: 0.25,
             };
             const marketPredictions = deriveMarketPredictions(fixture, 1.2, 0.95, 1.05, 1.1, supportingStats, 15, 1, injuries ? [`${injuries.length} team absences tracked`] : []);
+            const homeVerified = getTeamVerifiedForm(fixture.homeTeam.name, 5);
+            const awayVerified = getTeamVerifiedForm(fixture.awayTeam.name, 5);
             return {
                 fixture,
                 homeForm: {
-                    matchesPlayed: 10,
-                    wins: 6,
-                    draws: 2,
-                    losses: 2,
-                    goalsScored: 18,
-                    goalsConceded: 10,
-                    cleanSheets: 4,
-                    failedToScore: 1,
+                    matchesPlayed: homeVerified.hasData ? homeVerified.totalMatches : 0,
+                    wins: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'W').length : 0,
+                    draws: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'D').length : 0,
+                    losses: homeVerified.hasData ? homeVerified.results.filter((r) => r === 'L').length : 0,
+                    goalsScored: homeVerified.hasData ? homeVerified.recentMatches.reduce((acc, m) => acc + m.goalsFor, 0) : 18,
+                    goalsConceded: homeVerified.hasData ? homeVerified.recentMatches.reduce((acc, m) => acc + m.goalsAgainst, 0) : 10,
+                    cleanSheets: homeVerified.hasData ? homeVerified.recentMatches.filter((m) => m.goalsAgainst === 0).length : 0,
+                    failedToScore: homeVerified.hasData ? homeVerified.recentMatches.filter((m) => m.goalsFor === 0).length : 0,
                     avgShots: 14.2,
                     avgShotsOnTarget: 5.1,
                     avgCorners: 5.8,
                     avgYellowCards: 1.6,
                     avgXg: 1.75,
-                    last5Results: ['W', 'W', 'D', 'W', 'L'],
-                    recentFixtures: [],
+                    last5Results: homeVerified.results,
+                    recentFixtures: homeVerified.recentMatches.map((m) => ({
+                        date: m.date,
+                        opponent: m.opponent,
+                        score: m.score,
+                        result: m.result,
+                    })),
                 },
                 awayForm: {
-                    matchesPlayed: 10,
-                    wins: 4,
-                    draws: 3,
-                    losses: 3,
-                    goalsScored: 14,
-                    goalsConceded: 13,
-                    cleanSheets: 2,
-                    failedToScore: 2,
+                    matchesPlayed: awayVerified.hasData ? awayVerified.totalMatches : 0,
+                    wins: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'W').length : 0,
+                    draws: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'D').length : 0,
+                    losses: awayVerified.hasData ? awayVerified.results.filter((r) => r === 'L').length : 0,
+                    goalsScored: homeVerified.hasData ? awayVerified.recentMatches.reduce((acc, m) => acc + m.goalsFor, 0) : 14,
+                    goalsConceded: awayVerified.hasData ? awayVerified.recentMatches.reduce((acc, m) => acc + m.goalsAgainst, 0) : 13,
+                    cleanSheets: awayVerified.hasData ? awayVerified.recentMatches.filter((m) => m.goalsAgainst === 0).length : 0,
+                    failedToScore: awayVerified.hasData ? awayVerified.recentMatches.filter((m) => m.goalsFor === 0).length : 0,
                     avgShots: 11.5,
                     avgShotsOnTarget: 4.0,
                     avgCorners: 4.6,
                     avgYellowCards: 2.2,
                     avgXg: 1.30,
-                    last5Results: ['D', 'W', 'L', 'W', 'D'],
-                    recentFixtures: [],
+                    last5Results: awayVerified.results,
+                    recentFixtures: awayVerified.recentMatches.map((m) => ({
+                        date: m.date,
+                        opponent: m.opponent,
+                        score: m.score,
+                        result: m.result,
+                    })),
                 },
                 headToHead: {
                     totalMeetings: 6,
@@ -311,6 +524,11 @@ export class ApiFootballAdapter {
             htAwayScore: scoreRaw.halftime?.away ?? null,
             venue: fixtureRaw.venue?.name || 'Stadium',
             statistics: null,
+            // API-Football publishes the elapsed minute while a match is live.
+            liveClock: typeof fixtureRaw.status?.elapsed === 'number' && Number.isFinite(fixtureRaw.status.elapsed)
+                ? `${Math.round(fixtureRaw.status.elapsed)}'`
+                : null,
+            providerStatus: shortStatus ? String(shortStatus) : null,
             dataSource: 'API-Football (Live)',
         };
     }

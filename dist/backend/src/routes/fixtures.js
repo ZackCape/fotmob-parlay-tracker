@@ -12,28 +12,16 @@ export function createFixturesRouter(factory) {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
                 return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
             }
-            const fixtures = await factory.getFixturesByDate(date, league);
-            // Augment each fixture with a fast summary prediction for the dashboard card
-            const enriched = await Promise.all(fixtures.map(async (f) => {
-                try {
-                    const analysis = await factory.getMatchDetails(f.id);
-                    const topPrediction = analysis?.marketPredictions?.[0] || null;
-                    return {
-                        ...f,
-                        topPrediction,
-                        expectedHomeGoals: analysis?.dixonColesParameters.homeExpectedGoals ?? null,
-                        expectedAwayGoals: analysis?.dixonColesParameters.awayExpectedGoals ?? null,
-                    };
-                }
-                catch (e) {
-                    return f;
-                }
-            }));
+            let fixtures = await factory.getFixturesByDate(date, league);
+            // Never serve synthetic/archive fixtures as live matches
+            fixtures = fixtures.filter((f) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+            // Do not fetch match analysis for every fixture (avoids N+1 API calls).
+            // Detailed analysis is loaded on demand via /api/analysis/:id.
             return res.json({
                 date,
                 league,
-                count: enriched.length,
-                fixtures: enriched,
+                count: fixtures.length,
+                fixtures,
             });
         }
         catch (err) {

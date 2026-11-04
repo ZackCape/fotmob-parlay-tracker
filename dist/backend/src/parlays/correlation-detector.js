@@ -23,11 +23,15 @@ const CONFLICTING_MARKETS = {
     HT_DRAW: [],
     OVER_5_5_CORNERS: [],
     OVER_7_5_CORNERS: [],
-    OVER_8_5_CORNERS: [],
-    UNDER_11_5_CORNERS: ['OVER_8_5_CORNERS'],
-    OVER_2_5_CARDS: [],
-    OVER_3_5_CARDS: [],
-    UNDER_5_5_CARDS: ['OVER_3_5_CARDS'],
+    OVER_8_5_CORNERS: ['UNDER_8_5_CORNERS'],
+    UNDER_8_5_CORNERS: ['OVER_8_5_CORNERS', 'OVER_9_5_CORNERS'],
+    OVER_9_5_CORNERS: ['UNDER_8_5_CORNERS'],
+    UNDER_11_5_CORNERS: ['OVER_8_5_CORNERS', 'OVER_9_5_CORNERS'],
+    OVER_2_5_CARDS: ['UNDER_4_5_CARDS'],
+    OVER_3_5_CARDS: ['UNDER_4_5_CARDS'],
+    OVER_4_5_CARDS: ['UNDER_4_5_CARDS', 'UNDER_5_5_CARDS'],
+    UNDER_4_5_CARDS: ['OVER_4_5_CARDS', 'OVER_3_5_CARDS'],
+    UNDER_5_5_CARDS: ['OVER_3_5_CARDS', 'OVER_4_5_CARDS'],
 };
 export function areMarketsConflicting(mA, mB) {
     if (mA === mB)
@@ -43,11 +47,22 @@ export function areLegsCorrelated(legA, legB) {
     }
     return false;
 }
-export function filterNonCorrelatedPredictions(predictions) {
+/**
+ * One selection per fixture, keeping the strongest candidate for each match.
+ *
+ * By default the pool is ranked by calibrated probability first, which is the
+ * plain "most reliable selection per match" rule. `respectGivenOrder` is set by
+ * the parlay builder when it has already applied a deliberate ordering (for
+ * example competition priority with probability as the in-tier tie-break): the
+ * caller's order then survives the de-duplication untouched.
+ */
+export function filterNonCorrelatedPredictions(predictions, options = {}) {
     const seenFixtures = new Set();
     const filtered = [];
     // Sort by highest calibrated probability first to take the most reliable selection per match
-    const sorted = [...predictions].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+    const sorted = options.respectGivenOrder
+        ? [...predictions]
+        : [...predictions].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
     for (const pred of sorted) {
         if (!seenFixtures.has(pred.fixtureId)) {
             seenFixtures.add(pred.fixtureId);

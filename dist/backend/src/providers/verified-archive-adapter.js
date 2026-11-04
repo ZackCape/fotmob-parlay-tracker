@@ -4,6 +4,10 @@ import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 export class VerifiedArchiveAdapter {
     name = 'Verified League Archive (Offline / Fallback)';
+    learningEngine;
+    constructor(learningEngine) {
+        this.learningEngine = learningEngine;
+    }
     async getFixturesByDate(date, league = 'ALL') {
         return getCalendarFixturesForDate(date, league);
     }
@@ -88,10 +92,12 @@ export class VerifiedArchiveAdapter {
             else
                 awayFormResults.push('L');
         }
-        const homeAttack = Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsFor / Math.max(1, homeRecentMatches.length)) / 1.35 : 1.15);
-        const homeDefense = Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsAgainst / Math.max(1, homeRecentMatches.length)) / 1.35 : 0.95);
-        const awayAttack = Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsFor / Math.max(1, awayRecentMatches.length)) / 1.35 : 1.05);
-        const awayDefense = Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsAgainst / Math.max(1, awayRecentMatches.length)) / 1.35 : 1.10);
+        const homeRating = this.learningEngine ? this.learningEngine.getTeamRating(homeTeam.id, homeTeam.name, fixture.league) : null;
+        const awayRating = this.learningEngine ? this.learningEngine.getTeamRating(awayTeam.id, awayTeam.name, fixture.league) : null;
+        const homeAttack = homeRating ? homeRating.attackStrength : Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsFor / Math.max(1, homeRecentMatches.length)) / 1.35 : 1.15);
+        const homeDefense = homeRating ? homeRating.defenseWeakness : Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsAgainst / Math.max(1, homeRecentMatches.length)) / 1.35 : 0.95);
+        const awayAttack = awayRating ? awayRating.attackStrength : Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsFor / Math.max(1, awayRecentMatches.length)) / 1.35 : 1.05);
+        const awayDefense = awayRating ? awayRating.defenseWeakness : Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsAgainst / Math.max(1, awayRecentMatches.length)) / 1.35 : 1.10);
         // Head-to-Head
         const h2hMatches = HISTORICAL_MATCHES.filter(m => (m.homeTeam.id === homeTeam.id && m.awayTeam.id === awayTeam.id) ||
             (m.homeTeam.id === awayTeam.id && m.awayTeam.id === homeTeam.id));
