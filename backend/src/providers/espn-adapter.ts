@@ -276,7 +276,7 @@ export class EspnAdapter implements IFootballDataProvider {
       const res = await axios.get(`${SPORT_BASE}/${code}/scoreboard`, {
         params: { dates: compact },
         headers: this.headers(),
-        timeout: 12000,
+        timeout: 4000,
       });
       return res.data?.events || [];
     } catch (err: any) {
@@ -291,7 +291,7 @@ export class EspnAdapter implements IFootballDataProvider {
       const res = await axios.get(`${BASE}/scoreboard`, {
         params: { dates: compact },
         headers: this.headers(),
-        timeout: 12000,
+        timeout: 4000,
       });
       return res.data?.events || [];
     } catch (err: any) {
@@ -353,9 +353,20 @@ export class EspnAdapter implements IFootballDataProvider {
   async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
     const compact = date.replace(/-/g, '');
 
-    const codes: Array<[string, League]> = league === 'ALL'
-      ? Object.entries(LEAGUE_MAP)
-      : (ESPN_CODE_BY_LEAGUE[league] ? [[ESPN_CODE_BY_LEAGUE[league], league as League]] : []);
+    const extraCups: Array<[string, League]> = [
+      ['eng.fa', 'EPL'],
+      ['eng.league_cup', 'EPL'],
+    ];
+
+    let codes: Array<[string, League]> = [];
+    if (league === 'ALL') {
+      codes = [...Object.entries(LEAGUE_MAP), ...extraCups];
+    } else if (league === 'EPL') {
+      codes = [['eng.1', 'EPL'], ...extraCups];
+    } else if (ESPN_CODE_BY_LEAGUE[league]) {
+      codes = [[ESPN_CODE_BY_LEAGUE[league], league as League]];
+    }
+
     if (codes.length === 0) return [];
 
     const fixtures: Fixture[] = [];
@@ -366,23 +377,23 @@ export class EspnAdapter implements IFootballDataProvider {
       fixtures.push(mapped);
     };
 
-    // Small batches: polite fan-out without serialising the whole sweep.
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < codes.length; i += BATCH_SIZE) {
-      const batch = codes.slice(i, i + BATCH_SIZE);
-      const settled = await Promise.allSettled(
-        batch.map(([code]) => this.fetchLeagueScoreboard(code, compact)),
-      );
-      settled.forEach((result, index) => {
-        if (result.status !== 'fulfilled' || !result.value) return;
-        const expected = batch[index][1];
-        for (const ev of result.value) push(this.mapEvent(ev, expected, date));
-      });
-    }
+    // Parallel sweep across all competitions + broad feed with strict 4s per-league timeout
+    const scoreboardPromises = codes.map(([code]) => this.fetchLeagueScoreboard(code, compact));
+    const allPromise = league === 'ALL' ? this.fetchAllScoreboard(compact) : Promise.resolve(null);
 
-    if (league === 'ALL') {
-      const all = await this.fetchAllScoreboard(compact);
-      for (const ev of all || []) {
+    const [scoreboardResults, allResult] = await Promise.all([
+      Promise.allSettled(scoreboardPromises),
+      allPromise,
+    ]);
+
+    scoreboardResults.forEach((result, index) => {
+      if (result.status !== 'fulfilled' || !result.value) return;
+      const expected = codes[index][1];
+      for (const ev of result.value) push(this.mapEvent(ev, expected, date));
+    });
+
+    if (allResult) {
+      for (const ev of allResult) {
         const detected = detectLeague(ev);
         if (detected) push(this.mapEvent(ev, detected, date));
       }

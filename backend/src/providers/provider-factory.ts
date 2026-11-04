@@ -396,39 +396,41 @@ export class DataProviderFactory {
         if (fx.length > 0) this.setCache(cacheKey, fx, ttlMs);
         return fx;
       }
-      // a) In-memory cache. Checked before the file cache so a burst of button
-      //    clicks is served from RAM and never re-reads the multi-megabyte file.
+      // a) In-memory cache. Checked before external calls so bursts of UI clicks
+      //    are served from RAM.
       const cached = this.getCached<Fixture[]>(cacheKey);
-      if (cached) { console.info(`[Factory] mem cache HIT fixtures ${date} ${league}`); return cached; }
-      console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
-
-      // b) File cache (production warm start / provider outage, 30-min TTL).
-      //    Promoted into the memory cache so the following clicks are cheap.
-      const fc = this.readJsonCache();
-      if (fc && Array.isArray(fc.data)) {
-        // Purge synthetic archive entries from cache immediately
-        const cleaned = fc.data.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
-        if (cleaned.length !== fc.data.length) {
-          console.warn(`[Factory] purged ${fc.data.length - cleaned.length} synthetic fixtures from file cache`);
-          this.writeJsonCache(cleaned);
-        }
-        const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
-        if (filtered.length > 0) {
-          console.info(`[Factory] file cache HIT ${date} ${league}`);
-          this.setCache(cacheKey, filtered, ttlMs);
-          return filtered;
-        }
+      if (cached && cached.length > 0) {
+        console.info(`[Factory] mem cache HIT fixtures ${date} ${league} (${cached.length} fixtures)`);
+        return cached;
       }
+      console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
 
       let fixtures: Fixture[] = [];
       const wantGerman = league === 'ALL' || league === 'BUNDESLIGA' || league === 'BUNDESLIGA2';
 
-      // c) ESPN public scoreboard - all major global leagues, live scores, no API key
+      // b) ESPN public scoreboard - parallel multi-league sweep across all global competitions, live scores, 0 quota
       try {
         const espn = await this.espnProvider.getFixturesByDate(date, league);
         if (espn.length > 0) fixtures.push(...espn);
         console.info(`[Factory] ESPN returned ${espn.length} fixtures for ${date}`);
       } catch (e: any) { console.warn('[Factory] ESPN failed:', e.message); }
+
+      // c) File cache fallback (used only if primary feeds return 0 fixtures)
+      if (fixtures.length === 0) {
+        const fc = this.readJsonCache();
+        if (fc && Array.isArray(fc.data)) {
+          const cleaned = fc.data.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+          if (cleaned.length !== fc.data.length) {
+            console.warn(`[Factory] purged ${fc.data.length - cleaned.length} synthetic fixtures from file cache`);
+            this.writeJsonCache(cleaned);
+          }
+          const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
+          if (filtered.length > 0) {
+            console.info(`[Factory] file cache fallback HIT ${date} ${league} (${filtered.length} fixtures)`);
+            fixtures.push(...filtered);
+          }
+        }
+      }
 
       // d) Football-Data.org for main leagues
       if (fixtures.length === 0 && this.backupProvider && !(this.backupProvider.isQuotaExhausted?.() ?? false) && !(this.backupProvider.isInCooldown?.() ?? false)) {
