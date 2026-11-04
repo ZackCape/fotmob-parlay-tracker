@@ -26,7 +26,7 @@ export function createParlaysRouter(factory, parlayRepo, trackerService) {
             }
             // Fetch fixtures on that date, then keep only pre-kickoff matches, ranked
             // with the Premier League and Champions League at the top of the slate.
-            const allFixtures = await factory.getFixturesByDate(date, leagueFilter);
+            const allFixtures = await factory.getFastFixturesForParlay(date, leagueFilter);
             const fixtures = orderFixturesByPriority(filterPreKickoffFixtures(allFixtures), prioritizePriorityLeagues !== false);
             // Collect candidate predictions
             const candidatePredictions = [];

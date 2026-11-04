@@ -316,6 +316,10 @@ export class DataProviderFactory {
     return entry.data as T;
   }
 
+  public clearCache(): void {
+    this.cache.clear();
+  }
+
   private setCache<T>(key: string, data: T, ttlMs: number = this.defaultTtlMs): void {
     this.cache.set(key, {
       data,
@@ -479,6 +483,81 @@ export class DataProviderFactory {
       }
 
       // Guardrail: never serve synthetic archive
+      fixtures = fixtures.filter(f => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+
+      const retrievedAt = new Date().toISOString();
+      fixtures = fixtures.map((f) => ({ ...f, retrievedAt })) as any;
+
+      if (fixtures.length > 0) {
+        this.setCache(cacheKey, fixtures, ttlMs);
+        this.writeJsonCache(fixtures);
+      }
+      return fixtures;
+    })();
+
+    this.inFlight.set(inflightKey, promise);
+    promise.finally(() => this.inFlight.delete(inflightKey));
+    return promise;
+  }
+
+  /**
+   * Fast-path fixture loader designed specifically for low-latency operations like /generateparlay.
+   * Guarantees sub-2.5s execution by:
+   * 1. Returning memory cache immediately if present.
+   * 2. Querying only ESPN scoreboard adapter with a strict 2500ms Promise.race timeout ceiling.
+   * 3. Falling back immediately to local file cache if ESPN times out or fails.
+   * 4. NEVER falling back to slow secondary scrapers (TheSportsDB, Football-Data.org rate limits, etc.).
+   */
+  async getFastFixturesForParlay(date: string, league: string = 'ALL'): Promise<Fixture[]> {
+    const cacheKey = `fixtures:${date}:${league}`;
+    const cached = this.getCached<Fixture[]>(cacheKey);
+    if (cached && cached.length > 0) {
+      console.info(`[Factory] fast parlay mem cache HIT fixtures ${date} ${league} (${cached.length} fixtures)`);
+      return cached;
+    }
+
+    const inflightKey = `inflight:fast:${cacheKey}`;
+    if (this.inFlight.has(inflightKey)) {
+      return this.inFlight.get(inflightKey) as Promise<Fixture[]>;
+    }
+
+    const promise = (async () => {
+      const secondCheck = this.getCached<Fixture[]>(cacheKey);
+      if (secondCheck && secondCheck.length > 0) {
+        return secondCheck;
+      }
+
+      let fixtures: Fixture[] = [];
+      const ttlMs = this.ttlForFixtureDate(date);
+
+      try {
+        const timeoutPromise = new Promise<Fixture[]>((_, reject) =>
+          setTimeout(() => reject(new Error('ESPN parlay timeout 2500ms')), 2500)
+        );
+        const espnFixtures = await Promise.race([
+          this.espnProvider.getFixturesByDate(date, league),
+          timeoutPromise,
+        ]);
+        if (espnFixtures && espnFixtures.length > 0) {
+          fixtures.push(...espnFixtures);
+          console.info(`[Factory] fast parlay ESPN returned ${espnFixtures.length} fixtures for ${date}`);
+        }
+      } catch (err: any) {
+        console.warn(`[Factory] fast parlay ESPN sweep missed/timed out: ${err?.message || err}`);
+      }
+
+      if (fixtures.length === 0) {
+        const fc = this.readJsonCache();
+        if (fc && Array.isArray(fc.data)) {
+          const cleaned = fc.data.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+          const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
+          if (filtered.length > 0) {
+            console.info(`[Factory] fast parlay file cache HIT ${date} ${league} (${filtered.length} fixtures)`);
+            fixtures.push(...filtered);
+          }
+        }
+      }
+
       fixtures = fixtures.filter(f => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
 
       const retrievedAt = new Date().toISOString();
