@@ -39,6 +39,8 @@ async function runRepro() {
     { name: 'High Min Probability', league: 'ALL', mode: 'anti_correlated', legs: 5, min_probability: 85, clearMemCache: false },
     { name: 'Championship only (sparse)', league: 'CHAMPIONSHIP', mode: 'anti_correlated', legs: 5, clearMemCache: false },
     { name: 'Correlated Multi-Leg (Grouping verification)', league: 'ALL', mode: 'correlated', legs: 10, clearMemCache: false },
+    { name: 'Champions League Correlated', league: 'CHAMPIONS_LEAGUE', mode: 'correlated', legs: 5, clearMemCache: false },
+    { name: '25-Leg Mega Combo Correlated', league: 'ALL', mode: 'correlated', legs: 25, clearMemCache: false },
   ];
 
   let hasFailure = false;

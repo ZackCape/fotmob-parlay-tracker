@@ -3195,38 +3195,87 @@ export class DiscordBotService {
         allFixtures = [];
       }
 
+      if (leagueFilter !== 'ALL' && !allFixtures.some(fx => fx && fx.league === leagueFilter)) {
+        try {
+          const specific = await this.factory.getFastFixturesForParlay(today, leagueFilter);
+          if (specific?.length) {
+            allFixtures = [...allFixtures, ...specific];
+          }
+        } catch { /* best effort */ }
+      }
+
       // Never build a leg on a match that has already kicked off or finished, and
       // rank the Premier League and Champions League fixtures at the top of the
       // pool so the priority competitions lead the slip.
       const verified = (allFixtures || []).filter(fx => fx && isVerifiedFixture(fx));
       if (trace) { trace.step = '2_filter_prekickoff'; trace.details = `verified=${verified.length}`; }
       let preKickoff = CP.filterPreKickoffFixtures(verified);
-      if (preKickoff.length === 0) {
 
+      let relevantCount = leagueFilter === 'ALL'
+        ? preKickoff.length
+        : preKickoff.filter(fx => fx.league === leagueFilter).length;
+
+      // Smart lookahead fallback:
+      // If the requested league has fewer than 5 matches (or 0), or if ALL leagues
+      // has too few matches to satisfy the requested leg target without excessive clustering,
+      // look ahead to tomorrow and the next matchdays to merge upcoming fixtures.
+      const needLookahead = (leagueFilter !== 'ALL' && relevantCount < 5) ||
+                            (leagueFilter === 'ALL' && (preKickoff.length < 5 || preKickoff.length * 2 < target));
+
+      if (needLookahead) {
         const tLookaheadStart = Date.now();
-        const tomorrow = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
-        if (trace) { trace.step = '3_lookahead_tomorrow'; trace.details = `tomorrow=${tomorrow}`; }
+        const existingIds = new Set(preKickoff.map(f => f.id));
 
-        try {
-          const tomorrowTimeout = new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Lookahead timeout 1500ms')), 1500));
-          const tomorrowFixtures = await Promise.race([this.factory.getFastFixturesForParlay(tomorrow, 'ALL'), tomorrowTimeout]);
-          t_lookahead = Date.now() - tLookaheadStart;
-          const tomorrowVerified = (tomorrowFixtures || []).filter(fx => fx && isVerifiedFixture(fx));
-          const tomorrowPre = CP.filterPreKickoffFixtures(tomorrowVerified);
-          if (tomorrowPre.length > 0) {
-            preKickoff = tomorrowPre;
+        for (let offset = 1; offset <= 2; offset++) {
+          const nextDate = new Date(Date.now() + offset * 86400000).toISOString().substring(0, 10);
+          if (trace) { trace.step = `3_lookahead_${nextDate}`; trace.details = `date=${nextDate}`; }
+
+          try {
+            const nextTimeout = new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Lookahead timeout 1500ms')), 1500));
+            const nextFixtures = await Promise.race([
+              this.factory.getFastFixturesForParlay(nextDate, leagueFilter === 'ALL' ? 'ALL' : leagueFilter),
+              nextTimeout,
+            ]);
+            const nextVerified = (nextFixtures || []).filter(fx => fx && isVerifiedFixture(fx));
+            const nextPre = CP.filterPreKickoffFixtures(nextVerified);
+
+            for (const fx of nextPre) {
+              if (!existingIds.has(fx.id)) {
+                preKickoff.push(fx);
+                existingIds.add(fx.id);
+              }
+            }
+
+            relevantCount = leagueFilter === 'ALL'
+              ? preKickoff.length
+              : preKickoff.filter(fx => fx.league === leagueFilter).length;
+
+            if (relevantCount >= (leagueFilter === 'ALL' ? 15 : 5)) {
+              break;
+            }
+          } catch {
+            // best-effort lookahead
           }
-        } catch {
-          // best-effort lookahead
         }
+        t_lookahead = Date.now() - tLookaheadStart;
       }
+
+      // If a specific league was requested and 0 pre-kickoff fixtures exist across today & lookahead:
+      if (leagueFilter !== 'ALL' && relevantCount === 0) {
+        const leagueName = leagueFilter.replace(/_/g, ' ');
+        return `📅 **No Upcoming ${leagueName} Fixtures Ahead of Kickoff**\n\nAll matches for ${leagueName} on today's slate have either kicked off or concluded, and no immediate fixtures were found in the lookahead window.\n\n💡 *Tip: Try generating a slip with \`league: ALL\` to include active upcoming European and domestic slates, or check back closer to the next matchday!*`;
+      }
+
       const fixtures = orderFixturesByPriority(preKickoff);
       const preds: MarketPrediction[] = [];
 
       // 100% in-memory calculation using Tier-3 Fair Model Baseline & Dixon-Coles
       // Zero external network adapter calls during command execution: resolves in <50ms.
       const tAnalyzeStart = Date.now();
-      const fixturesToScan = fixtures.slice(0, 30);
+      const prioritizedFixtures = leagueFilter === 'ALL'
+        ? fixtures
+        : [...fixtures.filter(f => f.league === leagueFilter), ...fixtures.filter(f => f.league !== leagueFilter)];
+      const fixturesToScan = prioritizedFixtures.slice(0, 40);
       if (trace) { trace.step = '4_analyze_matches_loop'; trace.details = `0/${fixturesToScan.length}`; }
       for (let i = 0; i < fixturesToScan.length; i++) {
         const fx = fixturesToScan[i];

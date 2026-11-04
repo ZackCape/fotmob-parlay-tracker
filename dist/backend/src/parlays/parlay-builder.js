@@ -226,9 +226,15 @@ export async function buildStatisticalParlay(candidatePredictions, options) {
     else if (mode === 'CORRELATED_ALLOWED') {
         // Mode 2: Correlated Allowed - Allows intra-match stacking across fixtures
         // (already priority-ordered; re-sort inside each tier by probability).
+        // Stacking is capped at 2 legs per fixture (relaxing to 3 only if needed)
+        // to prevent cramming all legs into a tiny handful of matches.
+        const MAX_LEGS_PRIMARY = 2;
+        const MAX_LEGS_CEILING = 3;
+        const fixtureLegCount = new Map();
         const sorted = prioritizePriorityLeagues
             ? [...ordered].sort((a, b) => compareCompetitionPriority(a.league, b.league) || (b.estimatedProbability - a.estimatedProbability))
             : [...filtered].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+        // Pass 1: Stacking up to 2 legs per match from different market families
         for (let i = 0; i < sorted.length; i++) {
             if (selectedPredictions.length >= targetLegsCount)
                 break;
@@ -236,9 +242,41 @@ export async function buildStatisticalParlay(candidatePredictions, options) {
                 await new Promise(resolve => setImmediate(resolve));
             }
             const cand = sorted[i];
-            const matchConflicts = selectedPredictions.some(sel => sel.fixtureId === cand.fixtureId && areMarketsConflicting(sel.market, cand.market));
+            if (!cand)
+                continue;
+            const fKey = cand.fixtureId || cand.fixtureDescription;
+            const count = fixtureLegCount.get(fKey) || 0;
+            if (count >= MAX_LEGS_PRIMARY)
+                continue;
+            const matchConflicts = selectedPredictions.some(sel => (sel.fixtureId === cand.fixtureId || sel.fixtureDescription === cand.fixtureDescription) &&
+                areMarketsConflicting(sel.market, cand.market));
             if (!matchConflicts) {
                 selectedPredictions.push(cand);
+                fixtureLegCount.set(fKey, count + 1);
+            }
+        }
+        // Pass 2: If still short of targetLegsCount, allow at most 1 additional complementary market (up to 3 max per match)
+        if (selectedPredictions.length < targetLegsCount) {
+            for (let i = 0; i < sorted.length; i++) {
+                if (selectedPredictions.length >= targetLegsCount)
+                    break;
+                const cand = sorted[i];
+                if (!cand)
+                    continue;
+                const fKey = cand.fixtureId || cand.fixtureDescription;
+                const count = fixtureLegCount.get(fKey) || 0;
+                if (count >= MAX_LEGS_CEILING)
+                    continue;
+                const alreadySelected = selectedPredictions.some(sel => (sel.fixtureId === cand.fixtureId || sel.fixtureDescription === cand.fixtureDescription) &&
+                    sel.market === cand.market);
+                if (alreadySelected)
+                    continue;
+                const matchConflicts = selectedPredictions.some(sel => (sel.fixtureId === cand.fixtureId || sel.fixtureDescription === cand.fixtureDescription) &&
+                    areMarketsConflicting(sel.market, cand.market));
+                if (!matchConflicts) {
+                    selectedPredictions.push(cand);
+                    fixtureLegCount.set(fKey, count + 1);
+                }
             }
         }
     }
