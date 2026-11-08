@@ -31,6 +31,59 @@ export interface ParlayBuilderOptions {
 }
 
 /**
+ * Compute odds-boost and yield-scoring for a candidate parlay leg.
+ * Strongly prefers profitable sweet-spot lines (63% - 77% prob, paying 1.25x - 1.55x)
+ * while penalizing dead-weight micro-odds (>81% prob, paying <1.18x) and repetitive card unders.
+ */
+export function computeLegYieldScore(pred: MarketPrediction, targetLegs: number = 5): number {
+  const prob = typeof pred.estimatedProbability === 'number' && Number.isFinite(pred.estimatedProbability)
+    ? pred.estimatedProbability
+    : 0.5;
+  const bookieOdds = pred.bookieOdds ?? Math.max(1.01, Number((1 / Math.min(0.96, prob * 1.045)).toFixed(2)));
+
+  // Compound expected growth factor: (odds - 1) * probability
+  const compoundGrowth = (bookieOdds - 1) * prob;
+
+  // Base score balances probability reliability with compound odds growth.
+  // Weighting ensures higher probability is preferred within the same tier / yield level.
+  let score = prob * 1.20 + compoundGrowth * 0.50;
+
+  // Sweet-Spot Boost: Legs with probability between 0.62 and 0.77 (paying 1.25x - 1.55x)
+  // receive a dedicated boost because they are the sweet-spot for compound parlay growth
+  if (prob >= 0.62 && prob <= 0.77) {
+    score += 0.35;
+  }
+
+  // Micro-Odds Penalty: If probability > 0.78 (bookieOdds < 1.23x, e.g. 1.04x - 1.18x lines
+  // like heavy favorite Over 0.5 Goals or Under 5.5 Cards), apply a heavy ranking penalty
+  // so the builder strongly prefers 1.26x - 1.60x legs (62% - 76% probability) FIRST!
+  if (prob > 0.78) {
+    score -= (prob - 0.77) * 4.0;
+  }
+
+  // Market Quality Bonus: Give preference to primary value markets over filler card unders
+  const m = pred.market;
+  if (
+    m === 'HOME_WIN' ||
+    m === 'AWAY_WIN' ||
+    m === 'OVER_2_5' ||
+    m === 'HOME_OVER_1_5' ||
+    m === 'AWAY_OVER_1_5' ||
+    m === 'BTTS_YES'
+  ) {
+    score += 0.10;
+  } else if (m === 'OVER_1_5') {
+    score += 0.02;
+  } else if (m === 'OVER_8_5_CORNERS' || m === 'OVER_9_5_CORNERS' || m === 'OVER_3_5_CARDS') {
+    score += 0.05;
+  } else if (m === 'UNDER_5_5_CARDS') {
+    score -= 0.20;
+  }
+
+  return score;
+}
+
+/**
  * Tier-3 Fair Model Baseline fallback generator.
  */
 export function getFairModelBaselineOdds(
@@ -235,13 +288,12 @@ export async function buildStatisticalParlay(
   await new Promise(resolve => setImmediate(resolve));
 
   // Competition priority (EPL / UCL first) over the eligible pool, with the
-  // strength of each leg as the in-tier ranking. Everything below consumes this
-  // order, so the strongest priority legs lead and secondary leagues only fill
-  // what the priority pool leaves over.
+  // leg yield score as the in-tier ranking. This ensures high-yield sweet-spot selections
+  // lead, and micro-odds are penalized.
   const ordered = orderByCompetitionPriorityThenScore(
     filtered,
     (p) => p.league,
-    (p) => p.estimatedProbability,
+    (p) => computeLegYieldScore(p, targetLegsCount),
     { prioritize: prioritizePriorityLeagues },
   );
 
@@ -249,6 +301,7 @@ export async function buildStatisticalParlay(
   await new Promise(resolve => setImmediate(resolve));
 
   let selectedPredictions: MarketPrediction[] = [];
+  const maxUnder55Cards = Math.max(1, Math.floor(targetLegsCount * 0.20));
 
   if (mode === 'SAME_GAME_PARLAY') {
     // Mode 1: Same-Game Parlay (SGP) - Multiple complementary markets from the SAME match!
@@ -266,12 +319,12 @@ export async function buildStatisticalParlay(
       const groups = [...fixtureCounts.values()];
       if (prioritizePriorityLeagues) {
         // Widest market coverage wins; competition priority breaks a tie, then
-        // the fixture whose best market is strongest.
+        // the fixture whose best market yield is strongest.
         groups.sort((a, b) => {
           if (b.length !== a.length) return b.length - a.length;
           const byPriority = compareCompetitionPriority(a[0]?.league, b[0]?.league);
           if (byPriority !== 0) return byPriority;
-          return Math.max(...b.map(p => p.estimatedProbability)) - Math.max(...a.map(p => p.estimatedProbability));
+          return Math.max(...b.map(p => computeLegYieldScore(p, targetLegsCount))) - Math.max(...a.map(p => computeLegYieldScore(p, targetLegsCount)));
         });
         targetFixturePicks = groups[0] ?? [];
       } else {
@@ -283,20 +336,40 @@ export async function buildStatisticalParlay(
       }
     }
 
-    // Sort descending by probability
-    targetFixturePicks.sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+    // Sort descending by leg yield score
+    targetFixturePicks.sort((a, b) => computeLegYieldScore(b, targetLegsCount) - computeLegYieldScore(a, targetLegsCount));
 
-    // Pick non-conflicting markets for the match (e.g. Over 0.5 Goals, Over 5.5 Corners, Cards, 1X)
+    // Pass 1: Sweet-Spot window (probability <= 0.815) with card unders cap
     for (const cand of targetFixturePicks) {
       if (selectedPredictions.length >= targetLegsCount) break;
+      if (cand.estimatedProbability > 0.815) continue;
+      if (cand.market === 'UNDER_5_5_CARDS') {
+        const cardCount = selectedPredictions.filter(p => p.market === 'UNDER_5_5_CARDS').length;
+        if (cardCount >= maxUnder55Cards) continue;
+      }
       const conflicts = selectedPredictions.some(sel => areMarketsConflicting(sel.market, cand.market));
       if (!conflicts) {
         selectedPredictions.push(cand);
       }
     }
+
+    // Pass 2: Fallback to remaining candidates if needed to fulfill target leg count
+    if (selectedPredictions.length < targetLegsCount) {
+      for (const cand of targetFixturePicks) {
+        if (selectedPredictions.length >= targetLegsCount) break;
+        if (selectedPredictions.some(p => p.id === cand.id || p.market === cand.market)) continue;
+        if (cand.market === 'UNDER_5_5_CARDS') {
+          const cardCount = selectedPredictions.filter(p => p.market === 'UNDER_5_5_CARDS').length;
+          if (cardCount >= maxUnder55Cards) continue;
+        }
+        const conflicts = selectedPredictions.some(sel => areMarketsConflicting(sel.market, cand.market));
+        if (!conflicts) {
+          selectedPredictions.push(cand);
+        }
+      }
+    }
   } else if (mode === 'CORRELATED_ALLOWED') {
     // Mode 2: Correlated Allowed - Allows intra-match stacking across fixtures
-    // (already priority-ordered; re-sort inside each tier by probability).
     // Stacking is capped at 2 legs per fixture (relaxing to 3 only if needed)
     // to prevent cramming all legs into a tiny handful of matches.
     const MAX_LEGS_PRIMARY = 2;
@@ -305,13 +378,13 @@ export async function buildStatisticalParlay(
 
     const sorted = prioritizePriorityLeagues
       ? [...ordered].sort((a, b) =>
-          compareCompetitionPriority(a.league, b.league) || (b.estimatedProbability - a.estimatedProbability))
-      : [...filtered].sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+          compareCompetitionPriority(a.league, b.league) || (computeLegYieldScore(b, targetLegsCount) - computeLegYieldScore(a, targetLegsCount)))
+      : [...filtered].sort((a, b) => computeLegYieldScore(b, targetLegsCount) - computeLegYieldScore(a, targetLegsCount));
 
     // Check if away team goal candidates exist in pool to enable balanced alternation
-    const hasAvailableAway = sorted.some(p => p && p.market === 'AWAY_OVER_0_5');
+    const hasAvailableAway = sorted.some(p => p && (p.market === 'AWAY_OVER_0_5' || p.market === 'AWAY_OVER_1_5'));
 
-    // Pass 1: Stacking up to 2 legs per match from different market families with Home/Away team goal balance
+    // Pass 1: Sweet-Spot candidates (prob <= 0.815), stacking up to 2 legs per match
     for (let i = 0; i < sorted.length; i++) {
       if (selectedPredictions.length >= targetLegsCount) break;
       if (i > 0 && i % 15 === 0) {
@@ -319,17 +392,21 @@ export async function buildStatisticalParlay(
       }
       const cand = sorted[i];
       if (!cand) continue;
+      if (cand.estimatedProbability > 0.815) continue; // defer micro-odds to fallback pass
+      if (cand.market === 'UNDER_5_5_CARDS') {
+        const cardCount = selectedPredictions.filter(p => p.market === 'UNDER_5_5_CARDS').length;
+        if (cardCount >= maxUnder55Cards) continue;
+      }
       const fKey = cand.fixtureId || cand.fixtureDescription;
       const count = fixtureLegCount.get(fKey) || 0;
       if (count >= MAX_LEGS_PRIMARY) continue;
 
-      // Diversity rule: enforce a balanced ratio of Home vs. Away team goal selections
-      // (max 50% home team goal props) so slips don't cluster exclusively on home goal lines.
-      if (cand.market === 'HOME_OVER_0_5' && hasAvailableAway) {
-        const homeGoalsCount = selectedPredictions.filter(p => p.market === 'HOME_OVER_0_5').length;
-        const awayGoalsCount = selectedPredictions.filter(p => p.market === 'AWAY_OVER_0_5').length;
+      // Diversity rule: Home vs Away team goals balance
+      if ((cand.market === 'HOME_OVER_0_5' || cand.market === 'HOME_OVER_1_5') && hasAvailableAway) {
+        const homeGoalsCount = selectedPredictions.filter(p => p.market === 'HOME_OVER_0_5' || p.market === 'HOME_OVER_1_5').length;
+        const awayGoalsCount = selectedPredictions.filter(p => p.market === 'AWAY_OVER_0_5' || p.market === 'AWAY_OVER_1_5').length;
         if (homeGoalsCount > awayGoalsCount) {
-          continue; // Defer home goal selection until away goal props catch up
+          continue;
         }
       }
 
@@ -343,12 +420,48 @@ export async function buildStatisticalParlay(
       }
     }
 
-    // Pass 2: If still short of targetLegsCount, allow at most 1 additional complementary market (up to 3 max per match)
+    // Pass 2: Sweet-Spot candidates up to 3 legs per match
     if (selectedPredictions.length < targetLegsCount) {
       for (let i = 0; i < sorted.length; i++) {
         if (selectedPredictions.length >= targetLegsCount) break;
         const cand = sorted[i];
         if (!cand) continue;
+        if (cand.estimatedProbability > 0.815) continue;
+        if (cand.market === 'UNDER_5_5_CARDS') {
+          const cardCount = selectedPredictions.filter(p => p.market === 'UNDER_5_5_CARDS').length;
+          if (cardCount >= maxUnder55Cards) continue;
+        }
+        const fKey = cand.fixtureId || cand.fixtureDescription;
+        const count = fixtureLegCount.get(fKey) || 0;
+        if (count >= MAX_LEGS_CEILING) continue;
+
+        const alreadySelected = selectedPredictions.some(
+          sel => (sel.fixtureId === cand.fixtureId || sel.fixtureDescription === cand.fixtureDescription) &&
+                 sel.market === cand.market
+        );
+        if (alreadySelected) continue;
+
+        const matchConflicts = selectedPredictions.some(
+          sel => (sel.fixtureId === cand.fixtureId || sel.fixtureDescription === cand.fixtureDescription) &&
+                 areMarketsConflicting(sel.market, cand.market)
+        );
+        if (!matchConflicts) {
+          selectedPredictions.push(cand);
+          fixtureLegCount.set(fKey, count + 1);
+        }
+      }
+    }
+
+    // Pass 3 (Fallback): Allow remaining candidates (including prob > 0.815) up to ceiling
+    if (selectedPredictions.length < targetLegsCount) {
+      for (let i = 0; i < sorted.length; i++) {
+        if (selectedPredictions.length >= targetLegsCount) break;
+        const cand = sorted[i];
+        if (!cand) continue;
+        if (cand.market === 'UNDER_5_5_CARDS') {
+          const cardCount = selectedPredictions.filter(p => p.market === 'UNDER_5_5_CARDS').length;
+          if (cardCount >= maxUnder55Cards) continue;
+        }
         const fKey = cand.fixtureId || cand.fixtureDescription;
         const count = fixtureLegCount.get(fKey) || 0;
         if (count >= MAX_LEGS_CEILING) continue;
@@ -371,39 +484,61 @@ export async function buildStatisticalParlay(
     }
   } else {
     // Mode 3: Strict Anti-Correlated (Default) - Strictly 1 leg per fixture across separate stadiums
-    // The priority ordering is the input order for the de-duplication pass.
     const independentPicks = filterNonCorrelatedPredictions(ordered, {
       respectGivenOrder: prioritizePriorityLeagues,
     });
 
-    // Apply Home/Away team goals balance constraint (max 50% home team goal props)
-    const hasAwayInIndependent = independentPicks.some(p => p.market === 'AWAY_OVER_0_5');
-    if (hasAwayInIndependent) {
-      const balancedPicks: MarketPrediction[] = [];
-      const deferredHome: MarketPrediction[] = [];
-      let hCount = 0;
-      let aCount = 0;
+    const hasAwayInIndependent = independentPicks.some(p => p.market === 'AWAY_OVER_0_5' || p.market === 'AWAY_OVER_1_5');
 
-      for (const p of independentPicks) {
-        if (balancedPicks.length >= targetLegsCount) break;
-        if (p.market === 'HOME_OVER_0_5') {
-          if (hCount > aCount) {
-            deferredHome.push(p);
-            continue;
-          }
-          hCount++;
-        } else if (p.market === 'AWAY_OVER_0_5') {
-          aCount++;
+    // Pass 1: Sweet-spot candidates (prob <= 0.815) with card under cap and home/away goal balance
+    const selectedFixtures = new Set<string>();
+    const sweetSpotPicks: MarketPrediction[] = [];
+    const deferredHome: MarketPrediction[] = [];
+    let hCount = 0;
+    let aCount = 0;
+
+    for (const p of independentPicks) {
+      if (sweetSpotPicks.length >= targetLegsCount) break;
+      if (p.estimatedProbability > 0.815) continue; // defer micro-odds
+      if (p.market === 'UNDER_5_5_CARDS') {
+        const cardCount = sweetSpotPicks.filter(x => x.market === 'UNDER_5_5_CARDS').length;
+        if (cardCount >= maxUnder55Cards) continue;
+      }
+      if ((p.market === 'HOME_OVER_0_5' || p.market === 'HOME_OVER_1_5') && hasAwayInIndependent) {
+        if (hCount > aCount) {
+          deferredHome.push(p);
+          continue;
         }
-        balancedPicks.push(p);
+        hCount++;
+      } else if (p.market === 'AWAY_OVER_0_5' || p.market === 'AWAY_OVER_1_5') {
+        aCount++;
       }
-      for (const p of deferredHome) {
-        if (balancedPicks.length >= targetLegsCount) break;
-        balancedPicks.push(p);
+      sweetSpotPicks.push(p);
+      selectedFixtures.add(p.fixtureId);
+    }
+
+    for (const p of deferredHome) {
+      if (sweetSpotPicks.length >= targetLegsCount) break;
+      if (!selectedFixtures.has(p.fixtureId)) {
+        sweetSpotPicks.push(p);
+        selectedFixtures.add(p.fixtureId);
       }
-      selectedPredictions = balancedPicks;
-    } else {
-      selectedPredictions = independentPicks.slice(0, targetLegsCount);
+    }
+
+    selectedPredictions = sweetSpotPicks;
+
+    // Pass 2 (Fallback): If still short of targetLegsCount, fill remaining spots from independentPicks
+    if (selectedPredictions.length < targetLegsCount) {
+      for (const p of independentPicks) {
+        if (selectedPredictions.length >= targetLegsCount) break;
+        if (selectedFixtures.has(p.fixtureId)) continue;
+        if (p.market === 'UNDER_5_5_CARDS') {
+          const cardCount = selectedPredictions.filter(x => x.market === 'UNDER_5_5_CARDS').length;
+          if (cardCount >= maxUnder55Cards) continue;
+        }
+        selectedPredictions.push(p);
+        selectedFixtures.add(p.fixtureId);
+      }
     }
   }
 
@@ -421,29 +556,37 @@ export async function buildStatisticalParlay(
   }
 
   // Map to ParlayLeg format
-  let parlayLegs: ParlayLeg[] = selectedPredictions.map(p => ({
-    fixtureId: p?.fixtureId || 'unknown',
-    league: p?.league || 'ALL',
-    fixtureDescription: p?.fixtureDescription || 'Match',
-    kickoff: p?.kickoff || new Date().toISOString(),
-    market: p?.market || ('HOME_WIN' as any),
-    marketLabel: p?.marketLabel || p?.market || 'Market',
-    selection: p?.selection || 'Selection',
-    estimatedProbability: typeof p?.estimatedProbability === 'number' && Number.isFinite(p.estimatedProbability)
+  let parlayLegs: ParlayLeg[] = selectedPredictions.map(p => {
+    const prob = typeof p?.estimatedProbability === 'number' && Number.isFinite(p.estimatedProbability)
       ? p.estimatedProbability
-      : 0.5,
-    rawProbability: (p as any)?.rawProbability ?? p?.estimatedProbability,
-    confidenceMultiplier: (p as any)?.confidenceMultiplier ?? 1.0,
-    supportingStatistics: p?.supportingStatistics,
-    sampleSize: p?.sampleSize ?? 10,
-    dataFreshnessDays: p?.dataFreshnessDays ?? 1,
-    riskFactors: p?.riskFactors || [],
-  }));
+      : 0.5;
+    const fairOdds = p?.fairOdds ?? (prob > 0 ? Number((1 / prob).toFixed(2)) : 2.0);
+    const bookieOdds = p?.bookieOdds ?? Math.max(1.01, Number((1 / Math.min(0.96, prob * 1.045)).toFixed(2)));
+
+    return {
+      fixtureId: p?.fixtureId || 'unknown',
+      league: p?.league || 'ALL',
+      fixtureDescription: p?.fixtureDescription || 'Match',
+      kickoff: p?.kickoff || new Date().toISOString(),
+      market: p?.market || ('HOME_WIN' as any),
+      marketLabel: p?.marketLabel || p?.market || 'Market',
+      selection: p?.selection || 'Selection',
+      estimatedProbability: prob,
+      rawProbability: (p as any)?.rawProbability ?? prob,
+      fairOdds,
+      bookieOdds,
+      confidenceMultiplier: (p as any)?.confidenceMultiplier ?? 1.0,
+      supportingStatistics: p?.supportingStatistics,
+      sampleSize: p?.sampleSize ?? 10,
+      dataFreshnessDays: p?.dataFreshnessDays ?? 1,
+      riskFactors: p?.riskFactors || [],
+    };
+  });
 
   // Group and cluster legs by fixture so multi-market bets from the same match are contiguous.
   // 1. Order fixture groups by the highest individual leg probability within each fixture (descending),
   //    respecting competition priority when enabled.
-  // 2. Within each fixture group, order legs by probability (descending).
+  // 2. Within each fixture group, order legs by realistic odds / yield (descending).
   const fixtureGroupMap = new Map<string, ParlayLeg[]>();
   for (const leg of parlayLegs) {
     const key = leg.fixtureId || leg.fixtureDescription;
@@ -453,7 +596,7 @@ export async function buildStatisticalParlay(
   }
 
   for (const group of fixtureGroupMap.values()) {
-    group.sort((a, b) => b.estimatedProbability - a.estimatedProbability);
+    group.sort((a, b) => (b.bookieOdds ?? 1) - (a.bookieOdds ?? 1) || (b.estimatedProbability - a.estimatedProbability));
   }
 
   const sortedGroups = Array.from(fixtureGroupMap.values()).sort((groupA, groupB) => {
@@ -461,8 +604,8 @@ export async function buildStatisticalParlay(
       const pDiff = compareCompetitionPriority(groupA[0]?.league, groupB[0]?.league);
       if (pDiff !== 0) return pDiff;
     }
-    const maxA = groupA[0]?.estimatedProbability ?? 0;
-    const maxB = groupB[0]?.estimatedProbability ?? 0;
+    const maxA = Math.max(...groupA.map(l => l.estimatedProbability));
+    const maxB = Math.max(...groupB.map(l => l.estimatedProbability));
     return maxB - maxA;
   });
 
@@ -513,6 +656,18 @@ export async function buildStatisticalParlay(
   const compoundOddsDecimal = combinedProb > 0 ? Number((1 / combinedProb).toFixed(2)) : 0;
   const combinedProbPct = (combinedProb * 100).toFixed(combinedProb < 0.01 ? 4 : 2);
 
+  // Compute realistic compound bookmaker odds (incorporating vig and correlation)
+  let totalBookieOdds = 1.0;
+  for (const leg of parlayLegs) {
+    const odds = leg.bookieOdds ?? Math.max(1.05, Number((1 / Math.min(0.95, leg.estimatedProbability * 1.045)).toFixed(2)));
+    totalBookieOdds *= odds;
+  }
+  if (mode !== 'ANTI_CORRELATED' && parlayLegs.length > 0) {
+    const correlatedBookie = Math.max(1.10, Number((compoundOddsDecimal * 0.90).toFixed(2)));
+    totalBookieOdds = Math.min(totalBookieOdds, correlatedBookie);
+  }
+  totalBookieOdds = Number(totalBookieOdds.toFixed(2));
+
   const status = isSufficient ? 'SUFFICIENT_SELECTIONS' : 'INSUFFICIENT_SELECTIONS';
 
   let message = `Successfully assembled ${parlayLegs.length}-leg statistical parlay.`;
@@ -556,6 +711,7 @@ export async function buildStatisticalParlay(
     legs: parlayLegs,
     combinedProbability: Number(combinedProb.toFixed(6)),
     compoundOddsDecimal,
+    totalBookieOdds,
     correlationExplanation,
     independenceAssumptions,
     riskWarning,

@@ -118,6 +118,8 @@ export type MarketType =
   | 'DOUBLE_CHANCE_12'
   | 'HOME_OVER_0_5'
   | 'AWAY_OVER_0_5'
+  | 'HOME_OVER_1_5'
+  | 'AWAY_OVER_1_5'
   | 'HT_OVER_0_5'
   | 'HT_DRAW'
   | 'OVER_5_5_CORNERS'
@@ -143,6 +145,8 @@ export interface MarketPrediction {
   selection: string;
   estimatedProbability: number; // Calibrated probability between 0 and 1
   rawProbability: number;
+  fairOdds?: number;
+  bookieOdds?: number;
   confidenceLower: number;
   confidenceUpper: number;
   supportingStatistics: {
@@ -247,6 +251,8 @@ export interface ParlayLeg {
   selection: string;
   estimatedProbability: number;
   rawProbability?: number;
+  fairOdds?: number;
+  bookieOdds?: number;
   confidenceMultiplier?: number;
   supportingStatistics: MarketPrediction['supportingStatistics'];
   sampleSize: number;
@@ -266,6 +272,7 @@ export interface StatisticalParlay {
   legs: ParlayLeg[];
   combinedProbability: number;
   compoundOddsDecimal: number;
+  totalBookieOdds?: number;
   correlationExplanation: string;
   independenceAssumptions: string;
   riskWarning: string;

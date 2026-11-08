@@ -3643,12 +3643,25 @@ export class DiscordBotService {
       }
     }
 
+    const totalBookieOdds = parlay.totalBookieOdds ?? (() => {
+      let tot = 1.0;
+      for (const leg of parlay.legs) {
+        const odds = leg.bookieOdds ?? Math.max(1.05, Number((1 / Math.min(0.95, leg.estimatedProbability * 1.045)).toFixed(2)));
+        tot *= odds;
+      }
+      return Number(tot.toFixed(2));
+    })();
+
     const legsList = isSgp
-      ? parlay.legs.map((l, i) =>
-          `${i + 1}. \`${l.marketLabel}\`: **${l.selection}** — **${(l.estimatedProbability * 100).toFixed(1)}%** prob`
-        ).join('\n')
+      ? parlay.legs.map((l, i) => {
+          const legBookieOdds = l.bookieOdds ?? Math.max(1.05, Number((1 / Math.min(0.95, l.estimatedProbability * 1.045)).toFixed(2)));
+          return `${i + 1}. \`${l.marketLabel}\`: **${l.selection}** (**${legBookieOdds.toFixed(2)}x** • ${Math.round(l.estimatedProbability * 100)}%)`;
+        }).join('\n')
       : matchGroups.map((grp, i) => {
-          const picks = grp.legs.map(l => `\`${l.selection}\` (${(l.estimatedProbability * 100).toFixed(0)}%)`).join(' • ');
+          const picks = grp.legs.map(l => {
+            const legBookieOdds = l.bookieOdds ?? Math.max(1.05, Number((1 / Math.min(0.95, l.estimatedProbability * 1.045)).toFixed(2)));
+            return `\`${l.selection}\` (**${legBookieOdds.toFixed(2)}x** • ${Math.round(l.estimatedProbability * 100)}%)`;
+          }).join(' • ');
           return `${i + 1}. **${grp.fixtureDescription}** (${grp.league}): ${picks}`;
         }).join('\n');
 
@@ -3668,9 +3681,10 @@ export class DiscordBotService {
       ? `• **Priority**: \`${PRIORITY_LEAGUE_LABEL}\` — ranked ahead of the secondary leagues\n`
       : '';
 
+    const return10 = (10 * totalBookieOdds).toFixed(2);
     const footerDetails =
-      `• **Combined Probability**: \`${(parlay.combinedProbability * 100).toFixed(2)}%\`\n` +
-      `• **Fair Compound Odds**: \`${parlay.compoundOddsDecimal}x\`\n` +
+      `• **Est. Bookmaker Odds**: \`${totalBookieOdds.toFixed(2)}x\` • **Fair Model Odds**: \`${parlay.compoundOddsDecimal}x\`\n` +
+      `• **Combined Hit Rate**: \`${(parlay.combinedProbability * 100).toFixed(2)}%\` • **$10 Return**: \`$${return10}\`\n` +
       priorityLine +
       `• **Conditions**: \`legs=${target}\` • \`min=${(minProbability * 100).toFixed(0)}%\` • \`league=${leagueFilter}\` • \`mode=${mode}\`\n\n` +
       `*Type \`/track\` to follow live match motion, or build your own slip with \`/customparlay\`!*`;

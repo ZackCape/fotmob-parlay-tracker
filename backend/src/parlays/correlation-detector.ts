@@ -48,8 +48,10 @@ export function getMarketFamily(market: MarketType): MarketFamily | 'OTHER' {
     case 'BTTS_NO':
       return 'BTTS';
     case 'HOME_OVER_0_5':
+    case 'HOME_OVER_1_5':
       return 'TEAM_GOALS_HOME';
     case 'AWAY_OVER_0_5':
+    case 'AWAY_OVER_1_5':
       return 'TEAM_GOALS_AWAY';
     case 'HT_OVER_0_5':
     case 'HT_DRAW':

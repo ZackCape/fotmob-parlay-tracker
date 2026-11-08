@@ -357,9 +357,17 @@ export function evaluateSavedLeg(leg, ctx, latestGoal) {
             if (h >= 1)
                 earlyHit = { note: `${ctx.homeTeam} scored` };
             break;
+        case 'HOME_OVER_1_5':
+            if (h >= 2)
+                earlyHit = { note: `${ctx.homeTeam} scored 2+ goals` };
+            break;
         case 'AWAY_OVER_0_5':
             if (a >= 1)
                 earlyHit = { note: `${ctx.awayTeam} scored` };
+            break;
+        case 'AWAY_OVER_1_5':
+            if (a >= 2)
+                earlyHit = { note: `${ctx.awayTeam} scored 2+ goals` };
             break;
         case 'BTTS_YES':
             if (h > 0 && a > 0)

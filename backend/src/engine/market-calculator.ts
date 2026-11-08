@@ -21,6 +21,8 @@ const LEAGUE_PRIORS = {
   DOUBLE_CHANCE_12: 0.75,
   HOME_OVER_0_5: 0.80,
   AWAY_OVER_0_5: 0.75,
+  HOME_OVER_1_5: 0.52,
+  AWAY_OVER_1_5: 0.40,
   HT_OVER_0_5: 0.70,
   HT_DRAW: 0.42,
   OVER_7_5_CORNERS: 0.75,
@@ -88,6 +90,8 @@ export function deriveMarketPredictions(
   let probBttsYes = 0;
   let probHomeOver05 = 0;
   let probAwayOver05 = 0;
+  let probHomeOver15 = 0;
+  let probAwayOver15 = 0;
 
   for (const cell of matrix) {
     const { homeScore, awayScore, probability } = cell;
@@ -105,13 +109,29 @@ export function deriveMarketPredictions(
     if (homeScore > 0 && awayScore > 0) probBttsYes += probability;
     if (homeScore > 0) probHomeOver05 += probability;
     if (awayScore > 0) probAwayOver05 += probability;
+    if (homeScore >= 2) probHomeOver15 += probability;
+    if (awayScore >= 2) probAwayOver15 += probability;
   }
 
-  // Complement discrete matrix with continuous Poisson CDF so away offensive ratings are fully honored
+  // Complement discrete matrix with continuous Poisson CDF so offensive ratings are fully honored
   const poissonProbHome05 = 1 - Math.exp(-dcResult.homeExpectedGoals);
   const poissonProbAway05 = 1 - Math.exp(-dcResult.awayExpectedGoals);
   probHomeOver05 = Math.max(probHomeOver05, poissonProbHome05);
   probAwayOver05 = Math.max(probAwayOver05, poissonProbAway05);
+
+  const poissonProbHome15 = 1 - Math.exp(-dcResult.homeExpectedGoals) * (1 + dcResult.homeExpectedGoals);
+  const poissonProbAway15 = 1 - Math.exp(-dcResult.awayExpectedGoals) * (1 + dcResult.awayExpectedGoals);
+  probHomeOver15 = Math.max(probHomeOver15, poissonProbHome15);
+  probAwayOver15 = Math.max(probAwayOver15, poissonProbAway15);
+
+  // Calibrate Over 2.5 Goals from hybrid goal expectations
+  const lambdaTotal = dcResult.homeExpectedGoals + dcResult.awayExpectedGoals;
+  const poissonOver25 = 1 - poissonCdf(2, lambdaTotal);
+  probOver25 = Math.max(probOver25, poissonOver25);
+
+  // Calibrate BTTS with independence prior blended with Dixon-Coles grid
+  const indepBtts = (1 - Math.exp(-dcResult.homeExpectedGoals)) * (1 - Math.exp(-dcResult.awayExpectedGoals));
+  probBttsYes = Math.max(probBttsYes, indepBtts * 0.95);
 
   const probUnder25 = 1 - probOver25;
   const probUnder35 = 1 - probOver35;
@@ -272,12 +292,28 @@ export function deriveMarketPredictions(
       extraRisks: [],
     },
     {
+      market: 'HOME_OVER_1_5',
+      label: 'Team Total Goals',
+      selection: `${fixture.homeTeam.shortName} Over 1.5 Goals`,
+      rawProb: probHomeOver15,
+      prior: LEAGUE_PRIORS.HOME_OVER_1_5,
+      extraRisks: ['Requires home team to score 2+ goals'],
+    },
+    {
       market: 'AWAY_OVER_0_5',
       label: 'Team Total Goals',
       selection: `${fixture.awayTeam.shortName} Over 0.5 Goals`,
       rawProb: probAwayOver05,
       prior: LEAGUE_PRIORS.AWAY_OVER_0_5,
       extraRisks: [],
+    },
+    {
+      market: 'AWAY_OVER_1_5',
+      label: 'Team Total Goals',
+      selection: `${fixture.awayTeam.shortName} Over 1.5 Goals`,
+      rawProb: probAwayOver15,
+      prior: LEAGUE_PRIORS.AWAY_OVER_1_5,
+      extraRisks: ['Away side playing away from home needing 2+ goals'],
     },
     {
       market: 'HT_OVER_0_5',
@@ -396,6 +432,11 @@ export function deriveMarketPredictions(
     const calibrated = calibrateProbability(item.rawProb, item.prior, effectiveSampleSize, priorWeight);
     const combinedRisks = [...riskFactors, ...item.extraRisks];
 
+    const prob = calibrated.calibrated;
+    const fairOdds = prob > 0 ? Number((1 / prob).toFixed(2)) : 100.0;
+    // Standard bookmaker margin 4.5% (multiplied onto probability to mimic sportsbook juice)
+    const bookieOdds = Math.max(1.01, Number((1 / Math.min(0.96, prob * 1.045)).toFixed(2)));
+
     return {
       id: `${fixture.id}-${item.market}`,
       fixtureId: fixture.id,
@@ -405,8 +446,10 @@ export function deriveMarketPredictions(
       market: item.market,
       marketLabel: item.label,
       selection: item.selection,
-      estimatedProbability: calibrated.calibrated,
+      estimatedProbability: prob,
       rawProbability: calibrated.raw,
+      fairOdds,
+      bookieOdds,
       confidenceLower: calibrated.lowerBound,
       confidenceUpper: calibrated.upperBound,
       supportingStatistics: supportingStats,
@@ -450,7 +493,9 @@ export function evaluateActualOutcome(market: MarketType, fixture: Fixture): 'PE
     case 'BTTS_YES': return h > 0 && a > 0 ? 'HIT' : 'MISS';
     case 'BTTS_NO': return h === 0 || a === 0 ? 'HIT' : 'MISS';
     case 'HOME_OVER_0_5': return h >= 1 ? 'HIT' : 'MISS';
+    case 'HOME_OVER_1_5': return h >= 2 ? 'HIT' : 'MISS';
     case 'AWAY_OVER_0_5': return a >= 1 ? 'HIT' : 'MISS';
+    case 'AWAY_OVER_1_5': return a >= 2 ? 'HIT' : 'MISS';
     case 'OVER_5_5_CORNERS': return totalCorners !== null ? (totalCorners >= 6 ? 'HIT' : 'MISS') : 'VOID';
     case 'OVER_7_5_CORNERS': return totalCorners !== null ? (totalCorners >= 8 ? 'HIT' : 'MISS') : 'VOID';
     case 'OVER_8_5_CORNERS': return totalCorners !== null ? (totalCorners >= 9 ? 'HIT' : 'MISS') : 'VOID';
