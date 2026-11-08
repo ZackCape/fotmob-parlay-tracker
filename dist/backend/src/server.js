@@ -5,6 +5,7 @@ import { scheduleDailyReport } from './cron/dailyReport.js';
 import { DiscordBotService } from './discord/bot.js';
 import { LiveParlayTrackerService } from './parlays/live-tracker.js';
 import { config } from './config/env.js';
+import { isChannelBlocked } from './discord/blockedChannels.js';
 import { getDatabase } from './database/db.js';
 import axios from 'axios';
 /** Keep-alive cadence: Render's free instance sleeps after 15 minutes idle. */
@@ -87,7 +88,7 @@ async function bootstrap() {
     // Initialize Discord Bot Service
     const discordBot = new DiscordBotService({
         botToken: config.discordBotToken,
-        channelId: config.discordChannelId,
+        channelId: isChannelBlocked(config.discordChannelId) ? undefined : config.discordChannelId,
         webhookUrl: config.discordWebhookUrl,
         enableHourlyUpdates: config.enableDiscordHourly,
     }, factory, parlayTracker);
@@ -97,7 +98,7 @@ async function bootstrap() {
     // Daily parlay report (23:59 in configured timezone)
     scheduleDailyReport(async (date, tz) => {
         console.log(`[DailyReport] Generating report for ${date} (${tz})`);
-        if (config.parlayReportChannelId && discordBot) {
+        if (config.parlayReportChannelId && !isChannelBlocked(config.parlayReportChannelId) && discordBot) {
             // Delegate to bot if it exposes a method; otherwise log only
             console.log(`[DailyReport] Would send to channel ${config.parlayReportChannelId}`);
         }

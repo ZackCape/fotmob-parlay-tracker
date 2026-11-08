@@ -3,6 +3,7 @@ import nodePath from 'node:path';
 import { EmbedBuilder } from 'discord.js';
 import { evaluateActualOutcome } from '../engine/market-calculator.js';
 import { BRAND } from './brand.js';
+import { isChannelBlocked, BLOCKED_CHANNEL_IDS } from './blockedChannels.js';
 import { safeToFixed } from '../utils/formatters.js';
 /* ------------------------------------------------------------------ *
  * Saved-parlay store + live leg-hit evaluation
@@ -78,9 +79,37 @@ initSavedParlays();
  * Intended to run once during boot. A later call replaces the in-memory store
  * with the file's contents, so anything held only in memory is discarded.
  */
+export function purgeBlockedSavedParlays(blockedChannelIds = BLOCKED_CHANNEL_IDS) {
+    const set = blockedChannelIds instanceof Set ? blockedChannelIds : new Set(blockedChannelIds);
+    let removed = 0;
+    for (const [id, parlay] of savedParlays.entries()) {
+        if (set.has(parlay.channelId)) {
+            savedParlays.delete(id);
+            removed++;
+        }
+    }
+    if (removed > 0) {
+        persist();
+        console.log(`[SavedParlays] Purged ${removed} parlay(s) for blocked channels.`);
+    }
+    return removed;
+}
+export function deactivateSavedParlaysForUserChannel(userId, channelId) {
+    let count = 0;
+    for (const p of savedParlays.values()) {
+        if (p.userId === userId && p.channelId === channelId && p.activeTracking) {
+            p.activeTracking = false;
+            count++;
+        }
+    }
+    if (count > 0)
+        persist();
+    return count;
+}
 export function initSavedParlays() {
     savedParlays.clear();
     load();
+    purgeBlockedSavedParlays();
     const slips = [...savedParlays.values()];
     const active = slips.filter((p) => p.activeTracking).length;
     if (slips.length) {
@@ -128,6 +157,10 @@ function combinedMarketOdds(legs) {
  * and user it was saved from.
  */
 export function saveParlayToDisk(parlay, meta) {
+    if (isChannelBlocked(meta.channelId)) {
+        console.warn(`[SavedParlays] Refusing to link saved parlay to blocked channel ${meta.channelId}`);
+        meta.channelId = '';
+    }
     const legs = (parlay?.legs || []).map(toSavedLeg);
     const combinedProbability = Number(legs.reduce((acc, l) => acc * Math.max(0.0001, l.probability || 0.5), 1).toFixed(6));
     // Retire any earlier slip for this user + channel so /track shows the slip

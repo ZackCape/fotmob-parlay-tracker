@@ -7,6 +7,8 @@ import { isVerifiedFixture } from '../utils/fixtureValidation.js';
 import { MarketPrediction, MarketType } from '../types/football.js';
 import { BRAND } from './brand.js';
 import { LEAGUE_OPTIONS, LeagueOption, leagueLabel } from './leagues.js';
+import { purgeBlockedLiveSubscriptions } from './liveEvents.js';
+import { purgeBlockedSavedParlays } from './savedParlays.js';
 
 /* ------------------------------------------------------------------ *
  * Cape Predictor Discord surface
@@ -29,6 +31,13 @@ export * from './parlayBuilder.js';
 export * from './savedParlays.js';
 export * from './liveTracker.js';
 export * from './liveEvents.js';
+export * from './blockedChannels.js';
+
+export function purgeBlockedChannels(blockedChannelIds?: Set<string> | string[]): { subsPurged: number; parlaysPurged: number } {
+  const subsPurged = purgeBlockedLiveSubscriptions(blockedChannelIds);
+  const parlaysPurged = purgeBlockedSavedParlays(blockedChannelIds);
+  return { subsPurged, parlaysPurged };
+}
 export { isUpcomingFixture, filterUpcomingFixtures, isPreKickoffFixture, filterPreKickoffFixtures, isActiveLiveFixture, liveClockLabel } from './fixtureStatus.js';
 export { buildStatisticalParlay } from '../parlays/parlay-builder.js';
 

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import nodePath from 'node:path';
 import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import axios from 'axios';
 import cron from 'node-cron';
@@ -15,6 +17,8 @@ import {
 import * as CP from './interactions.js';
 import { BRAND } from './brand.js';
 import { safeToFixed } from '../utils/formatters.js';
+import { isChannelBlocked, BLOCKED_CHANNEL_IDS } from './blockedChannels.js';
+export { isChannelBlocked, BLOCKED_CHANNEL_IDS } from './blockedChannels.js';
 
 export type UpdateInterval = '5m' | '15m' | '30m' | '45m' | '1h';
 
@@ -87,6 +91,10 @@ export class DiscordBotService {
   private liveAlertDispatchLocks: Map<string, number> = new Map();
 
   constructor(config: DiscordConfig, factory: DataProviderFactory, trackerService?: LiveParlayTrackerService) {
+    if (isChannelBlocked(config.channelId)) {
+      console.warn(`[DiscordBot] Provided channelId is blocked: ${config.channelId}. Reset to undefined.`);
+      config.channelId = undefined;
+    }
     this.config = config;
     this.factory = factory;
     this.trackerService = trackerService;
@@ -106,7 +114,12 @@ export class DiscordBotService {
 
   public setBroadcastConfig(channelId?: string, interval?: UpdateInterval) {
     if (channelId) {
-      this.config.channelId = channelId;
+      if (isChannelBlocked(channelId)) {
+        console.warn(`[DiscordBot] Attempted to set broadcast channel to blocked channel ${channelId}. Setting channel to undefined.`);
+        this.config.channelId = undefined;
+      } else {
+        this.config.channelId = channelId;
+      }
     }
     if (interval) {
       this.currentInterval = interval;
@@ -180,13 +193,42 @@ export class DiscordBotService {
       console.warn('[DiscordBot] Multi-league sync initialization failed:', e.message);
     }
 
-    const slips = CP.initSavedParlays();
+      const slips = CP.initSavedParlays();
       const subs = CP.initLiveSubscriptions();
+      CP.purgeBlockedChannels(BLOCKED_CHANNEL_IDS);
       for (const fixtureId of subs.fixtureIds) this.liveEventPinnedFixtureIds.add(fixtureId);
       console.log(
         `[DiscordBot] State restored — ${slips.total} saved slip(s) (${slips.active} tracking), ` +
         `${subs.total} live subscription(s) across ${subs.fixtureIds.length} fixture(s).`,
       );
+
+      // Scrub blocked channels from guild_configs.json if any exist
+      try {
+        const dataDir = nodePath.resolve(process.cwd(), 'data');
+        const guildConfigFile = nodePath.join(dataDir, 'guild_configs.json');
+        if (fs.existsSync(guildConfigFile)) {
+          const raw = fs.readFileSync(guildConfigFile, 'utf8');
+          const configs = JSON.parse(raw);
+          if (typeof configs === 'object' && configs !== null) {
+            let modified = false;
+            for (const key of Object.keys(configs)) {
+              const cfg = configs[key];
+              if (cfg?.channelId && isChannelBlocked(cfg.channelId)) {
+                delete cfg.channelId;
+                modified = true;
+              }
+              if (cfg?.broadcastChannel && isChannelBlocked(cfg.broadcastChannel)) {
+                delete cfg.broadcastChannel;
+                modified = true;
+              }
+            }
+            if (modified) {
+              fs.writeFileSync(guildConfigFile, JSON.stringify(configs, null, 2));
+              console.log('[DiscordBot] Purged blocked channels from guild_configs.json');
+            }
+          }
+        }
+      } catch { /* best effort */ }
     } catch (e: any) {
       console.warn(`[DiscordBot] State restore failed: ${e.message}`);
     }
@@ -235,7 +277,7 @@ export class DiscordBotService {
             const details = await this.factory.getMatchDetails(evt.fixtureId);
             if (details) {
               const embed = CP.buildHalftimeReport(details);
-              if (this.config.channelId) {
+              if (this.config.channelId && !isChannelBlocked(this.config.channelId)) {
                 const ch = await this.client?.channels.fetch(this.config.channelId);
                 if (ch?.isTextBased()) await (ch as any).send({ embeds: [embed] });
               }
@@ -387,7 +429,24 @@ export class DiscordBotService {
             ),
           new SlashCommandBuilder()
             .setName('track')
-            .setDescription('View real-time movement and live progression of your active parlay'),
+            .setDescription('View live parlay progress or start live tracking a match')
+            .addStringOption(opt =>
+              opt
+                .setName('fixture')
+                .setDescription('Optional match to track (search by team name)')
+                .setAutocomplete(true)
+                .setRequired(false)
+            ),
+          new SlashCommandBuilder()
+            .setName('untrack')
+            .setDescription('Stop live match tracking alerts or clear tracked parlays in this channel')
+            .addStringOption(opt =>
+              opt
+                .setName('fixture')
+                .setDescription('Optional specific match to untrack (defaults to clearing all in channel)')
+                .setAutocomplete(true)
+                .setRequired(false)
+            ),
           new SlashCommandBuilder()
             .setName('channel')
             .setDescription('Link the bot to a specific channel and set update frequency (5m/15m/30m/45m/1h)')
@@ -629,6 +688,65 @@ export class DiscordBotService {
           }
         } else if (interaction.commandName === 'track') {
           await interaction.deferReply();
+          const fixtureOption = interaction.options.getString('fixture');
+          if (fixtureOption) {
+            if (isChannelBlocked(interaction.channelId)) {
+              await interaction.editReply('❌ Live tracking alerts cannot be routed to this channel because it is permanently blocked.');
+              return;
+            }
+            let targetFixture: any = null;
+            for (const d of [0, -1, 1, -2, 2]) {
+              const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+              try {
+                const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+                const hit = list.find((f: any) =>
+                  f.id === fixtureOption ||
+                  `${f.homeTeam?.name} vs ${f.awayTeam?.name}`.toLowerCase().includes(fixtureOption.toLowerCase()) ||
+                  (f.homeTeam?.name && f.homeTeam.name.toLowerCase().includes(fixtureOption.toLowerCase())) ||
+                  (f.awayTeam?.name && f.awayTeam.name.toLowerCase().includes(fixtureOption.toLowerCase()))
+                );
+                if (hit) { targetFixture = hit; break; }
+              } catch { /* next */ }
+            }
+            if (!targetFixture) {
+              try {
+                const details = await this.factory.getMatchDetails(fixtureOption);
+                if (details?.fixture) targetFixture = details.fixture;
+              } catch { /* skip */ }
+            }
+            if (!targetFixture) {
+              await interaction.editReply('⚠️ Could not locate that fixture. Search by team name or use autocomplete.');
+              return;
+            }
+
+            const subscribed = CP.subscribeLive(interaction.user.id, interaction.channelId, targetFixture.id);
+            this.liveEventPinnedFixtureIds.add(targetFixture.id);
+
+            let analysis: any = null;
+            try {
+              analysis = await this.factory.getMatchDetails(targetFixture.id);
+            } catch { /* skip */ }
+
+            const embed = analysis
+              ? CP.buildLiveMatchEmbed(analysis, true)
+              : CP.baseEmbed(
+                  '⚡ Live Match Tracking',
+                  `Now tracking **${targetFixture.homeTeam.name} vs ${targetFixture.awayTeam.name}**\n` +
+                  `• League: ${targetFixture.league}\n` +
+                  `• Status: \`${targetFixture.status}\` | Score: **${targetFixture.homeScore ?? 0} - ${targetFixture.awayScore ?? 0}**\n` +
+                  `• Clock: \`${targetFixture.liveClock || 'Pending'}\`\n\n` +
+                  `Real-time alerts for goals, cards, and halftime will post to <#${interaction.channelId}>.`
+                );
+
+            await interaction.editReply({
+              content: subscribed
+                ? `⚡ **Live Tracking Active!** Goal, card, and halftime notifications will post in <#${interaction.channelId}>.`
+                : `ℹ️ You are already tracking **${targetFixture.homeTeam.name} vs ${targetFixture.awayTeam.name}** in this channel. Current score:`,
+              embeds: [embed],
+            });
+            return;
+          }
+
           const reply = await this.generateLiveTrackerReply({
             userId: interaction.user.id,
             channelId: interaction.channelId,
@@ -638,10 +756,40 @@ export class DiscordBotService {
           } else {
             await interaction.editReply({ embeds: reply.slice(0, 2) });
           }
+        } else if (interaction.commandName === 'untrack') {
+          await interaction.deferReply({ ephemeral: true });
+          const fixtureOption = interaction.options.getString('fixture');
+          if (fixtureOption) {
+            CP.unsubscribeLive(interaction.user.id, fixtureOption);
+            await interaction.editReply(`🛑 Stopped tracking alerts for match \`${fixtureOption}\` in this channel.`);
+            return;
+          }
+          const removed = CP.unsubscribeAllForUserChannel(interaction.user.id, interaction.channelId);
+          const parlayDeactivated = CP.deactivateSavedParlaysForUserChannel(interaction.user.id, interaction.channelId);
+          await interaction.editReply(`🛑 Untracked **${removed}** match(es) and deactivated live alerts for **${parlayDeactivated}** parlay(s) in this channel.`);
+          return;
+        } else if (interaction.commandName === 'unbroadcast') {
+          const ch = interaction.options.getChannel('channel');
+          const targetChannelId = ch ? ch.id : interaction.channelId;
+          if (this.config.channelId === targetChannelId) {
+            this.config.channelId = undefined;
+          }
+          await interaction.reply({
+            content: `🛑 Automated briefings and broadcasts have been disabled for <#${targetChannelId}>.`,
+            ephemeral: true,
+          });
+          return;
         } else if (interaction.commandName === 'channel') {
           const ch = interaction.options.getChannel('target');
           const interval = (interaction.options.getString('interval') || this.currentInterval) as UpdateInterval;
           if (ch) {
+            if (isChannelBlocked(ch.id)) {
+              await interaction.reply({
+                content: `❌ Channel <#${ch.id}> is blocked from automated alerts and broadcasts. Please select another channel.`,
+                ephemeral: true,
+              });
+              return;
+            }
             this.setBroadcastConfig(ch.id, interval);
             await interaction.reply({
               content: `✅ **Channel Linked Successfully!**\n• Broadcast Channel: <#${ch.id}>\n• Update Frequency: \`${interval}\` (schedule: \`${this.getCronPattern(interval)}\`)\n• Automated briefings are now broadcasting continuously!`,
@@ -667,13 +815,13 @@ export class DiscordBotService {
               channel = guild.channels.cache.find((c: any) => c.isTextBased() && c.name?.toLowerCase() === name && c.viewable);
               if (channel) break;
             }
-            if (!channel && guild.systemChannelId) {
+            if (!channel && guild.systemChannelId && !isChannelBlocked(guild.systemChannelId)) {
               try { channel = await this.client?.channels.fetch(guild.systemChannelId); } catch { /* skip */ }
             }
             if (!channel) {
-              channel = guild.channels.cache.find((c: any) => c.isTextBased() && c.viewable && c.permissionsFor?.(guild.members.me)?.has('SendMessages'));
+              channel = guild.channels.cache.find((c: any) => c.isTextBased() && c.viewable && !isChannelBlocked(c.id) && c.permissionsFor?.(guild.members.me)?.has('SendMessages'));
             }
-            if (channel?.isTextBased()) {
+            if (channel?.isTextBased() && !isChannelBlocked(channel.id)) {
               try { await channel.send({ embeds: [embed] }); sent++; } catch { failed++; }
             } else { failed++; }
           }) || []);
@@ -1047,6 +1195,7 @@ export class DiscordBotService {
 
     /* ---------------- live tracking ---------------- */
     const startLiveTracker = async (channel: any, fixtureId: string, userId: string) => {
+      if (isChannelBlocked(channel?.id)) return;
       const found = await analysisFor(fixtureId);
       if (!found) {
         await channel.send({ embeds: [CP.baseEmbed('Live Tracking', 'That match could not be verified against a live provider.')] }).catch(() => {});
@@ -1892,6 +2041,7 @@ export class DiscordBotService {
 
         const fingerprint = CP.liveFingerprint(details);
         for (const tracker of group) {
+          if (isChannelBlocked(tracker.channelId)) continue;
           if (tracker.fingerprint === fingerprint) continue;
           tracker.fingerprint = fingerprint;
           tracker.updatedAt = Date.now();
@@ -1923,8 +2073,9 @@ export class DiscordBotService {
      * `runLiveEventTick()` so boot can fire it once immediately for fixtures
      * that were restored from disk.
      * ================================================================ */
-    // Sub-second 500ms micro-loop for in-play matches (separate from daily fixture fetches).
-    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 500);
+    // 30-second live score poller loop
+    this.liveEventTimer = setInterval(() => { void this.runLiveEventTick(); }, 30_000);
+    setTimeout(() => { void this.runLiveEventTick(); }, 2000).unref?.();
 
     // Never keep the process alive just for the alert loop.
     (this.liveEventTimer as any)?.unref?.();
@@ -1969,7 +2120,20 @@ export class DiscordBotService {
         } else {
           await message.reply({ embeds: reply.slice(0, 2) });
         }
+      } else if (content === '!untrack' || content === '/untrack') {
+        const removed = CP.unsubscribeAllForUserChannel(message.author.id, message.channel.id);
+        const parlayDeactivated = CP.deactivateSavedParlaysForUserChannel(message.author.id, message.channel.id);
+        await message.reply(`🛑 Untracked **${removed}** match(es) and deactivated alerts for **${parlayDeactivated}** parlay(s) in this channel.`);
+      } else if (content === '!unbroadcast' || content === '/unbroadcast') {
+        if (this.config.channelId === message.channel.id) {
+          this.config.channelId = undefined;
+        }
+        await message.reply(`🛑 Automated briefings and broadcasts have been disabled for <#${message.channel.id}>.`);
       } else if (content.startsWith('!channel') || content.startsWith('/channel')) {
+        if (isChannelBlocked(message.channel.id)) {
+          await message.reply('❌ This channel is permanently blocked from automated alerts and broadcasts.');
+          return;
+        }
         const parts = content.split(' ');
         const interval: UpdateInterval = (['5m', '15m', '30m', '45m', '1h'].includes(parts[1]) ? parts[1] : this.currentInterval) as any;
         this.setBroadcastConfig(message.channel.id, interval);
@@ -2104,6 +2268,7 @@ export class DiscordBotService {
 
     const sentChannels = new Set<string>();
     for (const sub of subs) {
+      if (isChannelBlocked(sub.channelId)) continue;
       if (sentChannels.has(sub.channelId)) continue;
       sentChannels.add(sub.channelId);
       try {
@@ -2136,8 +2301,8 @@ export class DiscordBotService {
     this.liveTickInFlight = true;
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const fixtures = await this.factory.getFixturesByDate(today, 'ALL');
-      const sweptLive = fixtures.filter((f: any) => f.status === 'LIVE');
+      const scoreboard = await this.factory.getLiveScoreboard(today);
+      const sweptLive = scoreboard.live;
       // Restored subscriptions can point at a match the sweep does not list
       // (kick-off before UTC midnight, or a short sweep). Those are resolved
       // directly so tracking never goes quiet after a restart.
@@ -2195,7 +2360,7 @@ export class DiscordBotService {
         // and broadcast a PARLAY UPDATE to the channel that saved the slip.
         await this.processSavedParlayLegs(fx, stats);
 
-        const subs = CP.getSubscriptionsForFixture(fx.id);
+        const subs = CP.getSubscriptionsForFixture(fx.id).filter(s => !isChannelBlocked(s.channelId));
         if (!subs.length && !newEvents.some((ev) => ev.type === 'halftime')) continue;
 
         const mentions = subs.map((s) => `<@${s.userId}>`).join(' ');
@@ -2322,7 +2487,7 @@ export class DiscordBotService {
       }
 
       // Settle saved-parlay legs on matches that have now finished.
-      for (const fx of fixtures) {
+      for (const fx of scoreboard.finished) {
         if (fx.status !== 'FINISHED') continue;
         if (!CP.getSavedParlaysForFixture(fx.id).length) continue;
         let stats: any = null;
@@ -2845,6 +3010,7 @@ export class DiscordBotService {
         subs = CP.getSubscriptionsForFixture(fx.id) || [];
       } catch { subs = []; }
       for (const sub of subs) {
+        if (isChannelBlocked(sub.channelId)) continue;
         const arr = byChannel.get(sub.channelId) || [];
         arr.push(fx);
         byChannel.set(sub.channelId, arr);
@@ -2852,6 +3018,7 @@ export class DiscordBotService {
     }
 
     for (const [channelId, fixtures] of byChannel) {
+      if (isChannelBlocked(channelId)) continue;
       const summary = fixtures
         .slice(0, 3)
         .map((f) => `${f.homeTeam.name} ${f.homeScore ?? 0}-${f.awayScore ?? 0} ${f.awayTeam.name}`)
@@ -2895,6 +3062,7 @@ export class DiscordBotService {
     };
 
     for (const saved of savedList) {
+      if (isChannelBlocked(saved.channelId)) continue;
       const legsForFixture = (saved.legs as any[]).filter((l) => l.fixtureId === fx.id);
       for (const leg of legsForFixture) {
         if (CP.isSavedLegSettled(saved.id, leg)) continue;
@@ -2911,13 +3079,15 @@ export class DiscordBotService {
           totalLegs: saved.legs.length,
         });
 
-        try {
-          const ch: any = await this.client.channels.fetch(saved.channelId);
-          if (ch?.isTextBased()) {
-            await ch.send({ content: `<@${saved.userId}>`, embeds: [embed] });
+        if (!isChannelBlocked(saved.channelId)) {
+          try {
+            const ch: any = await this.client.channels.fetch(saved.channelId);
+            if (ch?.isTextBased()) {
+              await ch.send({ content: `<@${saved.userId}>`, embeds: [embed] });
+            }
+          } catch (e: any) {
+            console.warn(`[ParlayTracking] broadcast failed for ${saved.channelId}: ${e.message}`);
           }
-        } catch (e: any) {
-          console.warn(`[ParlayTracking] broadcast failed for ${saved.channelId}: ${e.message}`);
         }
 
         if (this.dmAlerts.has(saved.userId)) {
@@ -2970,7 +3140,7 @@ export class DiscordBotService {
 
     if (this.client && this.isReady) {
       let channel: any = null;
-      if (this.config.channelId) {
+      if (this.config.channelId && !isChannelBlocked(this.config.channelId)) {
         try {
           channel = await this.client.channels.fetch(this.config.channelId);
         } catch (e: any) {
@@ -2987,23 +3157,23 @@ export class DiscordBotService {
           let found: any = null;
           for (const name of preferredNames) {
             found = guild.channels.cache.find(
-              (c: any) => c.isTextBased() && c.name?.toLowerCase() === name && c.viewable
+              (c: any) => c.isTextBased() && c.name?.toLowerCase() === name && c.viewable && !isChannelBlocked(c.id)
             );
             if (found) break;
           }
-          if (!found && guild.systemChannelId) {
+          if (!found && guild.systemChannelId && !isChannelBlocked(guild.systemChannelId)) {
             try { found = await this.client.channels.fetch(guild.systemChannelId); } catch { /* skip */ }
           }
           if (!found) {
             found = guild.channels.cache.find(
-              (c: any) => c.isTextBased() && c.viewable && c.permissionsFor?.(guild.members.me)?.has('SendMessages')
+              (c: any) => c.isTextBased() && c.viewable && !isChannelBlocked(c.id) && c.permissionsFor?.(guild.members.me)?.has('SendMessages')
             );
           }
           if (found) { channel = found; break; }
         }
       }
 
-      if (channel && channel.isTextBased()) {
+      if (channel && channel.isTextBased() && !isChannelBlocked(channel.id)) {
         try {
           await (channel as TextChannel).send({ embeds: [embed] });
           sentViaBot = true;
@@ -3543,7 +3713,6 @@ export class DiscordBotService {
         .setTitle('No Active Tracked Matches Found')
         .setDescription('You currently have no live matches or saved parlays being tracked.\nUse /analysis or the Web Dashboard to track a match or save a parlay slip!')
         .setFooter({ text: BRAND.footer })
-      return [emptyEmbed];
       return [emptyEmbed];
     }
 

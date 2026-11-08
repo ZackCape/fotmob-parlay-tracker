@@ -387,26 +387,57 @@ export class DataProviderFactory {
     } catch {}
   }
 
-  async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
+  /**
+   * Fetch live scoreboard fixtures for a date without hitting disk file cache.
+   * Cached in memory for 30s. Returns both live fixtures and finished fixtures for settlement.
+   */
+  async getLiveScoreboard(date?: string): Promise<{ live: Fixture[]; finished: Fixture[]; all: Fixture[] }> {
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+    const cacheKey = `live_scoreboard:${targetDate}`;
+    const cached = this.getCached<{ live: Fixture[]; finished: Fixture[]; all: Fixture[] }>(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const espn = await this.espnProvider.getFixturesByDate(targetDate, 'ALL');
+      const live = espn.filter(f => f.status === 'LIVE' || (f as any).status === 'IN_PLAY' || (f as any).status === 'PAUSED');
+      const finished = espn.filter(f => f.status === 'FINISHED');
+      const res = { live, finished, all: espn };
+      this.setCache(cacheKey, res, 30_000);
+      return res;
+    } catch (e: any) {
+      console.warn('[Factory] getLiveScoreboard failed:', e.message);
+      return { live: [], finished: [], all: [] };
+    }
+  }
+
+  async getLiveFixtures(date?: string): Promise<Fixture[]> {
+    const sb = await this.getLiveScoreboard(date);
+    return sb.live;
+  }
+
+  async getFixturesByDate(date: string, league: string = 'ALL', forceRefresh: boolean = false): Promise<Fixture[]> {
+
     const cacheKey = `fixtures:${date}:${league}`;
-    const inflightKey = `inflight:${cacheKey}`;
-    if (this.inFlight.has(inflightKey)) {
+    const inflightKey = `inflight:${cacheKey}:${forceRefresh ? 'force' : 'std'}`;
+    if (!forceRefresh && this.inFlight.has(inflightKey)) {
       return this.inFlight.get(inflightKey) as Promise<Fixture[]>;
     }
 
     const promise = (async () => {
       const ttlMs = this.ttlForFixtureDate(date);
 
-      // Fast disk cache hit: returns immediately (<2ms) if fixtures for this date exist on disk
-      const fc = this.readJsonCache();
-      if (fc && Array.isArray(fc.data)) {
-        const cleaned = fc.data.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
-        const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
-        if (filtered.length > 0) {
-          console.info(`[Factory] fast parlay file cache HIT ${date} ${league} (${filtered.length} fixtures)`);
-          this.setCache(cacheKey, filtered, ttlMs);
-          moduleFixturesCache.set(cacheKey, { data: filtered, cachedAt: Date.now() });
-          return filtered;
+      if (!forceRefresh) {
+        // Fast disk cache hit: returns immediately (<2ms) if fixtures for this date exist on disk
+        const fc = this.readJsonCache();
+        if (fc && Array.isArray(fc.data)) {
+          const cleaned = fc.data.filter((f: any) => !/archive|calendar|historical|offline/i.test(f.dataSource || ''));
+          const filtered = cleaned.filter((f: any) => (league === 'ALL' || f.league === league) && f.date === date);
+          if (filtered.length > 0) {
+            console.info(`[Factory] fast parlay file cache HIT ${date} ${league} (${filtered.length} fixtures)`);
+            this.setCache(cacheKey, filtered, ttlMs);
+            moduleFixturesCache.set(cacheKey, { data: filtered, cachedAt: Date.now() });
+            return filtered;
+          }
         }
       }
 
@@ -422,12 +453,14 @@ export class DataProviderFactory {
       }
       // a) In-memory cache. Checked before external calls so bursts of UI clicks
       //    are served from RAM.
-      const cached = this.getCached<Fixture[]>(cacheKey) || moduleFixturesCache.get(cacheKey)?.data;
-      if (cached && cached.length > 0) {
-        console.info(`[Factory] mem cache HIT fixtures ${date} ${league} (${cached.length} fixtures)`);
-        return cached;
+      if (!forceRefresh) {
+        const cached = this.getCached<Fixture[]>(cacheKey) || moduleFixturesCache.get(cacheKey)?.data;
+        if (cached && cached.length > 0) {
+          console.info(`[Factory] mem cache HIT fixtures ${date} ${league} (${cached.length} fixtures)`);
+          return cached;
+        }
       }
-      console.info(`[Factory] cache MISS fixtures ${date} ${league}`);
+      console.info(`[Factory] cache MISS fixtures ${date} ${league} (forceRefresh=${forceRefresh})`);
 
       let fixtures: Fixture[] = [];
       const wantGerman = league === 'ALL' || league === 'BUNDESLIGA' || league === 'BUNDESLIGA2';
@@ -542,6 +575,7 @@ export class DataProviderFactory {
       return this.inFlight.get(inflightKey) as Promise<Fixture[]>;
     }
 
+
     const promise = (async () => {
       const secondCheck = this.getCached<Fixture[]>(cacheKey) || moduleFixturesCache.get(cacheKey)?.data;
       if (secondCheck && secondCheck.length > 0) {
@@ -610,18 +644,18 @@ export class DataProviderFactory {
     return promise;
   }
 
-  async getMatchDetails(fixtureId: string): Promise<MatchAnalysis | null> {
+  async getMatchDetails(fixtureId: string, forceRefresh: boolean = false): Promise<MatchAnalysis | null> {
     const cacheKey = `match:${fixtureId}`;
-    const cached = this.getCached<MatchAnalysis>(cacheKey);
+    const cached = !forceRefresh ? this.getCached<MatchAnalysis>(cacheKey) : null;
     if (cached) return cached;
 
-    const inflightKey = `inflight:${cacheKey}`;
-    if (this.inFlight.has(inflightKey)) {
+    const inflightKey = `inflight:${cacheKey}:${forceRefresh ? 'force' : 'std'}`;
+    if (!forceRefresh && this.inFlight.has(inflightKey)) {
       return this.inFlight.get(inflightKey) as Promise<MatchAnalysis | null>;
     }
 
     const promise = (async () => {
-      const cached = this.getCached<MatchAnalysis>(cacheKey);
+      const cached = !forceRefresh ? this.getCached<MatchAnalysis>(cacheKey) : null;
       if (cached) return cached;
 
       // A match that is in play is re-analysed on the short active window so the

@@ -4,6 +4,7 @@ import { EmbedBuilder } from 'discord.js';
 import { EspnMatchStats } from '../providers/espn-adapter.js';
 import { Fixture, MatchAnalysis } from '../types/football.js';
 import { BRAND } from './brand.js';
+import { isChannelBlocked, BLOCKED_CHANNEL_IDS } from './blockedChannels.js';
 
 /* ------------------------------------------------------------------ *
  * Live-event alerting & halftime reporting
@@ -117,10 +118,46 @@ export interface LiveSubscriptionBootReport {
  * Intended to run once during boot; a later call replaces the in-memory store
  * with the file's contents.
  */
+export function purgeBlockedLiveSubscriptions(blockedChannelIds: Set<string> | string[] = BLOCKED_CHANNEL_IDS): number {
+  const set = blockedChannelIds instanceof Set ? blockedChannelIds : new Set(blockedChannelIds);
+  let removed = 0;
+  for (const [fixtureId, list] of subscriptions.entries()) {
+    const before = list.length;
+    const filtered = list.filter((s) => !set.has(s.channelId));
+    if (filtered.length !== before) {
+      removed += (before - filtered.length);
+      subscriptions.set(fixtureId, filtered);
+    }
+  }
+  if (removed > 0) {
+    saveSubscriptions();
+    console.log(`[LiveEvents] Purged ${removed} subscription(s) for blocked channels.`);
+  }
+  return removed;
+}
+
+export function unsubscribeAllForUserChannel(userId: string, channelId: string): number {
+  let removed = 0;
+  for (const [fixtureId, list] of subscriptions.entries()) {
+    const before = list.length;
+    const filtered = list.filter((s) => !(s.userId === userId && s.channelId === channelId));
+    if (filtered.length !== before) {
+      removed += (before - filtered.length);
+      subscriptions.set(fixtureId, filtered);
+    }
+  }
+  if (removed > 0) {
+    saveSubscriptions();
+    console.log(`[LiveEvents] Unsubscribed user ${userId} from ${removed} fixture(s) in channel ${channelId}.`);
+  }
+  return removed;
+}
+
 export function initLiveSubscriptions(): LiveSubscriptionBootReport {
   subscriptions.clear();
   seenEvents.clear();
   loadSubscriptions();
+  purgeBlockedLiveSubscriptions();
   loadSeenEvents();
   const total = [...subscriptions.values()].reduce((n, list) => n + list.length, 0);
   const fixtureIds = [...subscriptions.entries()]
@@ -138,6 +175,10 @@ export function initLiveSubscriptions(): LiveSubscriptionBootReport {
 
 /** Register a user/channel pair for live alerts on a fixture. */
 export function subscribeLive(userId: string, channelId: string, fixtureId: string): boolean {
+  if (isChannelBlocked(channelId)) {
+    console.warn(`[LiveEvents] subscribeLive rejected for blocked channel ${channelId}`);
+    return false;
+  }
   const list = subscriptions.get(fixtureId) || [];
   // De-duplicate per channel too, so a match tracked from two different
   // channels still alerts in both of them.
@@ -482,6 +523,8 @@ export default {
   getSubscriptionsForFixture,
   allSubscriptions,
   initLiveSubscriptions,
+  purgeBlockedLiveSubscriptions,
+  unsubscribeAllForUserChannel,
   isSeenEvent,
   markEventSeen,
   detectNewEvents,
