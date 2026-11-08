@@ -16,6 +16,172 @@ import { getDashboardUrl } from '../utils/dashboardUrl.js';
 import { claimEventIds as claimStreamEventIds, generateEventId as generateStreamEventId, } from '../services/instantStreamService.js';
 import { updateLiveMatch, } from '../services/liveTrackingService.js';
 const DASHBOARD_URL = getDashboardUrl();
+export const commands = [
+    new SlashCommandBuilder()
+        .setName('dashboard')
+        .setDescription('Launch the Cape Predictor web app (optionally embedded inside Discord)'),
+    new SlashCommandBuilder()
+        .setName('analysis')
+        .setDescription('Full model analysis for a match: stats, probabilities, score matrix, lineups')
+        .addStringOption(opt => opt
+        .setName('fixture')
+        .setDescription('Search match by team name (e.g. Arsenal, Real Madrid)')
+        .setAutocomplete(true)
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('customparlay')
+        .setDescription('Build your own custom parlay: pick matches and markets, then save it'),
+    new SlashCommandBuilder()
+        .setName('livetracking')
+        .setDescription('Track a live or upcoming match of your choice (no manual IDs)'),
+    new SlashCommandBuilder()
+        .setName('live')
+        .setDescription('Show all matches currently being played in real time with track buttons'),
+    new SlashCommandBuilder()
+        .setName('info')
+        .setDescription('View all available bot commands, leagues, and statistical engine details'),
+    new SlashCommandBuilder()
+        .setName('fixtures')
+        .setDescription("View today's top statistical football predictions and calibrated probabilities"),
+    new SlashCommandBuilder()
+        .setName('generateparlay')
+        .setDescription('Generate an automated statistical parlay from your conditions')
+        .addIntegerOption(opt => opt
+        .setName('legs')
+        .setDescription('Number of legs (5, 10, 15, 20, 25)')
+        .setRequired(false)
+        .addChoices({ name: '5 Legs (Standard)', value: 5 }, { name: '10 Legs (Deep Combo)', value: 10 }, { name: '15 Legs (Ultra Combo)', value: 15 }, { name: '20 Legs (Mega Combo)', value: 20 }, { name: '25 Legs (Max Multi-League)', value: 25 }))
+        .addIntegerOption(opt => opt
+        .setName('min_probability')
+        .setDescription('Minimum per-leg model probability (%, 50-95)')
+        .setRequired(false)
+        .setMinValue(50)
+        .setMaxValue(95))
+        .addStringOption(opt => opt
+        .setName('league')
+        .setDescription('Restrict legs to one competition')
+        .setRequired(false)
+        .addChoices(...CP.LEAGUE_OPTIONS.map((l) => ({ name: l.label, value: l.id }))))
+        .addStringOption(opt => opt
+        .setName('mode')
+        .setDescription('Correlation mode: anti_correlated, same_game, or correlated')
+        .setRequired(false)
+        .addChoices({ name: 'Strict Anti-Correlated (Separate Venues)', value: 'anti_correlated' }, { name: 'Same-Game Parlay (SGP - 1 Match)', value: 'same_game' }, { name: 'Correlated Allowed (Mixed Venues)', value: 'correlated' })),
+    new SlashCommandBuilder()
+        .setName('track')
+        .setDescription('View live parlay progress or start live tracking a match')
+        .addStringOption(opt => opt
+        .setName('match')
+        .setDescription('Optional match to track (search team name) or "test" to simulate')
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('untrack')
+        .setDescription('Stop live match tracking alerts or clear tracked parlays in this channel')
+        .addStringOption(opt => opt
+        .setName('fixture')
+        .setDescription('Optional specific match to untrack (defaults to clearing all in channel)')
+        .setAutocomplete(true)
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('channel')
+        .setDescription('Link the bot to a specific channel and set update frequency (5m/15m/30m/45m/1h)')
+        .addChannelOption(opt => opt
+        .setName('target')
+        .setDescription('Discord text channel for automated briefings')
+        .setRequired(true))
+        .addStringOption(opt => opt
+        .setName('interval')
+        .setDescription('Update interval (5m, 15m, 30m, 45m, 1h)')
+        .setRequired(false)
+        .addChoices({ name: 'Every 5 Minutes (Hyper Live)', value: '5m' }, { name: 'Every 15 Minutes (Fast Ticker)', value: '15m' }, { name: 'Every 30 Minutes (Standard Ticker)', value: '30m' }, { name: 'Every 45 Minutes (Half-Time Pace)', value: '45m' }, { name: 'Every 1 Hour (Standard Hourly)', value: '1h' })),
+    new SlashCommandBuilder()
+        .setName('interval')
+        .setDescription('Set broadcast frequency (5m, 15m, 30m, 45m, 1h)')
+        .addStringOption(opt => opt
+        .setName('frequency')
+        .setDescription('Choose update frequency')
+        .setRequired(true)
+        .addChoices({ name: 'Every 5 Minutes (5m)', value: '5m' }, { name: 'Every 15 Minutes (15m)', value: '15m' }, { name: 'Every 30 Minutes (30m)', value: '30m' }, { name: 'Every 45 Minutes (45m)', value: '45m' }, { name: 'Every 1 Hour (1h)', value: '1h' })),
+    new SlashCommandBuilder()
+        .setName('broadcast')
+        .setDescription('Trigger a live odds & team news briefing right now in this channel'),
+    new SlashCommandBuilder()
+        .setName('unbroadcast')
+        .setDescription('Disable automated morning briefings and predictions for a channel')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+        .addChannelOption(opt => opt
+        .setName('channel')
+        .setDescription('Channel to unsubscribe (defaults to current channel)')
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('setbrief')
+        .setDescription('Set the daily morning briefing time (HH:MM, local tz)')
+        .addStringOption(opt => opt
+        .setName('time')
+        .setDescription('Briefing time in HH:MM format (e.g. 08:00)')
+        .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('h2h')
+        .setDescription('Head-to-head history between two teams (Team1 vs Team2)')
+        .addStringOption(opt => opt
+        .setName('teams')
+        .setDescription('Two teams separated by " vs "')
+        .setRequired(true)),
+    new SlashCommandBuilder().setName('compare').setDescription('Side-by-side comparison of two teams (attack, defense, xG, H2H)').addStringOption(opt => opt.setName('teams').setDescription('Two teams separated by " vs "').setRequired(true)),
+    new SlashCommandBuilder().setName('bankroll').setDescription('Personal unit management with Kelly Criterion stake recommendations'),
+    new SlashCommandBuilder().setName('remind').setDescription('Set a fixture reminder DM 15 minutes before kickoff').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+    new SlashCommandBuilder().setName('injuries').setDescription('Real-time missing players, suspensions, and severity impact ratings').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+    new SlashCommandBuilder().setName('streak').setDescription('Team win/loss/unbeaten streak tracker').addStringOption(opt => opt.setName('team').setDescription('Team name').setRequired(true)),
+    new SlashCommandBuilder().setName('referee').setDescription('Referee assignment card with card rates and strictness').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+    new SlashCommandBuilder().setName('leaderboard').setDescription('Monthly tipster rankings by prediction accuracy and units gained'),
+    new SlashCommandBuilder().setName('hedge').setDescription('Auto-hedge calculator for 4/5 hit parlay legs').addStringOption(opt => opt.setName('parlay_id').setDescription('Parlay ID to hedge').setRequired(true)),
+    new SlashCommandBuilder().setName('config').setDescription('Guild configuration dashboard for channels, prefixes, and themes'),
+    new SlashCommandBuilder().setName('halftime').setDescription('Mid-match tactical summary and second-half goal probability').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+    new SlashCommandBuilder().setName('cards').setDescription('Card market evaluator for team aggressiveness and referee card probabilities').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('team')
+        .setDescription('Team form and recent stats')
+        .addStringOption(opt => opt
+        .setName('name')
+        .setDescription('Team name (optional - leave blank for interactive selection)')
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('value')
+        .setDescription('Highlight +EV model-vs-market picks for today'),
+    new SlashCommandBuilder()
+        .setName('poll')
+        .setDescription('Community match prediction poll')
+        .addStringOption(opt => opt
+        .setName('match')
+        .setDescription('Search match by team name')
+        .setAutocomplete(true)
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Cape Predictor command directory with interactive navigation buttons'),
+    new SlashCommandBuilder()
+        .setName('news')
+        .setDescription('Get the latest breaking football news and team updates')
+        .addStringOption(opt => opt
+        .setName('team')
+        .setDescription('Search news for a specific team, e.g. Chelsea, Real Madrid')
+        .setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('Bot diagnostics: latency, API status, tracked matches, and system health'),
+    new SlashCommandBuilder()
+        .setName('record')
+        .setDescription('Performance tracker: strike rate, net PnL, ROI, and closing line value (CLV)')
+        .addStringOption(opt => opt
+        .setName('filter')
+        .setDescription('Time window filter')
+        .setRequired(false)
+        .addChoices({ name: 'All-time', value: 'all' }, { name: 'Last 7 Days', value: '7d' }, { name: 'Last 30 Days', value: '30d' })),
+    new SlashCommandBuilder()
+        .setName('steam')
+        .setDescription('Real-time sharp money & steam line movements detection'),
+];
+export const SLASH_COMMANDS = commands;
 export class DiscordBotService {
     client = null;
     config;
@@ -286,6 +452,52 @@ export class DiscordBotService {
             void prewarm();
         }, 5 * 60 * 1000);
     }
+    /**
+     * Register slash commands globally and wipe stale guild-specific overrides.
+     * This eliminates "This command is outdated" schema mismatch errors in Discord.
+     */
+    async registerSlashCommands() {
+        try {
+            const botToken = this.config.botToken || process.env.DISCORD_BOT_TOKEN;
+            const clientId = this.client?.user?.id;
+            const commandDefinitionsJSON = SLASH_COMMANDS.map((c) => (typeof c.toJSON === 'function' ? c.toJSON() : c));
+            // 1. Wipe any stale, outdated guild-specific commands so guilds never hold conflicting option schemas
+            for (const guild of this.client?.guilds.cache.values() || []) {
+                try {
+                    await guild.commands.set([]);
+                }
+                catch (gErr) {
+                    console.warn(`[DiscordBot] Guild command wipe failed for ${guild.id}: ${gErr?.message || gErr}`);
+                }
+            }
+            // 2. Register global slash commands via discord.js client
+            if (this.client?.application) {
+                await this.client.application.commands.set(SLASH_COMMANDS);
+                console.log(`[DiscordBot] Successfully registered ${SLASH_COMMANDS.length} global slash commands via client.`);
+            }
+            // 3. Authoritative REST API synchronization (guarantees immediate Discord gateway update)
+            if (botToken && clientId) {
+                try {
+                    const rest = new REST({ version: '10' }).setToken(botToken);
+                    console.log('[DiscordBot] Syncing slash commands via Discord REST API...');
+                    for (const guild of this.client?.guilds.cache.values() || []) {
+                        try {
+                            await rest.put(Routes.applicationGuildCommands(clientId, guild.id), { body: [] });
+                        }
+                        catch { /* best effort */ }
+                    }
+                    await rest.put(Routes.applicationCommands(clientId), { body: commandDefinitionsJSON });
+                    console.log('[DiscordBot] Successfully registered all slash commands globally via REST API.');
+                }
+                catch (restErr) {
+                    console.warn('[DiscordBot] REST API slash command registration notice:', restErr?.message || restErr);
+                }
+            }
+        }
+        catch (err) {
+            console.warn(`[DiscordBot] Slash command registration notice: ${err?.message || err}`);
+        }
+    }
     async initClient(withMessageContent) {
         const intents = [
             GatewayIntentBits.Guilds,
@@ -318,208 +530,8 @@ export class DiscordBotService {
             console.log(`[DiscordBot] Successfully logged in as ${this.client?.user?.tag}!`);
             console.log(`[DiscordBot] Active in ${this.client?.guilds.cache.size} server(s).`);
             this.isReady = true;
-            // Register Slash Commands globally
-            try {
-                const commands = [
-                    new SlashCommandBuilder()
-                        .setName('dashboard')
-                        .setDescription('Launch the Cape Predictor web app (optionally embedded inside Discord)'),
-                    new SlashCommandBuilder()
-                        .setName('analysis')
-                        .setDescription('Full model analysis for a match: stats, probabilities, score matrix, lineups')
-                        .addStringOption(opt => opt
-                        .setName('fixture')
-                        .setDescription('Search match by team name (e.g. Arsenal, Real Madrid)')
-                        .setAutocomplete(true)
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('customparlay')
-                        .setDescription('Build your own custom parlay: pick matches and markets, then save it'),
-                    new SlashCommandBuilder()
-                        .setName('livetracking')
-                        .setDescription('Track a live or upcoming match of your choice (no manual IDs)'),
-                    new SlashCommandBuilder()
-                        .setName('live')
-                        .setDescription('Show all matches currently being played in real time with track buttons'),
-                    new SlashCommandBuilder()
-                        .setName('info')
-                        .setDescription('View all available bot commands, leagues, and statistical engine details'),
-                    new SlashCommandBuilder()
-                        .setName('fixtures')
-                        .setDescription("View today's top statistical football predictions and calibrated probabilities"),
-                    new SlashCommandBuilder()
-                        .setName('generateparlay')
-                        .setDescription('Generate an automated statistical parlay from your conditions')
-                        .addIntegerOption(opt => opt
-                        .setName('legs')
-                        .setDescription('Number of legs (5, 10, 15, 20, 25)')
-                        .setRequired(false)
-                        .addChoices({ name: '5 Legs (Standard)', value: 5 }, { name: '10 Legs (Deep Combo)', value: 10 }, { name: '15 Legs (Ultra Combo)', value: 15 }, { name: '20 Legs (Mega Combo)', value: 20 }, { name: '25 Legs (Max Multi-League)', value: 25 }))
-                        .addIntegerOption(opt => opt
-                        .setName('min_probability')
-                        .setDescription('Minimum per-leg model probability (%, 50-95)')
-                        .setRequired(false)
-                        .setMinValue(50)
-                        .setMaxValue(95))
-                        .addStringOption(opt => opt
-                        .setName('league')
-                        .setDescription('Restrict legs to one competition')
-                        .setRequired(false)
-                        .addChoices(...CP.LEAGUE_OPTIONS.map((l) => ({ name: l.label, value: l.id }))))
-                        .addStringOption(opt => opt
-                        .setName('mode')
-                        .setDescription('Correlation mode: anti_correlated, same_game, or correlated')
-                        .setRequired(false)
-                        .addChoices({ name: 'Strict Anti-Correlated (Separate Venues)', value: 'anti_correlated' }, { name: 'Same-Game Parlay (SGP - 1 Match)', value: 'same_game' }, { name: 'Correlated Allowed (Mixed Venues)', value: 'correlated' })),
-                    new SlashCommandBuilder()
-                        .setName('track')
-                        .setDescription('View live parlay progress or start live tracking a match')
-                        .addStringOption(opt => opt
-                        .setName('fixture')
-                        .setDescription('Optional match to track (search by team name)')
-                        .setAutocomplete(true)
-                        .setRequired(false))
-                        .addStringOption(opt => opt
-                        .setName('match')
-                        .setDescription('Optional match to track or test (e.g. test, simulate)')
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('untrack')
-                        .setDescription('Stop live match tracking alerts or clear tracked parlays in this channel')
-                        .addStringOption(opt => opt
-                        .setName('fixture')
-                        .setDescription('Optional specific match to untrack (defaults to clearing all in channel)')
-                        .setAutocomplete(true)
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('channel')
-                        .setDescription('Link the bot to a specific channel and set update frequency (5m/15m/30m/45m/1h)')
-                        .addChannelOption(opt => opt
-                        .setName('target')
-                        .setDescription('Discord text channel for automated briefings')
-                        .setRequired(true))
-                        .addStringOption(opt => opt
-                        .setName('interval')
-                        .setDescription('Update interval (5m, 15m, 30m, 45m, 1h)')
-                        .setRequired(false)
-                        .addChoices({ name: 'Every 5 Minutes (Hyper Live)', value: '5m' }, { name: 'Every 15 Minutes (Fast Ticker)', value: '15m' }, { name: 'Every 30 Minutes (Standard Ticker)', value: '30m' }, { name: 'Every 45 Minutes (Half-Time Pace)', value: '45m' }, { name: 'Every 1 Hour (Standard Hourly)', value: '1h' })),
-                    new SlashCommandBuilder()
-                        .setName('interval')
-                        .setDescription('Set broadcast frequency (5m, 15m, 30m, 45m, 1h)')
-                        .addStringOption(opt => opt
-                        .setName('frequency')
-                        .setDescription('Choose update frequency')
-                        .setRequired(true)
-                        .addChoices({ name: 'Every 5 Minutes (5m)', value: '5m' }, { name: 'Every 15 Minutes (15m)', value: '15m' }, { name: 'Every 30 Minutes (30m)', value: '30m' }, { name: 'Every 45 Minutes (45m)', value: '45m' }, { name: 'Every 1 Hour (1h)', value: '1h' })),
-                    new SlashCommandBuilder()
-                        .setName('broadcast')
-                        .setDescription('Trigger a live odds & team news briefing right now in this channel'),
-                    new SlashCommandBuilder()
-                        .setName('unbroadcast')
-                        .setDescription('Disable automated morning briefings and predictions for a channel')
-                        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
-                        .addChannelOption(opt => opt
-                        .setName('channel')
-                        .setDescription('Channel to unsubscribe (defaults to current channel)')
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('setbrief')
-                        .setDescription('Set the daily morning briefing time (HH:MM, local tz)')
-                        .addStringOption(opt => opt
-                        .setName('time')
-                        .setDescription('Briefing time in HH:MM format (e.g. 08:00)')
-                        .setRequired(true)),
-                    new SlashCommandBuilder()
-                        .setName('h2h')
-                        .setDescription('Head-to-head history between two teams (Team1 vs Team2)')
-                        .addStringOption(opt => opt
-                        .setName('teams')
-                        .setDescription('Two teams separated by " vs "')
-                        .setRequired(true)),
-                    new SlashCommandBuilder().setName('compare').setDescription('Side-by-side comparison of two teams (attack, defense, xG, H2H)').addStringOption(opt => opt.setName('teams').setDescription('Two teams separated by " vs "').setRequired(true)),
-                    new SlashCommandBuilder().setName('bankroll').setDescription('Personal unit management with Kelly Criterion stake recommendations'),
-                    new SlashCommandBuilder().setName('remind').setDescription('Set a fixture reminder DM 15 minutes before kickoff').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
-                    new SlashCommandBuilder().setName('injuries').setDescription('Real-time missing players, suspensions, and severity impact ratings').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
-                    new SlashCommandBuilder().setName('streak').setDescription('Team win/loss/unbeaten streak tracker').addStringOption(opt => opt.setName('team').setDescription('Team name').setRequired(true)),
-                    new SlashCommandBuilder().setName('referee').setDescription('Referee assignment card with card rates and strictness').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
-                    new SlashCommandBuilder().setName('leaderboard').setDescription('Monthly tipster rankings by prediction accuracy and units gained'),
-                    new SlashCommandBuilder().setName('hedge').setDescription('Auto-hedge calculator for 4/5 hit parlay legs').addStringOption(opt => opt.setName('parlay_id').setDescription('Parlay ID to hedge').setRequired(true)),
-                    new SlashCommandBuilder().setName('config').setDescription('Guild configuration dashboard for channels, prefixes, and themes'),
-                    new SlashCommandBuilder().setName('halftime').setDescription('Mid-match tactical summary and second-half goal probability').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
-                    new SlashCommandBuilder().setName('cards').setDescription('Card market evaluator for team aggressiveness and referee card probabilities').addStringOption(opt => opt.setName('fixture').setDescription('Search match by team name').setAutocomplete(true).setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('team')
-                        .setDescription('Team form and recent stats')
-                        .addStringOption(opt => opt
-                        .setName('name')
-                        .setDescription('Team name (optional - leave blank for interactive selection)')
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('value')
-                        .setDescription('Highlight +EV model-vs-market picks for today'),
-                    new SlashCommandBuilder()
-                        .setName('poll')
-                        .setDescription('Community match prediction poll')
-                        .addStringOption(opt => opt
-                        .setName('match')
-                        .setDescription('Search match by team name')
-                        .setAutocomplete(true)
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('help')
-                        .setDescription('Cape Predictor command directory with interactive navigation buttons'),
-                    new SlashCommandBuilder()
-                        .setName('news')
-                        .setDescription('Get the latest breaking football news and team updates')
-                        .addStringOption(opt => opt
-                        .setName('team')
-                        .setDescription('Search news for a specific team, e.g. Chelsea, Real Madrid')
-                        .setRequired(false)),
-                    new SlashCommandBuilder()
-                        .setName('status')
-                        .setDescription('Bot diagnostics: latency, API status, tracked matches, and system health'),
-                    new SlashCommandBuilder()
-                        .setName('record')
-                        .setDescription('Performance tracker: strike rate, net PnL, ROI, and closing line value (CLV)')
-                        .addStringOption(opt => opt
-                        .setName('filter')
-                        .setDescription('Time window filter')
-                        .setRequired(false)
-                        .addChoices({ name: 'All-time', value: 'all' }, { name: 'Last 7 Days', value: '7d' }, { name: 'Last 30 Days', value: '30d' })),
-                    new SlashCommandBuilder()
-                        .setName('steam')
-                        .setDescription('Real-time sharp money & steam line movements detection'),
-                ];
-                await this.client?.application?.commands.set(commands);
-                console.log('[DiscordBot] Slash commands (/info, /fixtures, /generateparlay, /customparlay, /track, /channel, /interval, /broadcast) registered!');
-                // Force-register slash commands (including /unbroadcast) via the REST
-                // API so Discord picks them up immediately on deploy. Register per-guild
-                // for instant propagation, plus globally as a fallback.
-                try {
-                    const commandDefinitionsJSON = commands.map((c) => c.toJSON());
-                    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
-                    const clientId = this.client.user.id;
-                    console.log('Syncing global slash commands with Discord REST API...');
-                    // Clear guild-level commands first to fix duplicate slash commands.
-                    for (const guild of this.client.guilds.cache.values()) {
-                        try {
-                            await rest.put(Routes.applicationGuildCommands(clientId, guild.id), { body: [] });
-                        }
-                        catch (gErr) {
-                            console.warn(`[DiscordBot] Guild command clear failed for ${guild.id}: ${gErr?.message || gErr}`);
-                        }
-                    }
-                    // Global registration only.
-                    await rest.put(Routes.applicationCommands(clientId), { body: commandDefinitionsJSON });
-                    console.log('Successfully registered all slash commands (including /unbroadcast) globally.');
-                }
-                catch (error) {
-                    console.error('Failed to register Discord slash commands:', error?.message || error);
-                }
-            }
-            catch (err) {
-                console.warn(`[DiscordBot] Slash command registration notice: ${err.message}`);
-            }
+            // Register Slash Commands globally and sync connected guilds
+            await this.registerSlashCommands();
         });
         // Handle Autocomplete Interactions
         this.client.on('interactionCreate', async (interaction) => {
@@ -529,32 +541,51 @@ export class DiscordBotService {
                 const focused = interaction.options.getFocused(true);
                 if (focused.name !== 'fixture' && focused.name !== 'match')
                     return;
-                const query = String(focused.value || '').toLowerCase();
+                const query = String(focused.value || '').trim().toLowerCase();
+                const choices = [];
+                // If this is the /track command, offer test simulation first
+                if (interaction.commandName === 'track') {
+                    if (!query || 'test'.includes(query) || 'simulate'.includes(query) || 'simulation'.includes(query)) {
+                        choices.push({ name: '🧪 Run Live Alert Simulation (Test)', value: 'test' });
+                    }
+                }
                 const today = new Date().toISOString().slice(0, 10);
                 let fixtures = [];
                 try {
-                    fixtures = await this.factory.getFixturesByDate(today, 'ALL');
+                    // Zero-latency RAM cache lookup
+                    fixtures = await this.factory.getFastFixturesForParlay(today).catch(() => []);
+                    if (!fixtures || fixtures.length === 0) {
+                        fixtures = await this.factory.getFixturesByDate(today, 'ALL').catch(() => []);
+                    }
                 }
                 catch {
                     fixtures = [];
                 }
-                const choices = fixtures
+                const filtered = fixtures
                     .filter((f) => {
                     if (!query)
                         return true;
                     const home = (f.homeTeam?.name || '').toLowerCase();
                     const away = (f.awayTeam?.name || '').toLowerCase();
-                    return home.includes(query) || away.includes(query);
+                    const desc = `${home} vs ${away}`;
+                    return desc.includes(query) || home.includes(query) || away.includes(query) || String(f.id).includes(query);
                 })
-                    .slice(0, 25)
+                    .slice(0, 25 - choices.length)
                     .map((f) => ({
                     name: `${f.homeTeam?.name ?? 'Home'} vs ${f.awayTeam?.name ?? 'Away'} (${f.league})`.slice(0, 100),
-                    value: f.id,
+                    value: String(f.id || `${f.homeTeam?.name} vs ${f.awayTeam?.name}`).slice(0, 100),
                 }));
-                await interaction.respond(choices);
+                choices.push(...filtered);
+                await interaction.respond(choices.slice(0, 25));
             }
             catch (err) {
-                console.warn('[DiscordBot] Autocomplete error:', err.message);
+                console.warn('[DiscordBot] Autocomplete error:', err?.message || err);
+                try {
+                    if (!interaction.responded) {
+                        await interaction.respond([]);
+                    }
+                }
+                catch { /* ignore */ }
             }
         });
         // Handle Discord Slash Commands (Interactions)
@@ -623,114 +654,8 @@ export class DiscordBotService {
                     }
                 }
                 else if (interaction.commandName === 'track') {
-                    await interaction.deferReply();
-                    const fixtureOption = interaction.options.getString('fixture') || interaction.options.getString('match');
-                    if (fixtureOption) {
-                        if (isChannelBlocked(interaction.channelId)) {
-                            await interaction.editReply('❌ Live tracking alerts cannot be routed to this channel because it is permanently blocked.');
-                            return;
-                        }
-                        const normalizedOpt = fixtureOption.trim().toLowerCase();
-                        if (normalizedOpt === 'test' || normalizedOpt === 'simulate' || normalizedOpt === 'simulation') {
-                            const testEmbed = new EmbedBuilder()
-                                .setTitle("⏱️ 67' • Arsenal 1 - 1 Bayern Munich [LIVE TEST SIMULATION]")
-                                .setColor(0x00A86B)
-                                .setDescription("⚡ **Real-Time Match Engine Active** — High-frequency telemetry feed test")
-                                .addFields({ name: '📊 Live Expected Goals (xG)', value: '🔴 Arsenal: **1.42**\n⚪ Bayern: **1.35**', inline: true }, { name: '🎯 Shots & Accuracy', value: '🔴 12 (5 on target)\n⚪ 10 (4 on target)', inline: true }, { name: '🚩 Match Corners', value: '🔴 Arsenal: **6**\n⚪ Bayern: **5**', inline: true }, { name: '🔥 Dynamic Momentum Squeeze', value: 'Arsenal [████████░░░░░░░░] Bayern Munich (52% - 48%)\n*Possession: 53% - 47% • Dangerous Attacks: 41 - 38*', inline: false })
-                                .setFooter({ text: 'Cape Predictor Live Alert Engine • Simulation Mode' })
-                                .setTimestamp();
-                            await interaction.editReply({
-                                content: `⚡ **Live Tracking Simulation Started!** Firing live goal and pressure alerts in <#${interaction.channelId}>...`,
-                                embeds: [testEmbed],
-                            });
-                            const targetChannelId = interaction.channelId;
-                            const discordClient = this.client;
-                            if (targetChannelId && discordClient) {
-                                setTimeout(async () => {
-                                    try {
-                                        const channel = await discordClient.channels.fetch(targetChannelId);
-                                        if (!channel || !channel.isTextBased() || isChannelBlocked(targetChannelId))
-                                            return;
-                                        const goalAlertEmbed = new EmbedBuilder()
-                                            .setTitle("⚽ GOAL ALERT (68'): Arsenal 2 - 1 Bayern Munich")
-                                            .setColor(0x22C55E)
-                                            .setDescription("⚡ **Bukayo Saka** (Arsenal 2 - 1 Bayern Munich) • Implied Win Prob: **74%** (+26%)\n*Left-footed strike from the centre of the box to the bottom right corner.*")
-                                            .addFields({
-                                            name: '🔥 HIGH PRESSURE SQUEEZE ALERT',
-                                            value: '⚠️ **Bayern Munich** mounting intense late pressure (Last 10m xG: **0.68**, **4 Corners**)\n*Expected late goal probability elevated to 62%*',
-                                            inline: false
-                                        })
-                                            .setFooter({ text: 'Live Match Event Alert • Instant Webhook Stream' })
-                                            .setTimestamp();
-                                        await channel.send({ embeds: [goalAlertEmbed] });
-                                    }
-                                    catch (simErr) {
-                                        console.warn('[DiscordBot] Test simulation follow-up error:', simErr);
-                                    }
-                                }, 2500);
-                            }
-                            return;
-                        }
-                        let targetFixture = null;
-                        for (const d of [0, -1, 1, -2, 2]) {
-                            const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
-                            try {
-                                const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
-                                const hit = list.find((f) => f.id === fixtureOption ||
-                                    `${f.homeTeam?.name} vs ${f.awayTeam?.name}`.toLowerCase().includes(fixtureOption.toLowerCase()) ||
-                                    (f.homeTeam?.name && f.homeTeam.name.toLowerCase().includes(fixtureOption.toLowerCase())) ||
-                                    (f.awayTeam?.name && f.awayTeam.name.toLowerCase().includes(fixtureOption.toLowerCase())));
-                                if (hit) {
-                                    targetFixture = hit;
-                                    break;
-                                }
-                            }
-                            catch { /* next */ }
-                        }
-                        if (!targetFixture) {
-                            try {
-                                const details = await this.factory.getMatchDetails(fixtureOption);
-                                if (details?.fixture)
-                                    targetFixture = details.fixture;
-                            }
-                            catch { /* skip */ }
-                        }
-                        if (!targetFixture) {
-                            await interaction.editReply('⚠️ Could not locate that fixture. Search by team name or use autocomplete.');
-                            return;
-                        }
-                        const subscribed = CP.subscribeLive(interaction.user.id, interaction.channelId, targetFixture.id);
-                        this.liveEventPinnedFixtureIds.add(targetFixture.id);
-                        let analysis = null;
-                        try {
-                            analysis = await this.factory.getMatchDetails(targetFixture.id);
-                        }
-                        catch { /* skip */ }
-                        const embed = analysis
-                            ? CP.buildLiveMatchEmbed(analysis, true)
-                            : CP.baseEmbed('⚡ Live Match Tracking', `Now tracking **${targetFixture.homeTeam.name} vs ${targetFixture.awayTeam.name}**\n` +
-                                `• League: ${targetFixture.league}\n` +
-                                `• Status: \`${targetFixture.status}\` | Score: **${targetFixture.homeScore ?? 0} - ${targetFixture.awayScore ?? 0}**\n` +
-                                `• Clock: \`${targetFixture.liveClock || 'Pending'}\`\n\n` +
-                                `Real-time alerts for goals, cards, and halftime will post to <#${interaction.channelId}>.`);
-                        await interaction.editReply({
-                            content: subscribed
-                                ? `⚡ **Live Tracking Active!** Goal, card, and halftime notifications will post in <#${interaction.channelId}>.`
-                                : `ℹ️ You are already tracking **${targetFixture.homeTeam.name} vs ${targetFixture.awayTeam.name}** in this channel. Current score:`,
-                            embeds: [embed],
-                        });
-                        return;
-                    }
-                    const reply = await this.generateLiveTrackerReply({
-                        userId: interaction.user.id,
-                        channelId: interaction.channelId,
-                    });
-                    if (typeof reply === 'string') {
-                        await interaction.editReply(reply);
-                    }
-                    else {
-                        await interaction.editReply({ embeds: reply.slice(0, 2) });
-                    }
+                    await this.handleTrack(interaction);
+                    return;
                 }
                 else if (interaction.commandName === 'untrack') {
                     await interaction.deferReply({ ephemeral: true });
@@ -3691,6 +3616,133 @@ export class DiscordBotService {
             catch { /* render what the scoreboard already gave us */ }
         }));
         return fixtures;
+    }
+    /**
+     * Handle the /track slash command.
+     * Supports:
+     * 1. No option: displays active saved parlay and live tracked matches.
+     * 2. 'test' / 'simulate': immediately fires live test simulation snapshot + goal alert.
+     * 3. Team name / match ID: subscribes to match alerts and renders match card.
+     * Tolerant of option name: 'match', 'fixture', or 'query'.
+     */
+    async handleTrack(interaction) {
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply();
+        }
+        const fixtureOption = ((typeof interaction.options?.getString === 'function'
+            ? interaction.options.getString('match') ||
+                interaction.options.getString('fixture') ||
+                interaction.options.getString('query')
+            : '') ||
+            (interaction.options?.data?.find?.((o) => o.name === 'match' || o.name === 'fixture' || o.name === 'query')?.value) ||
+            '').toString().trim();
+        if (fixtureOption) {
+            if (isChannelBlocked(interaction.channelId)) {
+                await interaction.editReply('❌ Live tracking alerts cannot be routed to this channel because it is permanently blocked.');
+                return;
+            }
+            const normalizedOpt = fixtureOption.toLowerCase();
+            if (normalizedOpt === 'test' || normalizedOpt === 'simulate' || normalizedOpt === 'simulation') {
+                const testEmbed = new EmbedBuilder()
+                    .setTitle("⏱️ 67' • Arsenal 1 - 1 Bayern Munich [LIVE TEST SIMULATION]")
+                    .setColor(0x00A86B)
+                    .setDescription("⚡ **Real-Time Match Engine Active** — High-frequency telemetry feed test")
+                    .addFields({ name: '📊 Live Expected Goals (xG)', value: '🔴 Arsenal: **1.42**\n⚪ Bayern: **1.35**', inline: true }, { name: '🎯 Shots & Accuracy', value: '🔴 12 (5 on target)\n⚪ 10 (4 on target)', inline: true }, { name: '🚩 Match Corners', value: '🔴 Arsenal: **6**\n⚪ Bayern: **5**', inline: true }, { name: '🔥 Dynamic Momentum Squeeze', value: 'Arsenal [████████░░░░░░░░] Bayern Munich (52% - 48%)\n*Possession: 53% - 47% • Dangerous Attacks: 41 - 38*', inline: false })
+                    .setFooter({ text: 'Cape Predictor Live Alert Engine • Simulation Mode' })
+                    .setTimestamp();
+                await interaction.editReply({
+                    content: `⚡ **Live Tracking Simulation Started!** Firing live goal and pressure alerts in <#${interaction.channelId}>...`,
+                    embeds: [testEmbed],
+                });
+                const targetChannelId = interaction.channelId;
+                const discordClient = this.client;
+                if (targetChannelId && discordClient) {
+                    setTimeout(async () => {
+                        try {
+                            const channel = await discordClient.channels.fetch(targetChannelId);
+                            if (!channel || !channel.isTextBased() || isChannelBlocked(targetChannelId))
+                                return;
+                            const goalAlertEmbed = new EmbedBuilder()
+                                .setTitle("⚽ GOAL ALERT (68'): Arsenal 2 - 1 Bayern Munich")
+                                .setColor(0x22C55E)
+                                .setDescription("⚡ **Bukayo Saka** (Arsenal 2 - 1 Bayern Munich) • Implied Win Prob: **74%** (+26%)\n*Left-footed strike from the centre of the box to the bottom right corner.*")
+                                .addFields({
+                                name: '🔥 HIGH PRESSURE SQUEEZE ALERT',
+                                value: '⚠️ **Bayern Munich** mounting intense late pressure (Last 10m xG: **0.68**, **4 Corners**)\n*Expected late goal probability elevated to 62%*',
+                                inline: false
+                            })
+                                .setFooter({ text: 'Live Match Event Alert • Instant Webhook Stream' })
+                                .setTimestamp();
+                            await channel.send({ embeds: [goalAlertEmbed] });
+                        }
+                        catch (simErr) {
+                            console.warn('[DiscordBot] Test simulation follow-up error:', simErr);
+                        }
+                    }, 2500);
+                }
+                return;
+            }
+            let targetFixture = null;
+            for (const d of [0, -1, 1, -2, 2]) {
+                const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+                try {
+                    const list = await CP.fetchVerifiedFixtures(this.factory, date, 'ALL');
+                    const hit = list.find((f) => f.id === fixtureOption ||
+                        `${f.homeTeam?.name} vs ${f.awayTeam?.name}`.toLowerCase().includes(fixtureOption.toLowerCase()) ||
+                        (f.homeTeam?.name && f.homeTeam.name.toLowerCase().includes(fixtureOption.toLowerCase())) ||
+                        (f.awayTeam?.name && f.awayTeam.name.toLowerCase().includes(fixtureOption.toLowerCase())));
+                    if (hit) {
+                        targetFixture = hit;
+                        break;
+                    }
+                }
+                catch { /* next */ }
+            }
+            if (!targetFixture) {
+                try {
+                    const details = await this.factory.getMatchDetails(fixtureOption);
+                    if (details?.fixture)
+                        targetFixture = details.fixture;
+                }
+                catch { /* skip */ }
+            }
+            if (!targetFixture) {
+                await interaction.editReply('⚠️ Could not locate that fixture. Search by team name or use autocomplete.');
+                return;
+            }
+            const userId = interaction.user?.id || 'unknown_user';
+            const subscribed = CP.subscribeLive(userId, interaction.channelId, targetFixture.id);
+            this.liveEventPinnedFixtureIds.add(targetFixture.id);
+            let analysis = null;
+            try {
+                analysis = await this.factory.getMatchDetails(targetFixture.id);
+            }
+            catch { /* skip */ }
+            const embed = analysis
+                ? CP.buildLiveMatchEmbed(analysis, true)
+                : CP.baseEmbed('⚡ Live Match Tracking', `Now tracking **${targetFixture.homeTeam.name} vs ${targetFixture.awayTeam.name}**\n` +
+                    `• League: ${targetFixture.league}\n` +
+                    `• Status: \`${targetFixture.status}\` | Score: **${targetFixture.homeScore ?? 0} - ${targetFixture.awayScore ?? 0}**\n` +
+                    `• Clock: \`${targetFixture.liveClock || 'Pending'}\`\n\n` +
+                    `Real-time alerts for goals, cards, and halftime will post to <#${interaction.channelId}>.`);
+            await interaction.editReply({
+                content: subscribed
+                    ? `⚡ **Live Tracking Active!** Goal, card, and halftime notifications will post in <#${interaction.channelId}>.`
+                    : `ℹ️ You are already tracking **${targetFixture.homeTeam.name} vs ${targetFixture.awayTeam.name}** in this channel. Current score:`,
+                embeds: [embed],
+            });
+            return;
+        }
+        const reply = await this.generateLiveTrackerReply({
+            userId: interaction.user?.id,
+            channelId: interaction.channelId,
+        });
+        if (typeof reply === 'string') {
+            await interaction.editReply(reply);
+        }
+        else {
+            await interaction.editReply({ embeds: reply.slice(0, 2) });
+        }
     }
     /**
      * `/track` reply. Returns up to two embeds:
