@@ -1,5 +1,6 @@
 import { calculateDixonColes, poissonCdf, computeCardsModel, computeCornersModel } from './poisson-dixon-coles.js';
 import { calibrateProbability } from './calibrator.js';
+import { calculateHybridExpectedGoals } from '../services/clubEloService.js';
 // Empirical league prior frequencies for calibration shrinkage
 const LEAGUE_PRIORS = {
     HOME_WIN: 0.44,
@@ -32,7 +33,29 @@ const LEAGUE_PRIORS = {
     UNDER_5_5_CARDS: 0.82,
 };
 export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAttack, awayDefense, supportingStats, sampleSize, dataFreshnessDays, riskFactors) {
-    const dcResult = calculateDixonColes(homeAttack, homeDefense, awayAttack, awayDefense, fixture.league);
+    const homeTeamName = fixture.homeTeam?.name || fixture.homeTeam || '';
+    const awayTeamName = fixture.awayTeam?.name || fixture.awayTeam || '';
+    // Baseline league average goals per team per match for base lambda estimation
+    let baselineRate = 1.40;
+    if (fixture.league === 'CHAMPIONSHIP')
+        baselineRate = 1.30;
+    else if (fixture.league === 'LALIGA')
+        baselineRate = 1.25;
+    else if (fixture.league === 'LIGUE1')
+        baselineRate = 1.32;
+    else if (fixture.league === 'CHAMPIONS_LEAGUE')
+        baselineRate = 1.55;
+    else if (fixture.league === 'EUROPA_LEAGUE' || fixture.league === 'CONFERENCE_LEAGUE')
+        baselineRate = 1.48;
+    const hybrid = calculateHybridExpectedGoals({
+        homeTeam: homeTeamName,
+        awayTeam: awayTeamName,
+        league: fixture.league,
+        baseLambdaHome: baselineRate * homeAttack * awayDefense * 1.12,
+        baseLambdaAway: baselineRate * awayAttack * homeDefense,
+        bookmakerOdds: fixture?.bookmakerOdds || null,
+    });
+    const dcResult = calculateDixonColes(homeAttack, homeDefense, awayAttack, awayDefense, fixture.league, 1.12, hybrid.lambdaHome, hybrid.lambdaAway);
     const matrix = dcResult.scoreMatrix;
     let probHomeWin = 0;
     let probDraw = 0;
@@ -333,13 +356,14 @@ export function deriveMarketPredictions(fixture, homeAttack, homeDefense, awayAt
             extraRisks: [],
         },
     ];
+    const eloSpread = Math.abs(hybrid.eloHome - hybrid.eloAway);
     return rawMarkets.map((item, index) => {
         // When sampleSize is 0, Dixon-Coles draws on season ELO/power ratings. We grant
-        // effective sample size = 8 and priorWeight = 2.0 so strong offensive ratings
+        // effective sample size = 12 (or 8) and adapt priorWeight so strong offensive ratings
         // (especially away favorites like Man City or Real Madrid) are not overly shrunk
         // down into suppression.
-        const effectiveSampleSize = sampleSize > 0 ? sampleSize : 8;
-        const priorWeight = sampleSize > 0 ? 5.0 : 2.0;
+        const effectiveSampleSize = sampleSize > 0 ? sampleSize : (eloSpread > 150 ? 12 : 8);
+        const priorWeight = eloSpread > 150 ? 1.0 : (sampleSize > 0 ? 4.0 : 2.0);
         const calibrated = calibrateProbability(item.rawProb, item.prior, effectiveSampleSize, priorWeight);
         const combinedRisks = [...riskFactors, ...item.extraRisks];
         return {

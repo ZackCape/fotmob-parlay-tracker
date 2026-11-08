@@ -73,7 +73,9 @@ export function calculateDixonColes(
   awayAttack: number,
   awayDefense: number,
   league: string = 'EPL',
-  homeAdvantageFactor: number = 1.12
+  homeAdvantageFactor: number = 1.12,
+  overrideLambdaHome?: number,
+  overrideLambdaAway?: number
 ): DixonColesResult {
   // Baseline league average goals per team per match
   let baselineRate = 1.40;
@@ -84,8 +86,12 @@ export function calculateDixonColes(
   else if (league === 'EUROPA_LEAGUE' || league === 'CONFERENCE_LEAGUE') baselineRate = 1.48;
 
   // Expected goals (lambda for home, mu for away)
-  const homeLambda = Math.max(0.2, baselineRate * homeAttack * awayDefense * homeAdvantageFactor);
-  const awayMu = Math.max(0.2, baselineRate * awayAttack * homeDefense);
+  const homeLambda = (typeof overrideLambdaHome === 'number' && overrideLambdaHome > 0)
+    ? overrideLambdaHome
+    : Math.max(0.2, baselineRate * homeAttack * awayDefense * homeAdvantageFactor);
+  const awayMu = (typeof overrideLambdaAway === 'number' && overrideLambdaAway > 0)
+    ? overrideLambdaAway
+    : Math.max(0.2, baselineRate * awayAttack * homeDefense);
 
   const maxGoals = 7;
   const scoreMatrix: Array<{ homeScore: number; awayScore: number; probability: number }> = [];

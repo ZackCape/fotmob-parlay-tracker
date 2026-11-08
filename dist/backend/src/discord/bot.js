@@ -378,6 +378,10 @@ export class DiscordBotService {
                         .setName('fixture')
                         .setDescription('Optional match to track (search by team name)')
                         .setAutocomplete(true)
+                        .setRequired(false))
+                        .addStringOption(opt => opt
+                        .setName('match')
+                        .setDescription('Optional match to track or test (e.g. test, simulate)')
                         .setRequired(false)),
                     new SlashCommandBuilder()
                         .setName('untrack')
@@ -620,10 +624,51 @@ export class DiscordBotService {
                 }
                 else if (interaction.commandName === 'track') {
                     await interaction.deferReply();
-                    const fixtureOption = interaction.options.getString('fixture');
+                    const fixtureOption = interaction.options.getString('fixture') || interaction.options.getString('match');
                     if (fixtureOption) {
                         if (isChannelBlocked(interaction.channelId)) {
                             await interaction.editReply('❌ Live tracking alerts cannot be routed to this channel because it is permanently blocked.');
+                            return;
+                        }
+                        const normalizedOpt = fixtureOption.trim().toLowerCase();
+                        if (normalizedOpt === 'test' || normalizedOpt === 'simulate' || normalizedOpt === 'simulation') {
+                            const testEmbed = new EmbedBuilder()
+                                .setTitle("⏱️ 67' • Arsenal 1 - 1 Bayern Munich [LIVE TEST SIMULATION]")
+                                .setColor(0x00A86B)
+                                .setDescription("⚡ **Real-Time Match Engine Active** — High-frequency telemetry feed test")
+                                .addFields({ name: '📊 Live Expected Goals (xG)', value: '🔴 Arsenal: **1.42**\n⚪ Bayern: **1.35**', inline: true }, { name: '🎯 Shots & Accuracy', value: '🔴 12 (5 on target)\n⚪ 10 (4 on target)', inline: true }, { name: '🚩 Match Corners', value: '🔴 Arsenal: **6**\n⚪ Bayern: **5**', inline: true }, { name: '🔥 Dynamic Momentum Squeeze', value: 'Arsenal [████████░░░░░░░░] Bayern Munich (52% - 48%)\n*Possession: 53% - 47% • Dangerous Attacks: 41 - 38*', inline: false })
+                                .setFooter({ text: 'Cape Predictor Live Alert Engine • Simulation Mode' })
+                                .setTimestamp();
+                            await interaction.editReply({
+                                content: `⚡ **Live Tracking Simulation Started!** Firing live goal and pressure alerts in <#${interaction.channelId}>...`,
+                                embeds: [testEmbed],
+                            });
+                            const targetChannelId = interaction.channelId;
+                            const discordClient = this.client;
+                            if (targetChannelId && discordClient) {
+                                setTimeout(async () => {
+                                    try {
+                                        const channel = await discordClient.channels.fetch(targetChannelId);
+                                        if (!channel || !channel.isTextBased() || isChannelBlocked(targetChannelId))
+                                            return;
+                                        const goalAlertEmbed = new EmbedBuilder()
+                                            .setTitle("⚽ GOAL ALERT (68'): Arsenal 2 - 1 Bayern Munich")
+                                            .setColor(0x22C55E)
+                                            .setDescription("⚡ **Bukayo Saka** (Arsenal 2 - 1 Bayern Munich) • Implied Win Prob: **74%** (+26%)\n*Left-footed strike from the centre of the box to the bottom right corner.*")
+                                            .addFields({
+                                            name: '🔥 HIGH PRESSURE SQUEEZE ALERT',
+                                            value: '⚠️ **Bayern Munich** mounting intense late pressure (Last 10m xG: **0.68**, **4 Corners**)\n*Expected late goal probability elevated to 62%*',
+                                            inline: false
+                                        })
+                                            .setFooter({ text: 'Live Match Event Alert • Instant Webhook Stream' })
+                                            .setTimestamp();
+                                        await channel.send({ embeds: [goalAlertEmbed] });
+                                    }
+                                    catch (simErr) {
+                                        console.warn('[DiscordBot] Test simulation follow-up error:', simErr);
+                                    }
+                                }, 2500);
+                            }
                             return;
                         }
                         let targetFixture = null;
@@ -2077,7 +2122,47 @@ export class DiscordBotService {
                 const replyText = await this.generateParlayReply({ legs: 5, mode: 'SAME_GAME_PARLAY', minProbability: 0.58 });
                 await message.reply(replyText);
             }
-            else if (content === '!track' || content === '/track') {
+            else if (content.startsWith('!track') || content.startsWith('/track')) {
+                const arg = content.replace(/^(!track|\/track)\s*/i, '').trim().toLowerCase();
+                if (arg === 'test' || arg === 'simulate') {
+                    if (isChannelBlocked(message.channel.id)) {
+                        await message.reply('❌ Live tracking alerts cannot be routed to this channel because it is permanently blocked.');
+                        return;
+                    }
+                    const testEmbed = new EmbedBuilder()
+                        .setTitle("⏱️ 67' • Arsenal 1 - 1 Bayern Munich [LIVE TEST SIMULATION]")
+                        .setColor(0x00A86B)
+                        .setDescription("⚡ **Real-Time Match Engine Active** — High-frequency telemetry feed test")
+                        .addFields({ name: '📊 Live Expected Goals (xG)', value: '🔴 Arsenal: **1.42**\n⚪ Bayern: **1.35**', inline: true }, { name: '🎯 Shots & Accuracy', value: '🔴 12 (5 on target)\n⚪ 10 (4 on target)', inline: true }, { name: '🚩 Match Corners', value: '🔴 Arsenal: **6**\n⚪ Bayern: **5**', inline: true }, { name: '🔥 Dynamic Momentum Squeeze', value: 'Arsenal [████████░░░░░░░░] Bayern Munich (52% - 48%)\n*Possession: 53% - 47% • Dangerous Attacks: 41 - 38*', inline: false })
+                        .setFooter({ text: 'Cape Predictor Live Alert Engine • Simulation Mode' })
+                        .setTimestamp();
+                    await message.reply({
+                        content: `⚡ **Live Tracking Simulation Started!** Firing live goal and pressure alerts in <#${message.channel.id}>...`,
+                        embeds: [testEmbed],
+                    });
+                    setTimeout(async () => {
+                        try {
+                            if (isChannelBlocked(message.channel.id))
+                                return;
+                            const goalAlertEmbed = new EmbedBuilder()
+                                .setTitle("⚽ GOAL ALERT (68'): Arsenal 2 - 1 Bayern Munich")
+                                .setColor(0x22C55E)
+                                .setDescription("⚡ **Bukayo Saka** (Arsenal 2 - 1 Bayern Munich) • Implied Win Prob: **74%** (+26%)\n*Left-footed strike from the centre of the box to the bottom right corner.*")
+                                .addFields({
+                                name: '🔥 HIGH PRESSURE SQUEEZE ALERT',
+                                value: '⚠️ **Bayern Munich** mounting intense late pressure (Last 10m xG: **0.68**, **4 Corners**)\n*Expected late goal probability elevated to 62%*',
+                                inline: false
+                            })
+                                .setFooter({ text: 'Live Match Event Alert • Instant Webhook Stream' })
+                                .setTimestamp();
+                            await message.channel.send({ embeds: [goalAlertEmbed] });
+                        }
+                        catch (simErr) {
+                            console.warn('[DiscordBot] Test simulation follow-up error:', simErr);
+                        }
+                    }, 2500);
+                    return;
+                }
                 const reply = await this.generateLiveTrackerReply({
                     userId: message.author.id,
                     channelId: message.channel.id,

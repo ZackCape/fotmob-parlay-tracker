@@ -2,6 +2,7 @@ import { Fixture, MatchAnalysis, MarketPrediction } from '../types/football.js';
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { estimateTeamStrengths } from './teamStrength.js';
+import { calculateHybridExpectedGoals } from '../services/clubEloService.js';
 
 /**
  * Build a complete MatchAnalysis bundle from a fixture alone.
@@ -39,11 +40,27 @@ export function buildGenericAnalysis(fixture: Fixture): MatchAnalysis {
 
   const { homeAttack, homeDefense, awayAttack, awayDefense } = strength;
 
-  const dc = calculateDixonColes(homeAttack, homeDefense, awayAttack, awayDefense, fixture.league);
+  const hybrid = calculateHybridExpectedGoals({
+    homeTeam: fixture.homeTeam?.name ?? '',
+    awayTeam: fixture.awayTeam?.name ?? '',
+    league: fixture.league,
+    bookmakerOdds: (fixture as any)?.bookmakerOdds ?? null,
+  });
+
+  const dc = calculateDixonColes(
+    homeAttack,
+    homeDefense,
+    awayAttack,
+    awayDefense,
+    fixture.league,
+    1.12,
+    hybrid.lambdaHome,
+    hybrid.lambdaAway
+  );
 
   const supportingStatistics = {
-    homeGoalAverageLast5: fixture.statistics?.xgHome ?? 1.45,
-    awayGoalAverageLast5: fixture.statistics?.xgAway ?? 1.30,
+    homeGoalAverageLast5: fixture.statistics?.xgHome ?? hybrid.lambdaHome,
+    awayGoalAverageLast5: fixture.statistics?.xgAway ?? hybrid.lambdaAway,
     homeConcededAverageLast5: 1.20,
     awayConcededAverageLast5: 1.25,
     homeXgAverage: fixture.statistics?.xgHome ?? Number(dc.homeExpectedGoals.toFixed(2)),

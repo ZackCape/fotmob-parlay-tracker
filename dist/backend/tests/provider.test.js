@@ -7,12 +7,12 @@ describe('Data Provider & Fixture Integrity', () => {
         dataProvider: 'verified-archive', // Test verified archive adapter
     });
     it('retrieves fixtures for a given date and honors league filters', async () => {
-        // 2026-10-17 is a Saturday
-        const allFixtures = await factory.getFixturesByDate('2026-10-17', 'ALL');
+        // 2024-08-17 has verified archive fixtures (EPL & Championship)
+        const allFixtures = await factory.getFixturesByDate('2024-08-17', 'ALL');
         expect(allFixtures.length).toBeGreaterThan(0);
-        const eplOnly = await factory.getFixturesByDate('2026-10-17', 'EPL');
+        const eplOnly = await factory.getFixturesByDate('2024-08-17', 'EPL');
         expect(eplOnly.every(f => f.league === 'EPL')).toBe(true);
-        const chOnly = await factory.getFixturesByDate('2026-10-17', 'CHAMPIONSHIP');
+        const chOnly = await factory.getFixturesByDate('2024-08-17', 'CHAMPIONSHIP');
         expect(chOnly.every(f => f.league === 'CHAMPIONSHIP')).toBe(true);
     });
     it('strictly preserves null values for unplayed match statistics instead of 0', async () => {
@@ -26,7 +26,7 @@ describe('Data Provider & Fixture Integrity', () => {
         }
     });
     it('returns comprehensive match analysis bundle with Dixon-Coles and predictions', async () => {
-        const fixtures = await factory.getFixturesByDate('2026-10-17', 'ALL');
+        const fixtures = await factory.getFixturesByDate('2024-08-17', 'ALL');
         expect(fixtures.length).toBeGreaterThan(0);
         const first = fixtures[0];
         const details = await factory.getMatchDetails(first.id);

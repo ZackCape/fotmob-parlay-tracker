@@ -64,10 +64,11 @@ export function getCalendarFixturesForDate(dateStr, leagueFilter = 'ALL') {
     if (recorded.length > 0) {
         return recorded;
     }
-    const targetDate = new Date(dateStr);
-    const dayOfWeek = targetDate.getUTCDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-    const dayOfYear = Math.floor((targetDate.getTime() - new Date(targetDate.getUTCFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
-    const fixtures = [];
+    // Synthetic fixture generation permanently disabled — real ESPN fixtures only
+    return [];
+    let dayOfWeek = 0;
+    let dayOfYear = 0;
+    let fixtures = [];
     // 1. Premier League (Saturdays, Sundays, Mon/Fri)
     if (leagueFilter === 'ALL' || leagueFilter === 'EPL') {
         if (dayOfWeek === 6 || dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 5) {

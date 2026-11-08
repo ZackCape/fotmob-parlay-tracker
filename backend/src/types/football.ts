@@ -91,6 +91,14 @@ export interface Fixture {
   livePeriod?: number | null;
   /** Provider-native status name, e.g. ESPN's "STATUS_HALFTIME". */
   providerStatus?: string | null;
+  /** Bookmaker odds (home, draw, away, over25, under25) if attached by provider. */
+  bookmakerOdds?: {
+    home?: number;
+    draw?: number;
+    away?: number;
+    over25?: number;
+    under25?: number;
+  } | null;
 }
 
 export type MarketType =

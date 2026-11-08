@@ -2,6 +2,7 @@ import axios from 'axios';
 import { calculateDixonColes } from '../engine/poisson-dixon-coles.js';
 import { deriveMarketPredictions } from '../engine/market-calculator.js';
 import { estimateTeamStrengths, sampleFromResults } from '../utils/teamStrength.js';
+import { calculateHybridExpectedGoals } from '../services/clubEloService.js';
 /**
  * ESPN public scoreboard + summary adapter.
  * Scoreboard: https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates=YYYYMMDD
@@ -249,6 +250,43 @@ export class EspnAdapter {
         const state = comp.status?.type?.state || ev.status?.type?.state;
         const statusBlock = comp.status || ev.status || {};
         const kickoff = comp.date || ev.date || `${date}T00:00:00Z`;
+        let bookmakerOdds = null;
+        const rawOdds = comp.odds?.[0];
+        if (rawOdds) {
+            const parseEspnOdd = (val) => {
+                if (typeof val === 'number') {
+                    if (val > 1.0)
+                        return Number(val.toFixed(2));
+                    if (val < -100)
+                        return Number((1 + 100 / Math.abs(val)).toFixed(2));
+                    if (val >= 100)
+                        return Number((1 + val / 100).toFixed(2));
+                }
+                if (typeof val === 'string') {
+                    const n = parseFloat(val);
+                    if (!isNaN(n))
+                        return parseEspnOdd(n);
+                }
+                return undefined;
+            };
+            const h = parseEspnOdd(rawOdds.homeTeamOdds?.moneyLine ?? rawOdds.homeOdds ?? rawOdds.home);
+            const a = parseEspnOdd(rawOdds.awayTeamOdds?.moneyLine ?? rawOdds.awayOdds ?? rawOdds.away);
+            const d = parseEspnOdd(rawOdds.drawOdds ?? rawOdds.draw);
+            const ou = typeof rawOdds.overUnder === 'number' ? rawOdds.overUnder : (parseFloat(rawOdds.overUnder) || undefined);
+            const o25 = parseEspnOdd(rawOdds.overOdds);
+            const u25 = parseEspnOdd(rawOdds.underOdds);
+            if (h || a || d || ou) {
+                bookmakerOdds = {
+                    home: h,
+                    draw: d,
+                    away: a,
+                    overUnder: ou,
+                    over25: o25,
+                    under25: u25,
+                    provider: rawOdds.provider?.name || 'ESPN Consensus',
+                };
+            }
+        }
         return {
             id: `espn-${ev.id}`,
             externalId: String(ev.id),
@@ -271,6 +309,7 @@ export class EspnAdapter {
             livePeriod: Number.isFinite(statusBlock?.period) ? Number(statusBlock.period) : null,
             providerStatus: statusBlock?.type?.name ? String(statusBlock.type.name) : null,
             dataSource: 'ESPN Public Scoreboard (Free)',
+            bookmakerOdds,
         };
     }
     /**
@@ -580,7 +619,13 @@ export class EspnAdapter {
             homeTeam: fixture.homeTeam?.name ?? null,
             awayTeam: fixture.awayTeam?.name ?? null,
         });
-        const dcResult = calculateDixonColes(strength.homeAttack, strength.homeDefense, strength.awayAttack, strength.awayDefense, fixture.league);
+        const hybrid = calculateHybridExpectedGoals({
+            homeTeam: fixture.homeTeam?.name ?? '',
+            awayTeam: fixture.awayTeam?.name ?? '',
+            league: fixture.league,
+            bookmakerOdds: fixture.bookmakerOdds ?? null,
+        });
+        const dcResult = calculateDixonColes(strength.homeAttack, strength.homeDefense, strength.awayAttack, strength.awayDefense, fixture.league, 1.12, hybrid.lambdaHome, hybrid.lambdaAway);
         const supportingStats = {
             homeGoalAverageLast5: st?.xgHome ?? sampleFromResults(stats?.recentGoals.home)?.goalsForPerMatch ?? 1.5,
             awayGoalAverageLast5: st?.xgAway ?? sampleFromResults(stats?.recentGoals.away)?.goalsForPerMatch ?? 1.3,
