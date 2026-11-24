@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import nodePath from 'node:path';
-import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, TextChannel, SlashCommandBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import axios from 'axios';
+import { setTimeout as delay } from 'node:timers/promises';
 import cron from 'node-cron';
 import { DataProviderFactory } from '../providers/provider-factory.js';
 import { buildStatisticalParlay } from '../parlays/parlay-builder.js';
@@ -548,51 +549,41 @@ export class DiscordBotService {
     }, 5 * 60 * 1000);
   }
 
-  /**
-   * Register slash commands globally and wipe stale guild-specific overrides.
-   * This eliminates "This command is outdated" schema mismatch errors in Discord.
-   */
+  /** Publish the global schema before removing stale guild overrides. */
   public async registerSlashCommands(): Promise<void> {
-    try {
-      const botToken = this.config.botToken || process.env.DISCORD_BOT_TOKEN;
-      const clientId = this.client?.user?.id;
-      const commandDefinitionsJSON = SLASH_COMMANDS.map((c: any) => (typeof c.toJSON === 'function' ? c.toJSON() : c));
+    const client = this.client;
+    if (!client?.application) return;
+    const expected = SLASH_COMMANDS.map(command => command.toJSON());
 
-      // 1. Wipe any stale, outdated guild-specific commands so guilds never hold conflicting option schemas
-      for (const guild of this.client?.guilds.cache.values() || []) {
-        try {
-          await guild.commands.set([]);
-        } catch (gErr: any) {
-          console.warn(`[DiscordBot] Guild command wipe failed for ${guild.id}: ${gErr?.message || gErr}`);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const commands = await client.application.commands.set(expected);
+        const names = new Set(commands.map(command => command.name));
+        const wager = commands.find(command => command.name === 'wager');
+        if (expected.some(command => !names.has(command.name))
+          || !wager?.options.some(option => option.name === 'log')
+          || !wager.options.some(option => option.name === 'summary')) {
+          throw new Error('Discord returned an incomplete slash command schema');
         }
+        console.log(`[DiscordBot] Registered ${commands.size} global slash commands, including /wager log and /wager summary.`);
+        break;
+      } catch (error) {
+        const status = (error as { status?: number } | null)?.status;
+        const canRetry = attempt < 3 && (!status || status === 429 || status >= 500);
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[DiscordBot] Global slash command sync failed (attempt ${attempt}/3): ${message}`);
+        if (!canRetry) return;
+        await delay(2000 * attempt);
       }
+    }
 
-      // 2. Register global slash commands via discord.js client
-      if (this.client?.application) {
-        await this.client.application.commands.set(SLASH_COMMANDS);
-        console.log(`[DiscordBot] Successfully registered ${SLASH_COMMANDS.length} global slash commands via client.`);
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await guild.commands.set([]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[DiscordBot] Could not clear stale commands in guild ${guild.id}: ${message}`);
       }
-
-      // 3. Authoritative REST API synchronization (guarantees immediate Discord gateway update)
-      if (botToken && clientId) {
-        try {
-          const rest = new REST({ version: '10' }).setToken(botToken);
-          console.log('[DiscordBot] Syncing slash commands via Discord REST API...');
-
-          for (const guild of this.client?.guilds.cache.values() || []) {
-            try {
-              await rest.put(Routes.applicationGuildCommands(clientId, guild.id), { body: [] });
-            } catch { /* best effort */ }
-          }
-
-          await rest.put(Routes.applicationCommands(clientId), { body: commandDefinitionsJSON });
-          console.log('[DiscordBot] Successfully registered all slash commands globally via REST API.');
-        } catch (restErr: any) {
-          console.warn('[DiscordBot] REST API slash command registration notice:', restErr?.message || restErr);
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[DiscordBot] Slash command registration notice: ${err?.message || err}`);
     }
   }
 

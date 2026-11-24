@@ -279,8 +279,7 @@ This launches:
    - **`epl-championship-analytics`** — a Docker Web Service running the backend API, the Discord bot, the cron refresher and the compiled React dashboard, with health checks at `/api/system/status` and automatic restarts.
 4. When Render prompts for the `sync: false` values, paste your secrets (they are never stored in the repository):
    `API_FOOTBALL_KEY`, `FOOTBALL_DATA_ORG_KEY`, `THE_ODDS_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_WEBHOOK_URL`, `PARLAY_REPORT_CHANNEL_ID`.
-5. Set the Discord Developer Portal interactions endpoint / Activities URL to your service URL
-   (`https://<service-name>.onrender.com`), and keep `PUBLIC_URL` in the blueprint in sync so link buttons resolve.
+5. Leave the Discord Developer Portal's **Interactions Endpoint URL** empty. The bot receives slash command interactions over the Discord Gateway. Keep the app's own `PUBLIC_URL` in sync with the service URL so dashboard links resolve.
 
 > [!IMPORTANT]
 > **Free-plan caveats (be honest about them):**

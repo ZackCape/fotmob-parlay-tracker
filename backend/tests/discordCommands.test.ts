@@ -1,6 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { Collection } from 'discord.js';
+import { DiscordBotService, SLASH_COMMANDS } from '../src/discord/bot.js';
+
+vi.mock('node:timers/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('node:timers/promises')>(),
+  setTimeout: vi.fn().mockResolvedValue(undefined),
+}));
 
 const botSource = readFileSync(resolve(__dirname, '../src/discord/bot.ts'), 'utf-8');
 
@@ -81,5 +88,46 @@ describe('Discord slash command definitions', () => {
     for (const n of names) {
       expect(n, `invalid command name: ${n}`).toMatch(/^[-_\p{L}\p{N}]{1,32}$/u);
     }
+  });
+});
+
+describe('Discord slash command sync', () => {
+  function stubClient() {
+    const setGlobal = vi.fn();
+    const clearGuild = vi.fn().mockResolvedValue(undefined);
+    const client = {
+      application: { commands: { set: setGlobal } },
+      guilds: { cache: new Map([['guild', { id: 'guild', commands: { set: clearGuild } }]]) },
+    };
+    const sync = () => DiscordBotService.prototype.registerSlashCommands.call({ client } as unknown as DiscordBotService);
+    return { setGlobal, clearGuild, sync };
+  }
+
+  it('retries transient errors and confirms wager before clearing guild overrides', async () => {
+    const { setGlobal, clearGuild, sync } = stubClient();
+    const schema = SLASH_COMMANDS.map(command => command.toJSON());
+    setGlobal.mockRejectedValueOnce(Object.assign(new Error('Unavailable'), { status: 503 }));
+    setGlobal.mockImplementationOnce(async () => {
+      expect(clearGuild).not.toHaveBeenCalled();
+      return new Collection(schema.map(command => [command.name, command]));
+    });
+
+    await sync();
+
+    expect(setGlobal).toHaveBeenCalledTimes(2);
+    const [payload] = setGlobal.mock.calls[1];
+    expect(payload.find((command: { name: string }) => command.name === 'wager').options.map((option: { name: string }) => option.name))
+      .toEqual(['log', 'summary']);
+    expect(clearGuild).toHaveBeenCalledExactlyOnceWith([]);
+  });
+
+  it('keeps existing guild commands if Discord rejects the global schema', async () => {
+    const { setGlobal, clearGuild, sync } = stubClient();
+    setGlobal.mockRejectedValue(Object.assign(new Error('Invalid schema'), { status: 400 }));
+
+    await sync();
+
+    expect(setGlobal).toHaveBeenCalledTimes(1);
+    expect(clearGuild).not.toHaveBeenCalled();
   });
 });
