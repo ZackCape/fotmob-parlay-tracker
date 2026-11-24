@@ -201,6 +201,16 @@ describe('API-Football league registry', () => {
         expect(API_FOOTBALL_LEAGUE_IDS[id]).toBe(apiFootball);
         expect(leagueFromApiFootballId(apiFootball)).toBe(id);
     });
+    it.each([
+        ['LALIGA', 140],
+        ['SERIE_A', 135],
+        ['BUNDESLIGA', 78],
+        ['LIGUE1', 61],
+        ['CHAMPIONS_LEAGUE', 2],
+    ])('registers European league %s as %i', (id, apiFootball) => {
+        expect(API_FOOTBALL_LEAGUE_IDS[id]).toBe(apiFootball);
+        expect(leagueFromApiFootballId(apiFootball)).toBe(id);
+    });
     it('round-trips every registered id exactly once', () => {
         const ids = Object.values(API_FOOTBALL_LEAGUE_IDS);
         expect(new Set(ids).size).toBe(ids.length);

@@ -16,6 +16,11 @@ import { getTeamVerifiedForm } from '../services/multiLeagueDbService.js';
 export const API_FOOTBALL_LEAGUE_IDS: Record<string, number> = {
   EPL: 39,
   CHAMPIONSHIP: 40,
+  LALIGA: 140,
+  SERIE_A: 135,
+  BUNDESLIGA: 78,
+  LIGUE1: 61,
+  CHAMPIONS_LEAGUE: 2,
   EREDIVISIE: 88,
   PRIMEIRA_LIGA: 94,
   EKSTRAKLASA: 106,

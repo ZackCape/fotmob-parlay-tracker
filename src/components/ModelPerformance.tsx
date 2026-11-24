@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ModelPerformanceReport } from '../types';
 import { fetchModelPerformance } from '../api';
-import { BarChart3, CheckCircle2, TrendingUp, HelpCircle, Activity } from 'lucide-react';
+import { leagueDisplayName } from '../utils/leagueFlags';
 
 export const ModelPerformance: React.FC = () => {
   const [report, setReport] = useState<ModelPerformanceReport | null>(null);
@@ -25,16 +25,30 @@ export const ModelPerformance: React.FC = () => {
 
   if (!report) return null;
 
-  return (
-    <div className="space-y-6">
-      {/* Title */}
-      <div>
-        <h2 className="text-xl font-bold text-white mb-1">Statistical Prediction Engine Performance</h2>
-        <p className="text-xs text-slate-400">
-          Rigorous out-of-sample backtesting metrics, Brier scores, log loss, and probability calibration reliability.
+  const heading = (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-1">Statistical Prediction Engine Performance</h2>
+      <p className="text-xs text-slate-400">
+        Predictions are recalculated from archived data and can use information that became available after kickoff.
+      </p>
+    </div>
+  );
+
+  if (report.totalEvaluatedPredictions === 0) {
+    return (
+      <div className="space-y-6">
+        {heading}
+        <p className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">
+          No settled predictions available for evaluation.
         </p>
       </div>
+    );
+  }
 
+  return (
+    <div className="space-y-6">
+      {heading}
+      <p className="text-xs text-slate-400">{report.totalEvaluatedPredictions} evaluated market predictions</p>
       {/* Primary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Brier Score */}
@@ -58,14 +72,14 @@ export const ModelPerformance: React.FC = () => {
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
             <span className="font-semibold uppercase tracking-wider">Log Loss (Cross-Entropy)</span>
             <span className="text-[10px] bg-sky-500/10 text-sky-400 px-2 py-0.5 rounded border border-sky-500/20 font-mono">
-              Calibrated
+              Lower is better
             </span>
           </div>
           <div className="text-2xl sm:text-3xl font-extrabold text-white font-mono mb-2">
             {report.overallLogLoss}
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            Penalizes overconfident false predictions exponentially. Reflects honest epistemic uncertainty.
+            Penalizes confident predictions when the outcome goes the other way.
           </p>
         </div>
 
@@ -78,10 +92,10 @@ export const ModelPerformance: React.FC = () => {
             </span>
           </div>
           <div className="text-2xl sm:text-3xl font-extrabold text-emerald-400 font-mono mb-2">
-            {(report.overallHitRate * 100).toFixed(1)}%
+            {report.overallHitRate === null ? '—' : `${(report.overallHitRate * 100).toFixed(1)}%`}
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            Proportion of evaluated binary market predictions correctly validated against official full-time scorelines.
+            Share of evaluated market selections that occurred in the archived matches.
           </p>
         </div>
       </div>
@@ -109,7 +123,7 @@ export const ModelPerformance: React.FC = () => {
             return (
               <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800/80">
                 <div className="flex items-center justify-between text-xs mb-2">
-                  <span className="font-bold text-white">{bucket.bucketLabel} Predicted Bucket</span>
+                  <span className="font-bold text-white">{bucket.bucketLabel} · {bucket.sampleCount} predictions</span>
                   <div className="flex items-center space-x-3 text-xs font-mono">
                     <span className="text-slate-400">Predicted: <strong className="text-white">{predPct}%</strong></span>
                     <span className="text-slate-400">Observed: <strong className="text-emerald-400">{obsPct}%</strong></span>
@@ -138,55 +152,25 @@ export const ModelPerformance: React.FC = () => {
         </div>
       </div>
 
-      {/* League Breakdown */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Premier League */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <span className="font-bold text-white text-sm">Premier League (EPL)</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 font-mono">
-              20 Clubs
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-4 text-xs">
-            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-              <div className="text-slate-500 text-[10px] uppercase font-semibold">Brier Score</div>
-              <div className="text-xl font-bold font-mono text-white mt-1">
-                {report.leagueBreakdown.EPL.brierScore}
-              </div>
+        {Object.entries(report.leagueBreakdown).map(([league, stats]) => (
+          <div key={league} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <span className="font-bold text-white text-sm">{leagueDisplayName(league)}</span>
+              <span className="text-xs text-slate-400">{stats.sampleCount} predictions</span>
             </div>
-            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-              <div className="text-slate-500 text-[10px] uppercase font-semibold">Hit Rate</div>
-              <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
-                {(report.leagueBreakdown.EPL.hitRate * 100).toFixed(1)}%
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <div className="text-slate-500 text-[10px] uppercase font-semibold">Brier Score</div>
+                <div className="text-xl font-bold font-mono text-white mt-1">{stats.brierScore}</div>
+              </div>
+              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <div className="text-slate-500 text-[10px] uppercase font-semibold">Hit Rate</div>
+                <div className="text-xl font-bold font-mono text-emerald-400 mt-1">{(stats.hitRate * 100).toFixed(1)}%</div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Championship */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <span className="font-bold text-white text-sm">EFL Championship</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">
-              24 Clubs
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-4 text-xs">
-            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-              <div className="text-slate-500 text-[10px] uppercase font-semibold">Brier Score</div>
-              <div className="text-xl font-bold font-mono text-white mt-1">
-                {report.leagueBreakdown.CHAMPIONSHIP.brierScore}
-              </div>
-            </div>
-            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-              <div className="text-slate-500 text-[10px] uppercase font-semibold">Hit Rate</div>
-              <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
-                {(report.leagueBreakdown.CHAMPIONSHIP.hitRate * 100).toFixed(1)}%
-              </div>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );

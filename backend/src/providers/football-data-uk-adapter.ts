@@ -2,23 +2,17 @@ import axios from 'axios';
 import { IFootballDataProvider, ProviderHealth } from './provider-interface.js';
 import { Fixture, League, Team } from '../types/football.js';
 
-/**
- * Football-Data.co.uk free CSV feeds (no API key required).
- * Public endpoint: https://www.football-data.co.uk/mmz4281/{season}/E0.csv
- * season format: 2026 27  (2026/2027 season)
- */
+// Football-Data.co.uk uses compact season codes, e.g. 2627 for 2026/27.
 const BASE = 'https://www.football-data.co.uk';
-
-function toLeagueFromCode(code: string): League | null {
-  const c = (code || '').toUpperCase();
-  if (c === 'E0') return 'EPL';
-  if (c === 'E1') return 'CHAMPIONSHIP';
-  if (c === 'SP1') return 'LALIGA';
-  if (c === 'D1') return 'BUNDESLIGA';
-  if (c === 'D2') return 'BUNDESLIGA2';
-  if (c === 'F1') return 'LIGUE1';
-  return null;
-}
+const LEAGUE_CODES: ReadonlyArray<{ code: string; league: League }> = [
+  { code: 'E0', league: 'EPL' },
+  { code: 'E1', league: 'CHAMPIONSHIP' },
+  { code: 'SP1', league: 'LALIGA' },
+  { code: 'I1', league: 'SERIE_A' },
+  { code: 'D1', league: 'BUNDESLIGA' },
+  { code: 'D2', league: 'BUNDESLIGA2' },
+  { code: 'F1', league: 'LIGUE1' },
+];
 
 function makeTeam(name: string, league: League): Team {
   return {
@@ -33,19 +27,23 @@ function makeTeam(name: string, league: League): Team {
   };
 }
 
-function parseDate(d: string, t?: string): string {
-  // dd/mm/yyyy (+ optional hh:mm)
-  const parts = (d || '').split('/');
-  if (parts.length !== 3) return '';
-  const [dd, mm, yyyy] = parts;
-  const time = t && t.trim().length === 5 ? t.trim() : '00:00';
-  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T${time}:00Z`;
+function matchingDate(value: string, requestedDate: string): boolean {
+  const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (!match) return false;
+  const [, day, month, year] = match;
+  const requestedYear = requestedDate.slice(0, 4);
+  const yearMatches = year === (year.length === 2 ? requestedYear.slice(2) : requestedYear);
+  return yearMatches && requestedDate.slice(5) === `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
+function parseScore(value: string | undefined): number | null {
+  return value && /^\d+$/.test(value) ? Number(value) : null;
 }
 
 function parseCsv(csv: string): Record<string, string>[] {
   const lines = csv.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return [];
-  const headers = lines[0].split(',').map(h => h.trim());
+  const headers = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim());
   const rows: Record<string, string>[] = [];
   for (let i = 1; i < lines.length; i++) {
     // naive CSV split (fields here have no embedded commas in the feeds we use)
@@ -79,33 +77,32 @@ export class FootballDataUkAdapter implements IFootballDataProvider {
   }
 
   async getFixturesByDate(date: string, league: string = 'ALL'): Promise<Fixture[]> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
     const season = this.seasonForDate(date);
-    const codes: Array<{ code: string; league: League }> = [];
-    if (league === 'ALL' || league === 'EPL') codes.push({ code: 'E0', league: 'EPL' });
-    if (league === 'ALL' || league === 'CHAMPIONSHIP') codes.push({ code: 'E1', league: 'CHAMPIONSHIP' });
+    const seasonCode = season.replace(' ', '');
+    const leagues = LEAGUE_CODES.filter(entry => league === 'ALL' || entry.league === league);
+    const feeds = await Promise.all(leagues.map(entry => this.fetchCsv(`/mmz4281/${seasonCode}/${entry.code}.csv`)));
 
     const fixtures: Fixture[] = [];
-    for (const c of codes) {
-      const csv = await this.fetchCsv(`/mmz4281/${season}/${c.code}.csv`);
+    for (const [index, c] of leagues.entries()) {
+      const csv = feeds[index];
       if (!csv) continue;
-      const rows = parseCsv(csv);
-      for (const r of rows) {
-        const rowDate = r.Date || r.date || '';
-        const iso = parseDate(rowDate, r.Time);
-        if (!iso || iso.slice(0, 10) !== date) continue;
+      for (const r of parseCsv(csv)) {
+        if (!matchingDate(r.Date || r.date || '', date)) continue;
         const home = r.HomeTeam || r.home_team;
         const away = r.AwayTeam || r.away_team;
         if (!home || !away) continue;
-        const hs = r.FTHG !== undefined && r.FTHG !== '' ? parseInt(r.FTHG, 10) : null;
-        const as = r.FTAG !== undefined && r.FTAG !== '' ? parseInt(r.FTAG, 10) : null;
+        const hs = parseScore(r.FTHG);
+        const as = parseScore(r.FTAG);
+        const time = r.Time && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.Time) ? r.Time : '00:00';
         fixtures.push({
           id: `fduk-${c.code}-${date}-${home}-${away}`.replace(/\s+/g, '-').toLowerCase(),
           externalId: `${c.code}-${date}-${home}-${away}`,
           league: c.league,
-          season: season.trim(),
+          season,
           round: c.code,
           date,
-          kickoffTime: iso,
+          kickoffTime: `${date}T${time}:00Z`,
           status: hs !== null && as !== null ? 'FINISHED' : 'TIMED',
           homeTeam: makeTeam(home, c.league),
           awayTeam: makeTeam(away, c.league),
@@ -115,7 +112,7 @@ export class FootballDataUkAdapter implements IFootballDataProvider {
           htAwayScore: null,
           venue: r.Venue || '',
           statistics: null,
-          dataSource: 'Football-Data.co.uk (Free CSV)',
+          dataSource: this.name,
         });
       }
     }
@@ -131,7 +128,7 @@ export class FootballDataUkAdapter implements IFootballDataProvider {
       providerName: this.name,
       isAvailable: true,
       lastSync: new Date().toISOString(),
-      details: 'Football-Data.co.uk free CSV feeds (E0/E1), no API key required',
+      details: `Domestic CSV feeds (${LEAGUE_CODES.map(entry => entry.code).join('/')})`,
     };
   }
 }

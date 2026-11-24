@@ -274,14 +274,11 @@ export interface LiveTrackedParlay {
 }
 
 export interface ModelPerformanceReport {
-  overallBrierScore: number;
-  overallLogLoss: number;
-  overallHitRate: number;
+  overallBrierScore: number | null;
+  overallLogLoss: number | null;
+  overallHitRate: number | null;
   totalEvaluatedPredictions: number;
-  leagueBreakdown: {
-    EPL: { brierScore: number; hitRate: number; sampleCount: number };
-    CHAMPIONSHIP: { brierScore: number; hitRate: number; sampleCount: number };
-  };
+  leagueBreakdown: Partial<Record<League, { brierScore: number; hitRate: number; sampleCount: number }>>;
   marketBreakdown: Record<string, { hitRate: number; sampleCount: number; brierScore: number }>;
   calibrationBuckets: Array<{
     bucketLabel: string;
