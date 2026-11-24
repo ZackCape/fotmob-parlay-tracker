@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import nodePath from 'node:path';
 import { EmbedBuilder } from 'discord.js';
-import { getSavedParlays, savedLegStatus, legKey } from '../discord/savedParlays.js';
+import { getSavedParlays, legKey } from '../discord/savedParlays.js';
 import { BRAND } from '../discord/brand.js';
 // ---------------------------------------------------------------------------
 // Paths
@@ -31,9 +31,10 @@ export function emptyLedger() {
         voidSlips: 0,
         hitRatePercent: 0,
         netUnitsPnL: 0,
-        roiPercent: 0,
-        avgClvPercent: 0,
+        roiPercent: null,
+        avgClvPercent: null,
         slips: [],
+        version: 2,
     };
 }
 /** Load the ledger from disk (or initialise a blank one). */
@@ -44,7 +45,8 @@ export function loadLedger() {
     if (fs.existsSync(LEDGER_FILE)) {
         try {
             const raw = fs.readFileSync(LEDGER_FILE, 'utf-8');
-            ledgerCache = JSON.parse(raw);
+            const stored = JSON.parse(raw);
+            ledgerCache = stored?.version === 2 && Array.isArray(stored.slips) ? stored : emptyLedger();
             return ledgerCache;
         }
         catch {
@@ -60,7 +62,9 @@ export function saveLedger() {
     if (!ledgerCache)
         return;
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(LEDGER_FILE, JSON.stringify(ledgerCache, null, 2), 'utf-8');
+    const temporary = `${LEDGER_FILE}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(ledgerCache, null, 2), 'utf-8');
+    fs.renameSync(temporary, LEDGER_FILE);
 }
 /** Record a settled slip into the persistent ledger. */
 export function recordSettledSlip(slip) {
@@ -80,11 +84,12 @@ export function recordSettledSlip(slip) {
     const graded = ledger.wonSlips + ledger.lostSlips;
     ledger.hitRatePercent = graded > 0 ? Number(((ledger.wonSlips / graded) * 100).toFixed(2)) : 0;
     ledger.netUnitsPnL = Number(ledger.slips.reduce((acc, s) => acc + (s.netUnits || 0), 0).toFixed(2));
-    ledger.roiPercent = ledger.totalSlips > 0 ? Number(((ledger.netUnitsPnL / ledger.totalSlips) * 100).toFixed(2)) : 0;
+    const pricedCount = ledger.slips.filter(s => s.netUnits !== null && s.result !== 'VOID').length;
+    ledger.roiPercent = pricedCount > 0 ? Number(((ledger.netUnitsPnL / pricedCount) * 100).toFixed(2)) : null;
     const slipsWithClv = ledger.slips.filter(s => typeof s.clvPercent === 'number' && Number.isFinite(s.clvPercent));
     ledger.avgClvPercent = slipsWithClv.length > 0
         ? Number((slipsWithClv.reduce((acc, s) => acc + s.clvPercent, 0) / slipsWithClv.length).toFixed(2))
-        : 0;
+        : null;
     saveLedger();
     return ledger;
 }
@@ -105,7 +110,7 @@ export function buildRecordEmbed(filter = 'all') {
         cutoff = now - 30 * 86_400_000;
         filterLabel = 'Last 30 Days';
     }
-    const slips = cutoff > 0 ? ledger.slips.filter((s) => s.settledAt >= cutoff) : [...ledger.slips];
+    const slips = cutoff > 0 ? ledger.slips.filter((s) => s.settledAt !== null && s.settledAt >= cutoff) : [...ledger.slips];
     const total = slips.length;
     const won = slips.filter((s) => s.result === 'WON').length;
     const lost = slips.filter((s) => s.result === 'LOST').length;
@@ -113,11 +118,12 @@ export function buildRecordEmbed(filter = 'all') {
     const graded = won + lost;
     const strikeRate = graded > 0 ? Number(((won / graded) * 100).toFixed(1)) : 0;
     const netUnits = Number(slips.reduce((acc, s) => acc + (s.netUnits || 0), 0).toFixed(2));
-    const roi = total > 0 ? Number(((netUnits / total) * 100).toFixed(1)) : 0;
+    const pricedCount = slips.filter(s => s.netUnits !== null && s.result !== 'VOID').length;
+    const roi = pricedCount > 0 ? (netUnits / pricedCount) * 100 : null;
     const slipsWithClv = slips.filter((s) => typeof s.clvPercent === 'number' && Number.isFinite(s.clvPercent));
     const avgClv = slipsWithClv.length > 0
         ? Number((slipsWithClv.reduce((acc, s) => acc + s.clvPercent, 0) / slipsWithClv.length).toFixed(1))
-        : 0;
+        : null;
     const embed = new EmbedBuilder()
         .setColor(BRAND.accent)
         .setAuthor({ name: BRAND.author })
@@ -128,15 +134,17 @@ export function buildRecordEmbed(filter = 'all') {
     }
     else {
         const pnlSign = netUnits >= 0 ? '+' : '';
-        const roiSign = roi >= 0 ? '+' : '';
-        const clvSign = avgClv >= 0 ? '+' : '';
-        embed.addFields({ name: 'Total Slips', value: `${total} (${won}W - ${lost}L${voidCount > 0 ? ` - ${voidCount}V` : ''})`, inline: true }, { name: 'Strike Rate', value: `${strikeRate}%`, inline: true }, { name: 'Net Units (1u flat)', value: `**${pnlSign}${netUnits}u**`, inline: true }, { name: 'ROI', value: `${roiSign}${roi}%`, inline: true }, { name: 'Avg Closing Edge (CLV)', value: `${clvSign}${avgClv}%`, inline: true }, { name: 'Sample Window', value: filterLabel, inline: true });
+        const roiSign = roi !== null && roi >= 0 ? '+' : '';
+        const clvSign = avgClv !== null && avgClv >= 0 ? '+' : '';
+        embed.addFields({ name: 'Total Slips', value: `${total} (${won}W - ${lost}L${voidCount > 0 ? ` - ${voidCount}V` : ''})`, inline: true }, { name: 'Strike Rate', value: `${strikeRate}%`, inline: true }, { name: 'Paper Profit (1u flat)', value: pricedCount ? `**${pnlSign}${netUnits}u**` : 'Unavailable', inline: true }, { name: 'Saved Parlay Paper ROI', value: `${roi === null ? 'Unavailable' : `${roiSign}${roi.toFixed(1)}% (${pricedCount} priced slips)`}`, inline: true }, { name: 'Avg Closing Edge (CLV)', value: `${avgClv === null ? 'Unavailable' : `${clvSign}${avgClv}%`}`, inline: true }, { name: 'Sample Window', value: filterLabel, inline: true });
         // Last 5 slips breakdown
-        const recentSlips = [...slips].sort((a, b) => b.settledAt - a.settledAt).slice(0, 5);
+        const recentSlips = [...slips].sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0)).slice(0, 5);
         const slipLines = recentSlips.map((s, idx) => {
             const outcomeGlyphs = (s.legOutcomes || []).map((l) => l.result === 'HIT' ? '✅' : l.result === 'MISS' ? '❌' : l.result === 'VOID' ? '➖' : '⏳').join('');
-            const pnlStr = s.netUnits >= 0 ? `+${s.netUnits.toFixed(2)}u` : `${s.netUnits.toFixed(2)}u`;
-            const dateStr = new Date(s.settledAt).toISOString().slice(5, 10);
+            const pnlStr = s.netUnits === null
+                ? 'Price unavailable'
+                : `${s.netUnits >= 0 ? '+' : ''}${s.netUnits.toFixed(2)}u`;
+            const dateStr = s.settledAt === null ? 'Settlement date unavailable' : new Date(s.settledAt).toISOString().slice(5, 10);
             const resGlyph = s.result === 'WON' ? '🟢' : s.result === 'LOST' ? '🔴' : '⚪';
             return `\`#${idx + 1}\` ${resGlyph} **${s.result}** (${pnlStr}) [${outcomeGlyphs || '—'}] • ${dateStr}`;
         });
@@ -152,7 +160,7 @@ export function buildRecordEmbed(filter = 'all') {
 /**
  * Sweeps saved parlays and records completed slips without blocking the event loop.
  */
-export async function runSettlementSweep(factory) {
+export async function runSettlementSweep() {
     const now = Date.now();
     // Throttle sweeps to at most once every 5 seconds
     if (now - lastSweepTime < 5000)
@@ -170,8 +178,8 @@ export async function runSettlementSweep(factory) {
             let hasLoss = false;
             const legOutcomes = [];
             for (const leg of p.legs) {
-                const status = savedLegStatus(p, leg);
-                if (status === 'PENDING') {
+                const status = p.finalResults?.[legKey(leg)];
+                if (!status) {
                     allSettled = false;
                     break;
                 }
@@ -179,16 +187,23 @@ export async function runSettlementSweep(factory) {
                     hasLoss = true;
                 legOutcomes.push({
                     key: legKey(leg),
+                    fixtureId: leg.fixtureId,
+                    league: leg.league,
+                    market: leg.market,
+                    selection: leg.selection,
                     result: status,
                 });
             }
             if (allSettled && legOutcomes.length === p.legs.length) {
                 const ledger = loadLedger();
-                if (ledger.slips.some((s) => s.id === p.id))
+                const previous = ledger.slips.find(slip => slip.id === p.id);
+                if (previous && legOutcomes.every((leg, index) => previous.legOutcomes[index]?.result === leg.result))
                     continue;
                 const result = hasLoss ? 'LOST' : 'WON';
-                const takenOdds = p.combinedOdds || 2.0;
-                const netUnits = result === 'WON' ? Number((takenOdds - 1).toFixed(2)) : -1.0;
+                const takenOdds = typeof p.combinedOdds === 'number' && Number.isFinite(p.combinedOdds) && p.combinedOdds > 1
+                    ? p.combinedOdds
+                    : null;
+                const netUnits = takenOdds === null ? null : result === 'WON' ? Number((takenOdds - 1).toFixed(2)) : -1;
                 recordSettledSlip({
                     id: p.id,
                     userId: p.userId || 'system',
@@ -196,9 +211,9 @@ export async function runSettlementSweep(factory) {
                     result,
                     netUnits,
                     takenOdds,
-                    closingOdds: takenOdds,
-                    clvPercent: 0,
-                    settledAt: Date.now(),
+                    closingOdds: null,
+                    clvPercent: null,
+                    settledAt: p.settledAt ?? null,
                     legOutcomes,
                 });
                 settledCount++;

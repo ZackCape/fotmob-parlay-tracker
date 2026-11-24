@@ -22,14 +22,15 @@ function makeTeam(name, league) {
         logo: '',
     };
 }
-function matchingDate(value, requestedDate) {
+function seasonDate(value, startYear) {
     const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
     if (!match)
-        return false;
+        return null;
     const [, day, month, year] = match;
-    const requestedYear = requestedDate.slice(0, 4);
-    const yearMatches = year === (year.length === 2 ? requestedYear.slice(2) : requestedYear);
-    return yearMatches && requestedDate.slice(5) === `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    const fullYear = [startYear, startYear + 1].find(candidate => year === (year.length === 2 ? String(candidate).slice(-2) : String(candidate)));
+    if (fullYear === undefined)
+        return null;
+    return `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 function parseScore(value) {
     return value && /^\d+$/.test(value) ? Number(value) : null;
@@ -51,12 +52,6 @@ function parseCsv(csv) {
 }
 export class FootballDataUkAdapter {
     name = 'Football-Data.co.uk (Free CSV)';
-    seasonForDate(date) {
-        const y = parseInt(date.substring(0, 4), 10);
-        const m = parseInt(date.substring(5, 7), 10);
-        const start = m >= 7 ? y : y - 1;
-        return `${String(start).slice(2)} ${String((start + 1) % 100).padStart(2, '0')}`;
-    }
     async fetchCsv(path) {
         try {
             const res = await axios.get(`${BASE}${path}`, { timeout: 10000, responseType: 'text' });
@@ -72,7 +67,17 @@ export class FootballDataUkAdapter {
     async getFixturesByDate(date, league = 'ALL') {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
             return [];
-        const season = this.seasonForDate(date);
+        const startYear = Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) >= 7 ? 0 : 1);
+        return this.getSeasonFixtures(startYear, league, date);
+    }
+    async getCompletedSeasonFixtures(startYear, league = 'ALL') {
+        if (!Number.isInteger(startYear) || startYear < 1993 || startYear > new Date().getUTCFullYear())
+            return [];
+        const fixtures = await this.getSeasonFixtures(startYear, league);
+        return fixtures.filter(fixture => fixture.status === 'FINISHED');
+    }
+    async getSeasonFixtures(startYear, league, requestedDate) {
+        const season = `${String(startYear).slice(-2)} ${String(startYear + 1).slice(-2)}`;
         const seasonCode = season.replace(' ', '');
         const leagues = LEAGUE_CODES.filter(entry => league === 'ALL' || entry.league === league);
         const feeds = await Promise.all(leagues.map(entry => this.fetchCsv(`/mmz4281/${seasonCode}/${entry.code}.csv`)));
@@ -82,7 +87,8 @@ export class FootballDataUkAdapter {
             if (!csv)
                 continue;
             for (const r of parseCsv(csv)) {
-                if (!matchingDate(r.Date || r.date || '', date))
+                const date = seasonDate(r.Date || r.date || '', startYear);
+                if (!date || (requestedDate && date !== requestedDate))
                     continue;
                 const home = r.HomeTeam || r.home_team;
                 const away = r.AwayTeam || r.away_team;

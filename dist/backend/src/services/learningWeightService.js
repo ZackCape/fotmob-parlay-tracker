@@ -135,7 +135,7 @@ function readLedgerContent() {
         }
         const raw = fs.readFileSync(ledgerFilePath, 'utf8');
         const parsed = JSON.parse(raw);
-        const content = Array.isArray(parsed) ? { slips: parsed } : parsed;
+        const content = parsed?.version === 2 ? parsed : null;
         return { content, mtime: stat.mtimeMs };
     }
     catch (err) {

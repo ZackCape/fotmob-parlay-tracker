@@ -27,9 +27,9 @@ export const ModelPerformance: React.FC = () => {
 
   const heading = (
     <div>
-      <h2 className="text-xl font-bold text-white mb-1">Statistical Prediction Engine Performance</h2>
+      <h2 className="text-xl font-bold text-white mb-1">Historical Goal Model Benchmark</h2>
       <p className="text-xs text-slate-400">
-        Predictions are recalculated from archived data and can use information that became available after kickoff.
+        Walk-forward benchmark on the bundled archive. The goal model uses only results from earlier dates.
       </p>
     </div>
   );

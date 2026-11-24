@@ -41,11 +41,14 @@ export class VerifiedArchiveAdapter implements IFootballDataProvider {
     const homeTeam = fixture.homeTeam;
     const awayTeam = fixture.awayTeam;
 
-    // Calculate real form from historical database
-    const homeRecentMatches = HISTORICAL_MATCHES.filter(
+    // Earlier dates only: archive kickoff times and final whistle times are incomplete.
+    const pastMatches = HISTORICAL_MATCHES
+      .filter(match => match.date < fixture.date && match.status === 'FINISHED')
+      .sort((left, right) => right.date.localeCompare(left.date));
+    const homeRecentMatches = pastMatches.filter(
       m => m.homeTeam.id === homeTeam.id || m.awayTeam.id === homeTeam.id
     );
-    const awayRecentMatches = HISTORICAL_MATCHES.filter(
+    const awayRecentMatches = pastMatches.filter(
       m => m.homeTeam.id === awayTeam.id || m.awayTeam.id === awayTeam.id
     );
 
@@ -106,16 +109,16 @@ export class VerifiedArchiveAdapter implements IFootballDataProvider {
       else awayFormResults.push('L');
     }
 
-    const homeRating = this.learningEngine ? this.learningEngine.getTeamRating(homeTeam.id, homeTeam.name, fixture.league) : null;
-    const awayRating = this.learningEngine ? this.learningEngine.getTeamRating(awayTeam.id, awayTeam.name, fixture.league) : null;
+    const homeRating = fixture.status !== 'FINISHED' && this.learningEngine ? this.learningEngine.getTeamRating(homeTeam.id, homeTeam.name, fixture.league) : null;
+    const awayRating = fixture.status !== 'FINISHED' && this.learningEngine ? this.learningEngine.getTeamRating(awayTeam.id, awayTeam.name, fixture.league) : null;
 
-    const homeAttack = homeRating ? homeRating.attackStrength : Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsFor / Math.max(1, homeRecentMatches.length)) / 1.35 : 1.15);
-    const homeDefense = homeRating ? homeRating.defenseWeakness : Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsAgainst / Math.max(1, homeRecentMatches.length)) / 1.35 : 0.95);
-    const awayAttack = awayRating ? awayRating.attackStrength : Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsFor / Math.max(1, awayRecentMatches.length)) / 1.35 : 1.05);
-    const awayDefense = awayRating ? awayRating.defenseWeakness : Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsAgainst / Math.max(1, awayRecentMatches.length)) / 1.35 : 1.10);
+    const homeAttack = homeRating ? homeRating.attackStrength : Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsFor / Math.max(1, homeFormResults.length)) / 1.35 : 1.15);
+    const homeDefense = homeRating ? homeRating.defenseWeakness : Math.max(0.6, homeRecentMatches.length > 0 ? (homeGoalsAgainst / Math.max(1, homeFormResults.length)) / 1.35 : 0.95);
+    const awayAttack = awayRating ? awayRating.attackStrength : Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsFor / Math.max(1, awayFormResults.length)) / 1.35 : 1.05);
+    const awayDefense = awayRating ? awayRating.defenseWeakness : Math.max(0.6, awayRecentMatches.length > 0 ? (awayGoalsAgainst / Math.max(1, awayFormResults.length)) / 1.35 : 1.10);
 
     // Head-to-Head
-    const h2hMatches = HISTORICAL_MATCHES.filter(
+    const h2hMatches = pastMatches.filter(
       m => (m.homeTeam.id === homeTeam.id && m.awayTeam.id === awayTeam.id) ||
            (m.homeTeam.id === awayTeam.id && m.awayTeam.id === homeTeam.id)
     );

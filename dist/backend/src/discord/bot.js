@@ -9,6 +9,7 @@ import { buildGenericAnalysis } from '../utils/genericAnalysis.js';
 import { orderFixturesByPriority, orderByCompetitionPriorityThenScore, PRIORITY_LEAGUE_LABEL, } from '../utils/competitionPriority.js';
 import * as CP from './interactions.js';
 import { BRAND } from './brand.js';
+import { makePaperPick, paperPickRecord, recordedWagerRoi, savePaperPick, saveRecordedWager } from '../services/bettingRecordService.js';
 import { safeToFixed } from '../utils/formatters.js';
 import { isChannelBlocked, BLOCKED_CHANNEL_IDS } from './blockedChannels.js';
 export { isChannelBlocked, BLOCKED_CHANNEL_IDS } from './blockedChannels.js';
@@ -171,12 +172,22 @@ export const commands = [
         .setDescription('Bot diagnostics: latency, API status, tracked matches, and system health'),
     new SlashCommandBuilder()
         .setName('record')
-        .setDescription('Performance tracker: strike rate, net PnL, ROI, and closing line value (CLV)')
+        .setDescription('View paper performance for model picks and saved parlays')
         .addStringOption(opt => opt
         .setName('filter')
         .setDescription('Time window filter')
         .setRequired(false)
         .addChoices({ name: 'All-time', value: 'all' }, { name: 'Last 7 Days', value: '7d' }, { name: 'Last 30 Days', value: '30d' })),
+    new SlashCommandBuilder()
+        .setName('wager')
+        .setDescription('Privately log or review wagers you have already placed and settled')
+        .addSubcommand(cmd => cmd.setName('log').setDescription('Log or correct a settled wager by receipt reference')
+        .addStringOption(opt => opt.setName('reference').setDescription('Your unique nickname for this receipt').setMaxLength(80).setRequired(true))
+        .addStringOption(opt => opt.setName('currency').setDescription('Three-letter code, e.g. USD').setMinLength(3).setMaxLength(3).setRequired(true))
+        .addNumberOption(opt => opt.setName('stake').setDescription('Amount you actually staked').setMinValue(0.01).setRequired(true))
+        .addNumberOption(opt => opt.setName('odds').setDescription('Accepted decimal odds').setMinValue(1.001).setRequired(true))
+        .addNumberOption(opt => opt.setName('payout').setDescription('Amount returned, including any returned stake').setMinValue(0).setRequired(true)))
+        .addSubcommand(cmd => cmd.setName('summary').setDescription('Review ROI for your recorded wagers by currency')),
     new SlashCommandBuilder()
         .setName('steam')
         .setDescription('Real-time sharp money & steam line movements detection'),
@@ -1084,9 +1095,40 @@ export class DiscordBotService {
                 else if (interaction.commandName === 'record') {
                     await interaction.deferReply();
                     const filter = (interaction.options.getString('filter') || 'all');
-                    const { buildRecordEmbed } = await import('../services/settlementService.js');
+                    const { buildRecordEmbed, runSettlementSweep } = await import('../services/settlementService.js');
+                    await runSettlementSweep();
                     const embed = buildRecordEmbed(filter);
+                    const days = filter === '7d' ? 7 : filter === '30d' ? 30 : 0;
+                    const paper = await paperPickRecord(this.factory, days ? Date.now() - days * 86_400_000 : 0).catch(error => {
+                        console.warn('[PaperRecord] Unable to load published picks:', error);
+                        return null;
+                    });
+                    embed.addFields({
+                        name: 'Published Model Picks (1u paper stake)',
+                        value: paper === null ? 'Paper record temporarily unavailable.' : paper.roi === null
+                            ? `No settled priced picks. ${paper.pending} pending.`
+                            : `${paper.roi.toFixed(1)}% paper ROI • ${paper.profit.toFixed(2)}u net • ${paper.settled} settled • ${paper.pending} pending`,
+                    });
                     await interaction.editReply({ embeds: [embed] });
+                    return;
+                }
+                else if (interaction.commandName === 'wager') {
+                    await interaction.deferReply({ ephemeral: true });
+                    if (interaction.options.getSubcommand() === 'log') {
+                        await saveRecordedWager(interaction.user.id, {
+                            reference: interaction.options.getString('reference', true).trim(),
+                            currency: interaction.options.getString('currency', true).toUpperCase(),
+                            stake: interaction.options.getNumber('stake', true),
+                            acceptedOdds: interaction.options.getNumber('odds', true),
+                            payout: interaction.options.getNumber('payout', true),
+                        });
+                        await interaction.editReply('Saved your settled wager. Use /wager summary to see ROI.');
+                    }
+                    else {
+                        const totals = await recordedWagerRoi(interaction.user.id);
+                        const lines = totals.map(total => `${total.currency} • ${total.count} settled • ${total.profit.toFixed(2)} net • ${total.roi.toFixed(1)}% ROI`);
+                        await interaction.editReply(lines.join('\n').slice(0, 2000) || 'No settled wagers recorded yet.');
+                    }
                     return;
                 }
                 else if (interaction.commandName === 'steam') {
@@ -2476,6 +2518,8 @@ export class DiscordBotService {
             }
             // Keep subscribed channels' topics in sync during match windows.
             await this.syncLiveChannelTopics(liveFixtures);
+            const { runSettlementSweep } = await import('../services/settlementService.js');
+            await runSettlementSweep();
         }
         catch (e) {
             console.warn('[LiveEvents] alert worker tick failed:', e.message);
@@ -2626,11 +2670,11 @@ export class DiscordBotService {
         const e = new EmbedBuilder()
             .setColor(BRAND.accent)
             .setAuthor({ name: BRAND.author })
-            .setTitle('💎 +EV Value Picks')
+            .setTitle('💎 Model Picks & Market Value')
             .setTimestamp(new Date());
         const today = new Date().toISOString().slice(0, 10);
         const allFixtures = await this.factory.getFixturesByDate(today, 'ALL');
-        const fixtures = orderFixturesByPriority(allFixtures.filter(isVerifiedFixture));
+        const fixtures = orderFixturesByPriority(CP.filterPreKickoffFixtures(allFixtures.filter(isVerifiedFixture)));
         const ranked = [];
         for (const fx of fixtures) {
             try {
@@ -2645,7 +2689,8 @@ export class DiscordBotService {
                     continue;
                 const max = Math.max(...best);
                 const label = max === h ? `${fx.homeTeam.name} to Win` : max === d ? 'Draw' : `${fx.awayTeam.name} to Win`;
-                ranked.push({ fx, model: max, label });
+                const market = max === h ? 'HOME_WIN' : max === d ? 'DRAW' : 'AWAY_WIN';
+                ranked.push({ fx, model: max, label, market });
             }
             catch { /* skip fixture */ }
         }
@@ -2659,29 +2704,34 @@ export class DiscordBotService {
         const lines = [];
         for (const p of top) {
             const fair = 1 / p.model;
+            let displayedProbability = p.model;
             let extra = `Fair ${fair.toFixed(2)}x`;
-            let kellyText = '';
             if (configured) {
                 try {
                     const odds = await this.factory.getOddsForFixture(p.fx);
-                    const prices = this.extractH2hPricesLocal(odds);
-                    const mkt = p.label.includes('Win') && p.label.includes(p.fx.homeTeam.name)
-                        ? prices.home
-                        : p.label === 'Draw' ? prices.draw : prices.away;
-                    if (mkt && mkt > fair) {
-                        const edge = ((mkt / fair) - 1) * 100;
-                        const b = mkt - 1;
-                        const rawKelly = (b * p.model - (1 - p.model)) / b;
-                        const suggestedUnits = Math.min(2.5, Math.max(0.25, Number((rawKelly * 0.25 * 10).toFixed(1))));
-                        extra = `Market ${mkt.toFixed(2)}x → Edge +${edge.toFixed(1)}% EV`;
-                        kellyText = ` | Kelly: ${suggestedUnits}u`;
+                    const quote = makePaperPick(p.fx, p.market, p.model, odds);
+                    if (quote) {
+                        const pick = await savePaperPick(quote);
+                        displayedProbability = pick.probability;
+                        const edge = (pick.odds * pick.probability - 1) * 100;
+                        const fraction = (pick.odds * pick.probability - 1) / (pick.odds - 1);
+                        const units = Math.min(2.5, Math.max(0.25, fraction * 2.5));
+                        extra = `${pick.bookmaker} ${pick.odds.toFixed(2)}x → Model edge +${edge.toFixed(1)}% | Kelly: ${units.toFixed(1)}u`;
                     }
                 }
-                catch { /* odds unavailable for this fixture */ }
+                catch (error) {
+                    console.warn('[ValuePicks] Could not record a quoted pick:', error);
+                }
             }
-            lines.push(`• **${p.label}** — ${p.fx.homeTeam.name} vs ${p.fx.awayTeam.name}\n     Model ${(p.model * 100).toFixed(0)}% → ${extra}${kellyText}`);
+            if (!CP.isPreKickoffFixture(p.fx))
+                continue;
+            lines.push(`• **${p.label}** — ${p.fx.homeTeam.name} vs ${p.fx.awayTeam.name}\n     Model ${(displayedProbability * 100).toFixed(0)}% → ${extra}`);
         }
-        e.setDescription(`Model vs market-implied odds. Positive edge = value.\n\n${lines.join('\n')}`);
+        if (!lines.length) {
+            e.setDescription('No upcoming picks available.');
+            return e;
+        }
+        e.setDescription(`Positive model edges at quoted bookmaker prices are tracked in the paper record.\n\n${lines.join('\n')}`);
         e.setFooter({ text: `${BRAND.footer} • Model estimates, not financial advice` });
         return e;
     }
@@ -3040,10 +3090,15 @@ export class DiscordBotService {
                 continue;
             const legsForFixture = saved.legs.filter((l) => l.fixtureId === fx.id);
             for (const leg of legsForFixture) {
-                if (CP.isSavedLegSettled(saved.id, leg))
+                const alreadyAlerted = CP.isSavedLegSettled(saved.id, leg);
+                if (alreadyAlerted && fx.status !== 'FINISHED')
                     continue;
                 const progress = CP.evaluateSavedLeg(leg, ctx, latestGoal);
                 if (progress.status === 'PENDING')
+                    continue;
+                if (fx.status === 'FINISHED')
+                    CP.confirmSavedLegResult(saved, leg, progress.status);
+                if (alreadyAlerted && CP.savedLegStatus(saved, leg) === progress.status)
                     continue;
                 CP.markSavedLegSettled(saved.id, leg, progress.status);
                 const settledCount = CP.countSettledLegs(saved);

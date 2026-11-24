@@ -216,6 +216,17 @@ export function markSavedLegSettled(savedId, leg, status) {
     saved.settled[legKey(leg)] = status;
     persist();
 }
+/** Final results are separate from provisional alerts for in-play milestones. */
+export function confirmSavedLegResult(saved, leg, status) {
+    const key = legKey(leg);
+    saved.finalResults ??= {};
+    if (saved.finalResults[key] === status)
+        return;
+    saved.finalResults[key] = status;
+    if (saved.legs.every(item => saved.finalResults?.[legKey(item)]))
+        saved.settledAt ??= Date.now();
+    persist();
+}
 export function countSettledLegs(saved) {
     return Object.keys(saved.settled).length;
 }

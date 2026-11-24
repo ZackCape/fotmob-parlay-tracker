@@ -29,7 +29,7 @@ export function createApp(factory, discordBot, trackerService) {
     app.use('/api/analysis', createAnalysisRouter(factory));
     app.use('/api/parlays', createParlaysRouter(factory, parlayRepo, tracker));
     app.use('/api/predictions', createPredictionsRouter(factory, predRepo));
-    app.use('/api/model/performance', createPerformanceRouter(factory));
+    app.use('/api/model/performance', createPerformanceRouter());
     app.use('/api/system/status', createStatusRouter(factory));
     app.use('/api/discord', createDiscordRouter(discordBot));
     app.use('/api/learning', createLearningRouter(factory));

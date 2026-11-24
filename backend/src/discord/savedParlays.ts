@@ -47,6 +47,8 @@ export interface SavedParlay {
   combinedOdds: number | null;
   combinedProbability: number;
   savedAt: number;
+  settledAt?: number;
+  finalResults?: Record<string, 'HIT' | 'MISS'>;
   /**
    * Set on `[ 💾 Save & Share ]` so `/track` finds the slip immediately and
    * renders its leg status. A newer slip for the same user + channel retires
@@ -279,6 +281,16 @@ export function markSavedLegSettled(
   const saved = savedParlays.get(savedId);
   if (!saved) return;
   saved.settled[legKey(leg)] = status;
+  persist();
+}
+
+/** Final results are separate from provisional alerts for in-play milestones. */
+export function confirmSavedLegResult(saved: SavedParlay, leg: SavedParlayLeg, status: 'HIT' | 'MISS'): void {
+  const key = legKey(leg);
+  saved.finalResults ??= {};
+  if (saved.finalResults[key] === status) return;
+  saved.finalResults[key] = status;
+  if (saved.legs.every(item => saved.finalResults?.[legKey(item)])) saved.settledAt ??= Date.now();
   persist();
 }
 
